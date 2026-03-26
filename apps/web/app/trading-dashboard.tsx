@@ -1,116 +1,404 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { AccountView, EventEnvelope, OrderView, PositionView } from "@stratium/shared";
+import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
+import { CandlestickChart } from "./candlestick-chart";
 
-interface DashboardState {
+type TickPayload = {
+  bid: number;
+  ask: number;
+  last: number;
+  spread: number;
+  tickTime: string;
+  volatilityTag?: string;
+};
+
+type State = {
   account: AccountView | null;
   orders: OrderView[];
   position: PositionView | null;
-  latestTick: Record<string, unknown> | null;
+  latestTick: (TickPayload & { symbol?: string }) | null;
   events: EventEnvelope<unknown>[];
-}
-
-const initialState: DashboardState = {
-  account: null,
-  orders: [],
-  position: null,
-  latestTick: null,
-  events: []
+  simulator?: MarketSimulatorState;
+  market?: MarketState;
 };
 
-const formatNumber = (value: number | undefined | null): string => {
-  if (value === undefined || value === null) {
-    return "-";
+type MarketSimulatorState = {
+  enabled: boolean;
+  symbol: string;
+  intervalMs: number;
+  driftBps: number;
+  volatilityBps: number;
+  anchorPrice: number;
+  lastPrice: number;
+  tickCount: number;
+  lastGeneratedAt?: string;
+};
+
+type TimeframeId = "1m" | "5m" | "15m" | "1h";
+type EnrichedTick = TickPayload & {
+  symbol: string;
+  syntheticVolume: number;
+  aggressorSide: "buy" | "sell";
+};
+
+type MarketLevel = {
+  price: number;
+  size: number;
+  orders: number;
+};
+
+type MarketTapeTrade = {
+  id: string;
+  coin: string;
+  side: "buy" | "sell";
+  price: number;
+  size: number;
+  time: number;
+};
+
+type MarketState = {
+  source: "hyperliquid" | "simulator";
+  coin: string;
+  connected: boolean;
+  bestBid?: number;
+  bestAsk?: number;
+  markPrice?: number;
+  candles: Array<{
+    id: string;
+    coin: string;
+    interval: string;
+    openTime: number;
+    closeTime: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    tradeCount: number;
+  }>;
+  assetCtx?: {
+    coin: string;
+    markPrice?: number;
+    midPrice?: number;
+    oraclePrice?: number;
+    fundingRate?: number;
+    openInterest?: number;
+    prevDayPrice?: number;
+    dayNotionalVolume?: number;
+    capturedAt: number;
+  };
+  book: {
+    bids: MarketLevel[];
+    asks: MarketLevel[];
+    updatedAt?: number;
+  };
+  trades: MarketTapeTrade[];
+};
+
+const TIMEFRAMES: Array<{ id: TimeframeId; label: string; hint: string; bucketMs: number }> = [
+  { id: "1m", label: "1m", hint: "1 minute", bucketMs: 60_000 },
+  { id: "5m", label: "5m", hint: "5 minutes", bucketMs: 300_000 },
+  { id: "15m", label: "15m", hint: "15 minutes", bucketMs: 900_000 },
+  { id: "1h", label: "1h", hint: "1 hour", bucketMs: 3_600_000 }
+];
+
+const fmt = (n?: number | null, d = 4) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const clock = (s?: string) => s ? new Date(s).toLocaleTimeString("en-US", { hour12: false }) : "--:--:--";
+const priceDigitsForSymbol = (symbol?: string | null) => symbol?.startsWith("BTC-") ? 0 : 4;
+const ghostLinkStyle: React.CSSProperties = {
+  border: "1px solid #253740",
+  background: "#111d24",
+  color: "#dce7ee",
+  padding: "10px 14px",
+  borderRadius: 10,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center"
+};
+
+const mergeEvents = (currentEvents: EventEnvelope<unknown>[], nextEvents: EventEnvelope<unknown>[] = []) => {
+  if (nextEvents.length === 0) {
+    return currentEvents;
   }
 
-  return Number(value).toFixed(4);
+  const merged = new Map(currentEvents.map((event) => [event.eventId, event]));
+
+  for (const event of nextEvents) {
+    merged.set(event.eventId, event);
+  }
+
+  return [...merged.values()].sort((left, right) => left.sequence - right.sequence);
 };
 
 export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
-  const [state, setState] = useState<DashboardState>(initialState);
+  const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState<string>("");
-  const [orderForm, setOrderForm] = useState({
-    accountId: "paper-account-1",
-    symbol: "BTC-USD",
-    side: "buy",
-    orderType: "market",
-    quantity: "1",
-    limitPrice: "100"
-  });
-  const [tickForm, setTickForm] = useState({
-    symbol: "BTC-USD",
-    bid: "100",
-    ask: "101",
-    last: "100.5",
-    spread: "1",
-    volatilityTag: "normal"
-  });
+  const [message, setMessage] = useState("");
+  const [tab, setTab] = useState<"market" | "limit">("market");
+  const [bookTab, setBookTab] = useState<"book" | "trades">("book");
+  const [timeframe, setTimeframe] = useState<TimeframeId>("1m");
+  const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [orderForm, setOrderForm] = useState({ accountId: "paper-account-1", symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
+  const priceDigits = useMemo(() => priceDigitsForSymbol(orderForm.symbol), [orderForm.symbol]);
+  const selectedTimeframe = useMemo(
+    () => TIMEFRAMES.find((entry) => entry.id === timeframe) ?? TIMEFRAMES[0],
+    [timeframe]
+  );
 
-  const replaySummary = useMemo(() => {
-    const latestEvent = state.events[state.events.length - 1];
+  const ticks = useMemo<EnrichedTick[]>(() => {
+    const marketTicks = state.events
+      .filter((event) => event.eventType === "MarketTickReceived")
+      .map((event) => ({ symbol: event.symbol, ...(event.payload as TickPayload) }));
 
-    return latestEvent
-      ? `sequence ${latestEvent.sequence} / ${latestEvent.eventType}`
-      : "no events yet";
-  }, [state.events]);
+    let previousLast: number | undefined;
+    let previousVolume = 0.18;
+    const acceptedTicks: EnrichedTick[] = [];
 
-  useEffect(() => {
-    void refreshState();
+    for (const tick of marketTicks) {
+      if (previousLast) {
+        const divergence = Math.abs(tick.last - previousLast) / previousLast;
 
-    const wsBaseUrl = apiBaseUrl.replace(/^http/, "ws");
-    const socket = new WebSocket(`${wsBaseUrl}/ws`);
+        if (divergence > 0.05) {
+          continue;
+        }
+      }
 
-    socket.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as {
-        state?: {
-          account?: AccountView;
-          orders?: OrderView[];
-          position?: PositionView;
-          latestTick?: Record<string, unknown>;
-        };
-        events?: EventEnvelope<unknown>[];
+      const priceMoveRatio = previousLast ? Math.abs(tick.last - previousLast) / previousLast : 0;
+      const spreadRatio = tick.last > 0 ? tick.spread / tick.last : 0;
+      const baseVolume = 0.12 + Math.min(priceMoveRatio * 60, 0.22) + Math.min(spreadRatio * 220, 0.08);
+      const smoothedVolume = Number((previousVolume * 0.72 + baseVolume * 0.28).toFixed(4));
+      const enrichedTick: EnrichedTick = {
+        ...tick,
+        syntheticVolume: smoothedVolume,
+        aggressorSide: previousLast && tick.last < previousLast ? "sell" : "buy"
       };
 
+      previousLast = tick.last;
+      previousVolume = smoothedVolume;
+
+      acceptedTicks.push(enrichedTick);
+    }
+
+    return acceptedTicks;
+  }, [state.events]);
+  const candles = useMemo(() => {
+    if (state.market && state.market.candles.length > 0) {
+      const map = new Map<number, CandlestickData<UTCTimestamp>>();
+
+      for (const candle of state.market.candles) {
+        const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
+        const existing = map.get(bucket);
+
+        if (!existing) {
+          map.set(bucket, {
+            time: bucket,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close
+          });
+          continue;
+        }
+
+        map.set(bucket, {
+          time: bucket,
+          open: existing.open,
+          high: Math.max(existing.high, candle.high),
+          low: Math.min(existing.low, candle.low),
+          close: candle.close
+        });
+      }
+
+      return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+    }
+
+    const map = new Map<number, CandlestickData<UTCTimestamp>>();
+    const bucketMs = selectedTimeframe.bucketMs;
+    for (const t of ticks) {
+      const bucket = Math.floor(new Date(t.tickTime).getTime() / bucketMs) * (bucketMs / 1000) as UTCTimestamp;
+      const cur = map.get(bucket);
+      if (!cur) map.set(bucket, { time: bucket, open: t.last, high: t.last, low: t.last, close: t.last });
+      else map.set(bucket, { ...cur, high: Math.max(cur.high, t.last), low: Math.min(cur.low, t.last), close: t.last });
+    }
+    return [...map.values()].sort((a, b) => Number(a.time) - Number(b.time));
+  }, [selectedTimeframe.bucketMs, ticks]);
+  const volume = useMemo(() => {
+    if (state.market && state.market.candles.length > 0) {
+      const map = new Map<number, HistogramData<UTCTimestamp>>();
+
+      for (const candle of state.market.candles) {
+        const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
+        const existing = map.get(bucket);
+        const value = Number((((existing?.value as number | undefined) ?? 0) + candle.volume).toFixed(4));
+
+        map.set(bucket, {
+          time: bucket,
+          value,
+          color: candle.close >= candle.open ? "#2dd4bf88" : "#f8717188"
+        });
+      }
+
+      return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+    }
+
+    const map = new Map<number, HistogramData<UTCTimestamp>>();
+    const bucketMs = selectedTimeframe.bucketMs;
+    for (const t of ticks) {
+      const bucket = Math.floor(new Date(t.tickTime).getTime() / bucketMs) * (bucketMs / 1000) as UTCTimestamp;
+      const cur = map.get(bucket);
+      const next = Number((((cur?.value as number | undefined) ?? 0) + t.syntheticVolume).toFixed(4));
+      map.set(bucket, { time: bucket, value: next, color: t.aggressorSide === "buy" ? "#2dd4bf88" : "#f8717188" });
+    }
+    return [...map.values()].sort((a, b) => Number(a.time) - Number(b.time));
+  }, [selectedTimeframe.bucketMs, ticks]);
+  const stats = useMemo(() => {
+    if (state.market?.assetCtx) {
+      const reference = state.market.assetCtx.prevDayPrice ?? state.market.candles[0]?.open;
+      const last = state.market.assetCtx.markPrice ?? state.market.markPrice ?? state.latestTick?.last;
+      const change = last && reference ? ((last - reference) / reference) * 100 : undefined;
+      const candleHigh = state.market.candles.length > 0 ? Math.max(...state.market.candles.map((candle) => candle.high)) : undefined;
+      const candleLow = state.market.candles.length > 0 ? Math.min(...state.market.candles.map((candle) => candle.low)) : undefined;
+
+      return {
+        last,
+        change,
+        low: candleLow,
+        high: candleHigh
+      };
+    }
+
+    if (!ticks.length) return { last: undefined, change: undefined, low: undefined, high: undefined };
+    const prices = ticks.map((t) => t.last);
+    const first = prices[0] ?? 0;
+    const last = prices[prices.length - 1];
+    return { last, change: first ? ((last - first) / first) * 100 : 0, low: Math.min(...prices), high: Math.max(...prices) };
+  }, [ticks]);
+  const syntheticBook = useMemo(() => {
+    const mid = state.latestTick?.last ?? 100;
+    const step = Math.max((state.latestTick?.spread ?? 1) / 2, 0.001);
+    const asks = Array.from({ length: 8 }, (_, i) => ({ price: Number((mid + step * (8 - i)).toFixed(4)), size: Number((0.25 + i * 0.08).toFixed(4)) }));
+    const bids = Array.from({ length: 8 }, (_, i) => ({ price: Number((mid - step * (i + 1)).toFixed(4)), size: Number((0.22 + i * 0.09).toFixed(4)) }));
+    return { asks, bids };
+  }, [state.latestTick]);
+  const book = useMemo(() => {
+    if (state.market && state.market.book.asks.length > 0 && state.market.book.bids.length > 0) {
+      return {
+        asks: state.market.book.asks.map((level) => ({ price: level.price, size: level.size })),
+        bids: state.market.book.bids.map((level) => ({ price: level.price, size: level.size }))
+      };
+    }
+
+    return syntheticBook;
+  }, [state.market, syntheticBook]);
+  const bookWithDepth = useMemo(() => {
+    let askRunningTotal = 0;
+    const asks = [...book.asks]
+      .sort((left, right) => right.price - left.price)
+      .map((level) => {
+        askRunningTotal += level.size;
+
+        return {
+          ...level,
+          total: Number(askRunningTotal.toFixed(4))
+        };
+      });
+
+    let bidRunningTotal = 0;
+    const bids = [...book.bids]
+      .sort((left, right) => right.price - left.price)
+      .map((level) => {
+        bidRunningTotal += level.size;
+
+        return {
+          ...level,
+          total: Number(bidRunningTotal.toFixed(4))
+        };
+      });
+
+    return {
+      asks,
+      bids,
+      maxAskTotal: Math.max(...asks.map((level) => level.total), 0),
+      maxBidTotal: Math.max(...bids.map((level) => level.total), 0)
+    };
+  }, [book]);
+  const trades = useMemo(() => {
+    if (state.market && state.market.trades.length > 0) {
+      return state.market.trades.map((trade) => ({
+        id: trade.id,
+        time: new Date(trade.time).toISOString(),
+        price: trade.price,
+        size: trade.size,
+        side: trade.side,
+        source: "market" as const
+      }));
+    }
+
+    const fillTrades = state.events
+      .filter((e) => e.eventType === "OrderFilled" || e.eventType === "OrderPartiallyFilled")
+      .slice()
+      .reverse()
+      .map((event) => {
+        const payload = event.payload as { fillPrice: number; fillQuantity: number; orderId: string };
+        const order = state.orders.find((entry) => entry.id === payload.orderId);
+
+        return {
+          id: event.eventId,
+          time: event.occurredAt,
+          price: payload.fillPrice,
+          size: payload.fillQuantity,
+          side: order?.side ?? "buy",
+          source: "fill" as const
+        };
+      });
+    const tapeTrades = ticks
+      .slice(-24)
+      .reverse()
+      .map((tick, index) => ({
+        id: `tick-${tick.tickTime}-${index}`,
+        time: tick.tickTime,
+        price: tick.last,
+        size: Number((tick.syntheticVolume * (0.92 + index * 0.025)).toFixed(4)),
+        side: tick.aggressorSide,
+        source: "tape" as const
+      }));
+
+    return [...fillTrades, ...tapeTrades]
+      .sort((left, right) => new Date(right.time).getTime() - new Date(left.time).getTime())
+      .slice(0, 24);
+  }, [state.events, state.market, state.orders, ticks]);
+
+  useEffect(() => {
+    void refresh();
+    const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws`);
+    ws.addEventListener("message", (event) => {
+      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: EventEnvelope<unknown>[]; simulator?: MarketSimulatorState; market?: MarketState };
       if (payload.state) {
-        setState((current) => ({
-          account: payload.state?.account ?? current.account,
-          orders: payload.state?.orders ?? current.orders,
-          position: payload.state?.position ?? current.position,
-          latestTick: payload.state?.latestTick ?? current.latestTick,
-          events: payload.events ?? current.events
+        const nextState = payload.state;
+        setState((cur) => ({
+          account: nextState.account ?? cur.account,
+          orders: nextState.orders ?? cur.orders,
+          position: nextState.position ?? cur.position,
+          latestTick: nextState.latestTick ?? cur.latestTick,
+          events: mergeEvents(cur.events, payload.events),
+          simulator: payload.simulator ?? cur.simulator,
+          market: payload.market ?? cur.market
         }));
       }
     });
-
-    return () => {
-      socket.close();
-    };
+    return () => ws.close();
   }, [apiBaseUrl]);
 
-  const refreshState = async () => {
+  const refresh = async () => {
     setLoading(true);
-
     try {
-      const response = await fetch(`${apiBaseUrl}/api/state`, {
-        cache: "no-store"
-      });
-      const payload = await response.json() as {
-        account: AccountView;
-        orders: OrderView[];
-        position: PositionView;
-        latestTick: Record<string, unknown> | null;
-        events: EventEnvelope<unknown>[];
-      };
-
-      setState({
-        account: payload.account,
-        orders: payload.orders,
-        position: payload.position,
-        latestTick: payload.latestTick,
-        events: payload.events
-      });
+      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store" });
+      const payload = await response.json() as State;
+      setState(payload);
       setMessage("");
     } catch {
       setMessage("Failed to fetch API state.");
@@ -119,305 +407,284 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   };
 
-  const submitTick = async () => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/market-ticks`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          symbol: tickForm.symbol,
-          bid: Number(tickForm.bid),
-          ask: Number(tickForm.ask),
-          last: Number(tickForm.last),
-          spread: Number(tickForm.spread),
-          tickTime: new Date().toISOString(),
-          volatilityTag: tickForm.volatilityTag
-        })
-      });
-
-      if (!response.ok) {
-        setMessage("Failed to submit market tick.");
-        return;
-      }
-
-      setMessage("Market tick submitted.");
-    } catch {
-      setMessage("Failed to submit market tick.");
-    }
-  };
-
   const submitOrder = async () => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          accountId: orderForm.accountId,
-          symbol: orderForm.symbol,
-          side: orderForm.side,
-          orderType: orderForm.orderType,
-          quantity: Number(orderForm.quantity),
-          limitPrice: orderForm.orderType === "limit" ? Number(orderForm.limitPrice) : undefined
-        })
-      });
-
-      if (!response.ok) {
-        setMessage("Failed to submit order.");
-        return;
-      }
-
-      setMessage("Order submitted.");
-    } catch {
-      setMessage("Failed to submit order.");
-    }
+    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
+    setMessage(response.ok ? "Order submitted." : "Failed to submit order.");
   };
 
   const cancelOrder = async (orderId: string) => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          accountId: "paper-account-1",
-          orderId
-        })
-      });
-
-      if (!response.ok) {
-        setMessage("Failed to cancel order.");
-        return;
-      }
-
-      setMessage(`Order ${orderId} canceled.`);
-    } catch {
-      setMessage("Failed to cancel order.");
-    }
+    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
+    setMessage(response.ok ? `Order ${orderId} canceled.` : "Failed to cancel order.");
   };
 
   return (
-    <main style={{ minHeight: "100vh", background: "linear-gradient(145deg, #efe2cf 0%, #f7f3ea 45%, #d8e4ec 100%)", color: "#221a14", padding: 24, fontFamily: "\"Iowan Old Style\", Georgia, serif" }}>
-      <section style={{ maxWidth: 1280, margin: "0 auto" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, marginBottom: 24 }}>
-          <div>
-            <div style={{ fontSize: 12, letterSpacing: "0.24em", textTransform: "uppercase", color: "#6e6256" }}>PH1 Prototype</div>
-            <h1 style={{ fontSize: 44, margin: "4px 0 8px" }}>Stratium Trading Simulator</h1>
-            <p style={{ maxWidth: 720, margin: 0 }}>
-              Single-symbol, single-account simulation with event history, replay, market ticks, order entry, and account state inspection.
-            </p>
+    <main style={{ minHeight: "100vh", background: "#071116", color: "#dbe7ef", padding: 8, fontFamily: "\"Segoe UI\", sans-serif" }}>
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={box("12px 16px")}>
+          <div style={{ display: "grid", gridTemplateColumns: "260px 1fr auto", gap: 16, alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 30, fontWeight: 700 }}>{orderForm.symbol}</div>
+              <div style={{ color: "#7e97a5", fontSize: 12 }}>PH1 simulated perpetual market</div>
+            </div>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+              <Metric label="Price" value={fmt(stats.last, priceDigits)} strong />
+              <Metric label="24h Change" value={`${fmt(stats.change, 2)}%`} tone={stats.change && stats.change < 0 ? "down" : "up"} />
+              <Metric label="24h Low" value={fmt(stats.low, priceDigits)} />
+              <Metric label="24h High" value={fmt(stats.high, priceDigits)} />
+              <Metric label="Mark" value={fmt(state.market?.assetCtx?.markPrice ?? state.market?.markPrice, priceDigits)} />
+              <Metric label="Oracle" value={fmt(state.market?.assetCtx?.oraclePrice, priceDigits)} />
+              <Metric label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
+              <Metric label="OI" value={fmt(state.market?.assetCtx?.openInterest, 3)} />
+              <Metric label="24h Volume" value={fmt(state.market?.assetCtx?.dayNotionalVolume, 2)} />
+              <Metric label="Clock" value={clock(state.latestTick?.tickTime)} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Link href="/admin" style={ghostLinkStyle}>Admin UI</Link>
+              <button onClick={() => void refresh()} style={btnGhost}>{loading ? "Syncing" : "Refresh"}</button>
+            </div>
           </div>
-          <button onClick={() => void refreshState()} style={buttonStyle("#1f4d4d")} disabled={loading}>
-            {loading ? "Refreshing..." : "Refresh"}
-          </button>
-        </header>
-
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", marginBottom: 16 }}>
-          <Panel title="Replay">
-            <Metric label="Latest" value={replaySummary} />
-            <Metric label="Events" value={String(state.events.length)} />
-          </Panel>
-          <Panel title="Account">
-            <Metric label="Wallet" value={formatNumber(state.account?.walletBalance)} />
-            <Metric label="Available" value={formatNumber(state.account?.availableBalance)} />
-            <Metric label="Equity" value={formatNumber(state.account?.equity)} />
-            <Metric label="Risk Ratio" value={formatNumber(state.account?.riskRatio)} />
-          </Panel>
-          <Panel title="Position">
-            <Metric label="Side" value={state.position?.side ?? "flat"} />
-            <Metric label="Qty" value={formatNumber(state.position?.quantity)} />
-            <Metric label="Entry" value={formatNumber(state.position?.averageEntryPrice)} />
-            <Metric label="Unrealized" value={formatNumber(state.position?.unrealizedPnl)} />
-          </Panel>
-          <Panel title="Latest Tick">
-            <pre style={preStyle}>{JSON.stringify(state.latestTick, null, 2)}</pre>
-          </Panel>
         </div>
 
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(300px, 380px) minmax(300px, 380px) 1fr", alignItems: "start" }}>
-          <Panel title="Market Tick Input">
-            <Field label="Symbol" value={tickForm.symbol} onChange={(value) => setTickForm((current) => ({ ...current, symbol: value }))} />
-            <Field label="Bid" value={tickForm.bid} onChange={(value) => setTickForm((current) => ({ ...current, bid: value }))} />
-            <Field label="Ask" value={tickForm.ask} onChange={(value) => setTickForm((current) => ({ ...current, ask: value }))} />
-            <Field label="Last" value={tickForm.last} onChange={(value) => setTickForm((current) => ({ ...current, last: value }))} />
-            <Field label="Spread" value={tickForm.spread} onChange={(value) => setTickForm((current) => ({ ...current, spread: value }))} />
-            <Field label="Volatility" value={tickForm.volatilityTag} onChange={(value) => setTickForm((current) => ({ ...current, volatilityTag: value }))} />
-            <button onClick={() => void submitTick()} style={buttonStyle("#345c4a")}>Submit Tick</button>
-          </Panel>
-
-          <Panel title="Order Entry">
-            <Field label="Account" value={orderForm.accountId} onChange={(value) => setOrderForm((current) => ({ ...current, accountId: value }))} />
-            <Field label="Symbol" value={orderForm.symbol} onChange={(value) => setOrderForm((current) => ({ ...current, symbol: value }))} />
-            <SelectField
-              label="Side"
-              value={orderForm.side}
-              options={["buy", "sell"]}
-              onChange={(value) => setOrderForm((current) => ({ ...current, side: value }))}
-            />
-            <SelectField
-              label="Type"
-              value={orderForm.orderType}
-              options={["market", "limit"]}
-              onChange={(value) => setOrderForm((current) => ({ ...current, orderType: value }))}
-            />
-            <Field label="Quantity" value={orderForm.quantity} onChange={(value) => setOrderForm((current) => ({ ...current, quantity: value }))} />
-            <Field
-              label="Limit Price"
-              value={orderForm.limitPrice}
-              disabled={orderForm.orderType !== "limit"}
-              onChange={(value) => setOrderForm((current) => ({ ...current, limitPrice: value }))}
-            />
-            <button onClick={() => void submitOrder()} style={buttonStyle("#7d4b32")}>Submit Order</button>
-          </Panel>
-
-          <Panel title="Event Tape">
-            <div style={{ display: "grid", gap: 10, maxHeight: 480, overflow: "auto" }}>
-              {state.events.length === 0 ? (
-                <div style={{ color: "#6e6256" }}>No events yet.</div>
-              ) : (
-                state.events.slice().reverse().map((event) => (
-                  <article key={event.eventId} style={{ border: "1px solid #d3c7b5", borderRadius: 14, padding: 12, background: "#fffdf7" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                      <strong>{event.eventType}</strong>
-                      <span style={{ color: "#6e6256" }}>#{event.sequence}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(300px,360px) minmax(300px,360px)", gap: 8 }}>
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={box()}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #16262f", color: "#7e97a5", fontSize: 12 }}>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {TIMEFRAMES.map((entry) => (
+                    <button key={entry.id} onClick={() => setTimeframe(entry.id)} style={chipButton(timeframe === entry.id)} title={entry.hint}>
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 12 }}><span>Indicators</span><span>Drawing</span><span>Layout</span></div>
+              </div>
+              <div style={{ padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>{orderForm.symbol} Perp</div>
+                    <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ color: stats.change && stats.change < 0 ? "#f87171" : "#2dd4bf", fontSize: 22, fontWeight: 700 }}>{fmt(stats.last, priceDigits)}</div>
+                    <div style={{ color: "#7e97a5", fontSize: 12 }}>
+                      Spread {fmt(state.latestTick?.spread, 4)} · {state.market?.connected ? "Hyperliquid live" : state.simulator?.enabled ? "simulator live" : "paused"} · {selectedTimeframe.hint}
                     </div>
-                    <div style={{ fontSize: 12, color: "#6e6256", marginTop: 4 }}>{event.occurredAt}</div>
-                    <pre style={preStyle}>{JSON.stringify(event.payload, null, 2)}</pre>
-                  </article>
-                ))
-              )}
-            </div>
-          </Panel>
-        </div>
-
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1.2fr 1fr", marginTop: 16 }}>
-          <Panel title="Orders">
-            <div style={{ display: "grid", gap: 12 }}>
-              {state.orders.length === 0 ? (
-                <div style={{ color: "#6e6256" }}>No orders yet.</div>
-              ) : state.orders.map((order) => (
-                <article key={order.id} style={{ display: "grid", gap: 8, border: "1px solid #d3c7b5", borderRadius: 14, padding: 12, background: "#fffdf7" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <strong>{order.id}</strong>
-                    <span>{order.status}</span>
                   </div>
-                  <div>{order.side} {order.orderType} {order.quantity} {order.symbol}</div>
-                  <div style={{ fontSize: 13, color: "#6e6256" }}>
-                    filled {order.filledQuantity} / remaining {order.remainingQuantity}
-                  </div>
-                  {order.limitPrice !== undefined && <div style={{ fontSize: 13, color: "#6e6256" }}>limit {order.limitPrice}</div>}
-                  {(order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED") && (
-                    <button onClick={() => void cancelOrder(order.id)} style={buttonStyle("#8b3d3d")}>Cancel</button>
-                  )}
-                </article>
-              ))}
+                </div>
+                <CandlestickChart data={candles} volumeData={volume} dark priceDigits={priceDigits} />
+              </div>
             </div>
-          </Panel>
 
-          <Panel title="Status">
-            <pre style={preStyle}>{JSON.stringify({
-              message,
-              account: state.account,
-              position: state.position
-            }, null, 2)}</pre>
-          </Panel>
+            <div style={box()}>
+              <div style={{ display: "flex", gap: 4, padding: "0 10px", borderBottom: "1px solid #16262f" }}>
+                <TabButton active label="Balances" />
+                <TabButton active={false} label="Positions" />
+                <TabButton active label="Open Orders" />
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                      <th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Qty</th><th style={th}>Filled</th><th style={th}>Status</th><th style={th}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {state.orders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No orders yet.</td></tr> : state.orders.map((order) => (
+                      <tr key={order.id} style={{ borderTop: "1px solid #13212a" }}>
+                        <td style={td}>{order.id}</td>
+                        <td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td>
+                        <td style={td}>{order.orderType}</td>
+                        <td style={td}>{fmt(order.quantity)}</td>
+                        <td style={td}>{fmt(order.filledQuantity)}</td>
+                        <td style={td}>{order.status}</td>
+                        <td style={td}>{order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED" ? <button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel</button> : "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div style={box()}>
+            <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
+              <button onClick={() => setBookTab("book")} style={bookTab === "book" ? tabActive : tabIdle}>Order Book</button>
+              <button onClick={() => setBookTab("trades")} style={bookTab === "trades" ? tabActive : tabIdle}>Trades</button>
+            </div>
+            {bookTab === "book" ? (
+              <div style={{ padding: 14 }}>
+                <div style={bookHead}><span>Price</span><span>Size</span><span>Total</span></div>
+                {bookWithDepth.asks.map((row) => (
+                  <BookRow
+                    key={`a-${row.price}`}
+                    price={row.price}
+                    size={row.size}
+                    total={row.total}
+                    tone="ask"
+                    maxTotal={bookWithDepth.maxAskTotal}
+                    priceDigits={priceDigits}
+                  />
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", margin: "10px 0", padding: "8px 10px", borderRadius: 8, background: "#10222c" }}><span>Spread</span><strong>{fmt(state.latestTick?.spread, 4)}</strong></div>
+                {bookWithDepth.bids.map((row) => (
+                  <BookRow
+                    key={`b-${row.price}`}
+                    price={row.price}
+                    size={row.size}
+                    total={row.total}
+                    tone="bid"
+                    maxTotal={bookWithDepth.maxBidTotal}
+                    priceDigits={priceDigits}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: 14, display: "grid", gap: 8 }}>
+                <div style={bookHead}><span>Time</span><span>Price</span><span>Size</span></div>
+                {trades.length === 0 ? <div style={{ color: "#60727f" }}>No trades yet.</div> : trades.map((trade) => {
+                  return <div key={trade.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, opacity: trade.source === "tape" ? 0.84 : 1 }}><span>{clock(trade.time)}</span><strong style={{ color: trade.side === "sell" ? "#f87171" : "#2dd4bf" }}>{fmt(trade.price, priceDigits)}</strong><span>{fmt(trade.size, 4)}</span></div>;
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={box()}>
+              <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
+                <button onClick={() => setTab("market")} style={tab === "market" ? tabActive : tabIdle}>Market</button>
+                <button onClick={() => setTab("limit")} style={tab === "limit" ? tabActive : tabIdle}>Limit</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "0 14px 14px" }}>
+                <button onClick={() => setSide("buy")} style={side === "buy" ? btnBuyActive : btnSide}>Buy</button>
+                <button onClick={() => setSide("sell")} style={side === "sell" ? btnSellActive : btnSide}>Sell</button>
+              </div>
+              <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
+                <Line label="Available" value={`${fmt(state.account?.availableBalance, 2)} USDT`} />
+                <Line label="Rolling Market" value={state.simulator?.enabled ? `Running · ${state.simulator.intervalMs}ms` : "Stopped"} />
+                <Line label="Mark Price" value={fmt(state.market?.assetCtx?.markPrice ?? state.market?.markPrice, priceDigits)} />
+                <Line label="Oracle Price" value={fmt(state.market?.assetCtx?.oraclePrice, priceDigits)} />
+                <Line label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
+                <Line label="24h Notional" value={fmt(state.market?.assetCtx?.dayNotionalVolume, 2)} />
+                <Field label="Account" value={orderForm.accountId} onChange={(v) => setOrderForm((s) => ({ ...s, accountId: v }))} />
+                <Field label="Symbol" value={orderForm.symbol} onChange={(v) => setOrderForm((s) => ({ ...s, symbol: v }))} />
+                <Field label="Size" value={orderForm.quantity} onChange={(v) => setOrderForm((s) => ({ ...s, quantity: v }))} />
+                {tab === "limit" && <Field label="Limit Price" value={orderForm.limitPrice} onChange={(v) => setOrderForm((s) => ({ ...s, limitPrice: v }))} />}
+                <button onClick={() => void submitOrder()} style={side === "buy" ? btnBuySubmit : btnSellSubmit}>{side === "buy" ? "Buy" : "Sell"} {orderForm.symbol}</button>
+                <Link href="/admin" style={ghostLinkStyle}>Open Admin Controls</Link>
+              </div>
+            </div>
+
+            <div style={box()}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>Account Equity</div>
+              <div style={{ padding: 14, display: "grid", gap: 10 }}>
+                <Line label="Wallet" value={`${fmt(state.account?.walletBalance, 2)} USDT`} />
+                <Line label="Equity" value={`${fmt(state.account?.equity, 2)} USDT`} />
+                <Line label="Position Margin" value={`${fmt(state.account?.positionMargin, 2)} USDT`} />
+                <Line label="Position" value={state.position?.side ?? "flat"} />
+                <Line label="Entry Price" value={fmt(state.position?.averageEntryPrice, 4)} />
+                <Line label="Unrealized" value={`${fmt(state.position?.unrealizedPnl, 4)} USDT`} />
+              </div>
+            </div>
+          </div>
         </div>
-      </section>
+      </div>
     </main>
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section style={{ background: "rgba(255, 251, 244, 0.92)", border: "1px solid #d6ccbc", borderRadius: 20, padding: 18, boxShadow: "0 20px 40px rgba(34, 26, 20, 0.08)" }}>
-      <h2 style={{ marginTop: 0, marginBottom: 14, fontSize: 24 }}>{title}</h2>
-      {children}
-    </section>
-  );
+function Metric({ label, value, strong, tone }: { label: string; value: string; strong?: boolean; tone?: "up" | "down" }) {
+  return <div><div style={{ color: "#60727f", fontSize: 11 }}>{label}</div><div style={{ color: strong ? "#f8fafc" : tone === "down" ? "#f87171" : tone === "up" ? "#2dd4bf" : "#dbe7ef", fontSize: strong ? 18 : 15, fontWeight: 700 }}>{value}</div></div>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Line({ label, value }: { label: string; value: string }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}><span style={{ color: "#7e97a5" }}>{label}</span><strong>{value}</strong></div>;
+}
+
+function Field({ label, value, onChange, compact }: { label: string; value: string; onChange: (value: string) => void; compact?: boolean }) {
+  return <label style={{ display: "grid", gap: 6 }}><span style={{ color: "#7e97a5", fontSize: 12 }}>{label}</span><input value={value} onChange={(e) => onChange(e.target.value)} style={{ borderRadius: 10, border: "1px solid #22343d", background: "#101b22", color: "#f8fafc", padding: compact ? "9px 10px" : "11px 12px" }} /></label>;
+}
+
+function BookRow({
+  price,
+  size,
+  total,
+  tone,
+  maxTotal,
+  priceDigits
+}: {
+  price: number;
+  size: number;
+  total: number;
+  tone: "ask" | "bid";
+  maxTotal: number;
+  priceDigits: number;
+}) {
+  const width = maxTotal > 0 ? `${Math.max((total / maxTotal) * 100, 2)}%` : "0%";
+
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "8px 0", borderBottom: "1px solid #e5dccd" }}>
-      <span style={{ color: "#6e6256" }}>{label}</span>
-      <strong>{value}</strong>
+    <div
+      style={{
+        position: "relative",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr 1fr",
+        gap: 8,
+        padding: "6px 8px",
+        borderRadius: 6,
+        overflow: "hidden"
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          width,
+          left: tone === "bid" ? 0 : "auto",
+          right: tone === "ask" ? 0 : "auto",
+          background: tone === "ask" ? "rgba(248, 113, 113, 0.16)" : "rgba(45, 212, 191, 0.16)",
+          pointerEvents: "none"
+        }}
+      />
+      <span style={{ position: "relative", zIndex: 1, color: tone === "ask" ? "#f87171" : "#2dd4bf" }}>{fmt(price, priceDigits)}</span>
+      <span style={{ position: "relative", zIndex: 1, textAlign: "right" }}>{fmt(size, 4)}</span>
+      <span style={{ position: "relative", zIndex: 1, textAlign: "right", color: "#c8d6df" }}>{fmt(total, 4)}</span>
     </div>
   );
 }
 
-function Field({
-  label,
-  value,
-  disabled,
-  onChange
-}: {
-  label: string;
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-      <span style={{ fontSize: 13, color: "#6e6256" }}>{label}</span>
-      <input
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        style={inputStyle}
-      />
-    </label>
-  );
+function TabButton({ label, active }: { label: string; active: boolean }) {
+  return <button style={{ border: 0, background: "transparent", color: active ? "#f8fafc" : "#7e97a5", padding: "12px 10px", borderBottom: active ? "2px solid #2dd4bf" : "2px solid transparent" }}>{label}</button>;
 }
 
-function SelectField({
-  label,
-  value,
-  options,
-  onChange
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-      <span style={{ fontSize: 13, color: "#6e6256" }}>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} style={inputStyle}>
-        {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  borderRadius: 12,
-  border: "1px solid #cfc3b0",
-  padding: "10px 12px",
-  background: "#fffdfa",
-  color: "#221a14"
-};
-
-const preStyle: React.CSSProperties = {
-  margin: 0,
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  fontSize: 12,
-  lineHeight: 1.45
-};
-
-const buttonStyle = (background: string): React.CSSProperties => ({
+const box = (padding?: string): React.CSSProperties => ({ background: "#0b161d", border: "1px solid #16262f", borderRadius: 12, overflow: "hidden", padding });
+const chipButton = (active?: boolean): React.CSSProperties => ({ color: active ? "#f8fafc" : "#7e97a5", background: active ? "#15252d" : "transparent", border: active ? "1px solid #23414d" : "1px solid transparent", padding: "5px 8px", borderRadius: 8, cursor: "pointer" });
+const tabIdle: React.CSSProperties = {
   border: 0,
-  borderRadius: 999,
-  background,
-  color: "#fffdf7",
-  padding: "12px 16px",
+  background: "transparent",
+  color: "#7e97a5",
+  padding: "8px 12px",
+  borderBottomWidth: 2,
+  borderBottomStyle: "solid",
+  borderBottomColor: "transparent"
+};
+const tabActive: React.CSSProperties = { ...tabIdle, color: "#f8fafc", borderBottomColor: "#2dd4bf" };
+const btnGhost: React.CSSProperties = { border: "1px solid #253740", background: "#111d24", color: "#dce7ee", padding: "10px 14px", borderRadius: 10, cursor: "pointer" };
+const btnInline: React.CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
+const btnSide: React.CSSProperties = {
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#24353d",
+  background: "#132229",
+  color: "#d6e2ea",
+  padding: "10px 14px",
+  borderRadius: 10,
   cursor: "pointer",
-  fontWeight: 600
-});
+  fontWeight: 700
+};
+const btnBuyActive: React.CSSProperties = { ...btnSide, background: "#1e6b5f", borderColor: "#1e6b5f", color: "#f8fafc" };
+const btnSellActive: React.CSSProperties = { ...btnSide, background: "#7f3d38", borderColor: "#7f3d38", color: "#f8fafc" };
+const btnBuySubmit: React.CSSProperties = { border: 0, borderRadius: 12, background: "#22c55e", color: "#041015", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
+const btnSellSubmit: React.CSSProperties = { border: 0, borderRadius: 12, background: "#ef4444", color: "#fff7f7", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
+const th: React.CSSProperties = { padding: "12px 14px", fontWeight: 500 };
+const td: React.CSSProperties = { padding: "12px 14px" };
+const bookHead: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, color: "#60727f", fontSize: 12, padding: "0 8px 8px" };

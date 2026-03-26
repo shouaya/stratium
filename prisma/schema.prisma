@@ -116,3 +116,82 @@ model SimulationEvent {
 
   @@unique([simulationSessionId, sequence])
 }
+
+model MarketBookSnapshot {
+  id        String   @id
+  source    String
+  coin      String
+  symbol    String
+  bestBid   Decimal? @db.Decimal(20, 8)
+  bestAsk   Decimal? @db.Decimal(20, 8)
+  spread    Decimal? @db.Decimal(20, 8)
+  capturedAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model MarketBookLevel {
+  id         String   @id
+  snapshotId String
+  source     String
+  coin       String
+  side       String
+  levelIndex Int
+  price      Decimal  @db.Decimal(20, 8)
+  size       Decimal  @db.Decimal(20, 8)
+  orders     Int
+  capturedAt DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([coin, side, capturedAt])
+  @@index([snapshotId, side, levelIndex])
+}
+
+model MarketTrade {
+  id         String   @id
+  source     String
+  coin       String
+  side       String
+  price      Decimal  @db.Decimal(20, 8)
+  size       Decimal  @db.Decimal(20, 8)
+  tradeTime  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([coin, tradeTime])
+}
+
+model MarketCandle {
+  id         String   @id
+  source     String
+  coin       String
+  interval   String
+  openTime   DateTime
+  closeTime  DateTime
+  open       Decimal  @db.Decimal(20, 8)
+  high       Decimal  @db.Decimal(20, 8)
+  low        Decimal  @db.Decimal(20, 8)
+  close      Decimal  @db.Decimal(20, 8)
+  volume     Decimal  @db.Decimal(20, 8)
+  tradeCount Int
+  createdAt  DateTime @default(now())
+
+  @@unique([coin, interval, openTime])
+  @@index([coin, interval, openTime])
+}
+
+model MarketAssetContext {
+  id              String   @id @default(cuid())
+  source          String
+  coin            String
+  markPrice       Decimal? @db.Decimal(20, 8)
+  midPrice        Decimal? @db.Decimal(20, 8)
+  oraclePrice     Decimal? @db.Decimal(20, 8)
+  fundingRate     Decimal? @db.Decimal(20, 8)
+  openInterest    Decimal? @db.Decimal(20, 8)
+  prevDayPrice    Decimal? @db.Decimal(20, 8)
+  dayNotionalVolume Decimal? @db.Decimal(20, 8)
+  capturedAt      DateTime
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  @@index([coin, capturedAt])
+}

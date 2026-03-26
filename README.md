@@ -74,6 +74,12 @@ docker-compose down -v
 docker-compose up --build
 ```
 
+The first `--build` installs dependencies into the images. After that, plain restarts do not reinstall packages:
+
+```powershell
+docker-compose restart api web
+```
+
 ## Stop
 
 ```powershell
@@ -157,6 +163,17 @@ docker-compose logs -f adminer
 ```
 
 The compose file uses `json-file` logging with rotation.
+
+## Docker Notes
+
+- `apps/api/Dockerfile` and `apps/web/Dockerfile` install `pnpm` dependencies during image build
+- `docker-compose restart` only restarts containers; it does not rerun `pnpm install`
+- Rebuild images after dependency changes:
+
+```powershell
+docker-compose build api web
+docker-compose up -d api web
+```
 
 Local ad hoc logs, if you create them manually, should go under `logs/`.
 

@@ -1,0 +1,15 @@
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+dist/
+**/dist/
+logs/
+.git/
+.idea/
+.vscode/
+node-compile-cache/
+*.log
+*.err.log
+*.tsbuildinfo
+**/*.tsbuildinfo

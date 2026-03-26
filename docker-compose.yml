@@ -22,7 +22,9 @@ services:
       retries: 10
 
   api:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     container_name: stratium-api
     logging:
       driver: "json-file"
@@ -30,9 +32,8 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "npm install -g pnpm@10.6.2 && pnpm install --force --frozen-lockfile=false && pnpm exec prisma db push && pnpm --filter @stratium/api dev"
+    command: sh -lc "pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
     environment:
-      CI: "true"
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/stratium?schema=public}
       PORT: 4000
     ports:
@@ -48,7 +49,9 @@ services:
       - db
 
   web:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
     container_name: stratium-web
     logging:
       driver: "json-file"
@@ -56,9 +59,8 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "npm install -g pnpm@10.6.2 && pnpm install --force --frozen-lockfile=false && pnpm --filter @stratium/web dev"
+    command: sh -lc "pnpm --filter @stratium/web dev"
     environment:
-      CI: "true"
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
     ports:
       - "3000:3000"
