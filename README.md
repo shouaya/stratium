@@ -1,5 +1,7 @@
 # Stratium
 
+![Stratium UI](docs/stratium.png)
+
 Stratium is a PH1 trading simulation platform built around a deterministic trading core and a basic Web prototype.
 
 Current PH1 focus:

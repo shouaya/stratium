@@ -171,7 +171,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"market" | "limit">("market");
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
-  const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("openOrders");
+  const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("balances");
   const [timeframe, setTimeframe] = useState<TimeframeId>("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderForm, setOrderForm] = useState({ accountId: "paper-account-1", symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
@@ -589,6 +589,13 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
         };
         const order = state.orders.find((entry) => entry.id === payload.orderId);
         const orderSide = order?.side ?? "buy";
+        const notional = payload.fillPrice * payload.fillQuantity;
+        const resolvedFeeRate = Number.isFinite(payload.feeRate) && payload.feeRate > 0
+          ? payload.feeRate
+          : notional > 0
+            ? Number((payload.fee / notional).toFixed(8))
+            : 0;
+        const resolvedLiquidityRole = payload.liquidityRole ?? (order?.orderType === "limit" ? "maker" : "taker");
         const entryPrice = runningAverageEntryPrice;
         let realizedPnl = 0;
         const signedPositionQuantity = runningPositionSide === "long" ? runningQuantity : runningPositionSide === "short" ? -runningQuantity : 0;
@@ -633,8 +640,8 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
           quantity: payload.fillQuantity,
           fee: payload.fee,
           slippage: payload.slippage,
-          feeRate: payload.feeRate,
-          liquidityRole: payload.liquidityRole,
+          feeRate: resolvedFeeRate,
+          liquidityRole: resolvedLiquidityRole,
           filledAt: payload.filledAt,
           entryPrice: isClosingFill ? entryPrice : payload.fillPrice,
           exitPrice: isClosingFill ? payload.fillPrice : undefined,
@@ -765,7 +772,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
     <main style={{ minHeight: "100dvh", width: "100%", background: "#071116", color: "#dbe7ef", padding: 0, fontFamily: "\"Segoe UI\", sans-serif" }}>
       <div style={{ display: "grid", gap: 8, padding: 0, boxSizing: "border-box" }}>
         <div style={{ ...box("12px 16px"), position: "sticky", top: 0, zIndex: 20, borderRadius: 0, backdropFilter: "blur(10px)", background: "rgba(11, 22, 29, 0.92)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0,1fr) auto", gap: 16, alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <img
                 src="/favicon.png"
@@ -791,11 +798,16 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               <Metric label="24h Volume" value={state.market?.assetCtx?.dayNotionalVolume != null ? `$${fmt(state.market.assetCtx.dayNotionalVolume, 2)}` : "-"} />
               <Metric label="Clock" value={clock(state.latestTick?.tickTime)} />
             </div>
+            <div style={{ justifySelf: "end", textAlign: "right" }}>
+              <div style={{ color: "#60727f", fontSize: 11 }}>Account</div>
+              <div style={{ color: "#f8fafc", fontSize: 14, fontWeight: 700 }}>{state.account?.accountId ?? "paper-account-1"}</div>
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(300px,360px) minmax(300px,360px)", gap: 8, minHeight: 0, padding: "0 8px 8px" }}>
-          <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(300px,360px)", gap: 8, minHeight: 0, padding: "0 8px 8px", alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(300px,360px)", gap: 8, minHeight: 0, alignItems: "stretch" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, height: "100%" }}>
             <div style={box()}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #16262f", color: "#7e97a5", fontSize: 12 }}>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -807,8 +819,8 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </div>
                 <div style={{ display: "flex", gap: 12 }}><span>Indicators</span><span>Drawing</span><span>Layout</span></div>
               </div>
-              <div style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700 }}>{contractCoin} Perp</div>
                     <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
@@ -824,14 +836,14 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             </div>
 
-            <div style={box()}>
+            <div style={{ ...box(), display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
               <div style={{ display: "flex", gap: 4, padding: "0 10px", borderBottom: "1px solid #16262f" }}>
                 <TabButton active={accountTab === "balances"} label="Balances" onClick={() => setAccountTab("balances")} />
                 <TabButton active={accountTab === "positions"} label="Positions" onClick={() => setAccountTab("positions")} />
                 <TabButton active={accountTab === "openOrders"} label="Open Orders" onClick={() => setAccountTab("openOrders")} />
                 <TabButton active={accountTab === "fills"} label="Fill History" onClick={() => setAccountTab("fills")} />
               </div>
-              <div style={{ overflowX: "auto" }}>
+              <div style={{ overflowX: "auto", overflowY: "auto", flex: 1, minHeight: 0 }}>
                 {accountTab === "balances" ? (
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
@@ -969,8 +981,9 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             )}
           </div>
+          </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gap: 8, alignContent: "start" }}>
             <div style={box()}>
               <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
                 <button onClick={() => setTab("market")} style={tab === "market" ? tabActive : tabIdle}>Market</button>
@@ -981,13 +994,8 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <button onClick={() => setSide("sell")} style={side === "sell" ? btnSellActive : btnSide}>Sell</button>
               </div>
               <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
-                <Line label="Available Margin" value={`${fmt(state.account?.availableBalance, 2)} USDC`} />
                 <Line label="Leverage" value={`${leverageInUse}x / max ${state.symbolConfig?.maxLeverage ?? leverageDraft}x`} />
                 <Line label="Rolling Market" value={state.simulator?.enabled ? `Running · ${state.simulator.intervalMs}ms` : "Stopped"} />
-                <Line label="Mark Price" value={fmt(state.market?.assetCtx?.markPrice ?? state.market?.markPrice, priceDigits)} />
-                <Line label="Oracle Price" value={fmt(state.market?.assetCtx?.oraclePrice, priceDigits)} />
-                <Line label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
-                <Line label="24h Notional" value={fmt(state.market?.assetCtx?.dayNotionalVolume, 2)} />
                 <label style={{ display: "grid", gap: 6 }}>
                   <span style={{ color: "#7e97a5", fontSize: 12 }}>Adjust Leverage</span>
                   <input
@@ -1005,14 +1013,6 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </div>
                   <button onClick={() => void updateLeverage()} style={btnGhost}>Apply Leverage</button>
                 </label>
-                <Field label="Account" value={orderForm.accountId} onChange={(v) => setOrderForm((s) => ({ ...s, accountId: v }))} />
-                <Field
-                  label="Contract"
-                  value={orderForm.symbol}
-                  onChange={(v) => setOrderForm((s) => ({ ...s, symbol: v }))}
-                  readOnly
-                  hint="Locked to the active BTC perp market."
-                />
                 <Field
                   label="Contracts"
                   value={orderForm.quantity}
@@ -1092,18 +1092,6 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                     <button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel Order</button>
                   </div>
                 ))}
-              </div>
-            </div>
-
-            <div style={box()}>
-              <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>Account Equity</div>
-              <div style={{ padding: 14, display: "grid", gap: 10 }}>
-                <Line label="Wallet" value={`${fmt(state.account?.walletBalance, 2)} USDC`} />
-                <Line label="Equity" value={`${fmt(state.account?.equity, 2)} USDC`} />
-                <Line label="Position Margin" value={`${fmt(state.account?.positionMargin, 2)} USDC`} />
-                <Line label="Position" value={state.position?.side ?? "flat"} />
-                <Line label="Entry Price" value={fmt(state.position?.averageEntryPrice, 4)} />
-                <Line label="Unrealized PnL" value={`${fmt(state.position?.unrealizedPnl, 4)} USDC`} />
               </div>
             </div>
           </div>

@@ -226,7 +226,7 @@ export function CandlestickChart({
           fontVariantNumeric: "tabular-nums"
         }}
       />
-      <div ref={containerRef} style={{ width: "100%", height: 430, borderRadius: 12, overflow: "hidden" }} />
+      <div ref={containerRef} style={{ width: "100%", height: 360, borderRadius: 12, overflow: "hidden" }} />
     </div>
   );
 }
