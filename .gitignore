@@ -1,0 +1,11 @@
+node_modules
+.pnpm-store
+.next
+dist
+coverage
+.env
+.env.local
+node-compile-cache/
+logs/*.log
+logs/*.err.log
+node-compile-cache/

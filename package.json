@@ -1,0 +1,21 @@
+{
+  "name": "stratium",
+  "private": true,
+  "packageManager": "pnpm@10.6.2",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @stratium/api --filter @stratium/web dev",
+    "lint": "pnpm -r lint",
+    "postinstall": "pnpm exec prisma generate",
+    "prisma:generate": "pnpm exec prisma generate",
+    "db:push": "pnpm exec prisma db push",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.19.2",
+    "@types/node": "^22.13.10",
+    "prisma": "^6.5.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  }
+}

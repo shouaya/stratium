@@ -1,0 +1,16 @@
+{
+  "name": "@stratium/trading-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "pnpm exec tsc -p tsconfig.json",
+    "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm exec vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@stratium/shared": "workspace:*"
+  }
+}

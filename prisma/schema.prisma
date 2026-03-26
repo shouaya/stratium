@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id               String   @id
+  walletBalance    Decimal  @db.Decimal(20, 8)
+  availableBalance Decimal  @db.Decimal(20, 8)
+  positionMargin   Decimal  @db.Decimal(20, 8)
+  orderMargin      Decimal  @db.Decimal(20, 8)
+  equity           Decimal  @db.Decimal(20, 8)
+  realizedPnl      Decimal  @db.Decimal(20, 8)
+  unrealizedPnl    Decimal  @db.Decimal(20, 8)
+  riskRatio        Decimal  @db.Decimal(20, 8)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Order {
+  id                String   @id
+  accountId        String
+  symbol           String
+  side             String
+  orderType        String
+  status           String
+  quantity         Decimal  @db.Decimal(20, 8)
+  limitPrice       Decimal? @db.Decimal(20, 8)
+  filledQuantity   Decimal  @default(0) @db.Decimal(20, 8)
+  remainingQuantity Decimal  @db.Decimal(20, 8)
+  averageFillPrice  Decimal? @db.Decimal(20, 8)
+  rejectionCode     String?
+  rejectionMessage  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Fill {
+  id         String   @id
+  orderId    String
+  accountId  String
+  symbol     String
+  price      Decimal  @db.Decimal(20, 8)
+  quantity   Decimal  @db.Decimal(20, 8)
+  slippage   Decimal  @db.Decimal(20, 8)
+  fee        Decimal  @db.Decimal(20, 8)
+  createdAt  DateTime @default(now())
+}
+
+model Position {
+  id                String   @id
+  accountId         String
+  symbol            String
+  side              String
+  quantity          Decimal  @db.Decimal(20, 8)
+  averageEntryPrice Decimal  @db.Decimal(20, 8)
+  markPrice         Decimal  @db.Decimal(20, 8)
+  realizedPnl       Decimal  @db.Decimal(20, 8)
+  unrealizedPnl     Decimal  @db.Decimal(20, 8)
+  initialMargin     Decimal  @db.Decimal(20, 8)
+  maintenanceMargin Decimal  @db.Decimal(20, 8)
+  liquidationPrice  Decimal  @db.Decimal(20, 8)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model LedgerEntry {
+  id         String   @id @default(cuid())
+  accountId  String
+  orderId    String?
+  fillId     String?
+  entryType  String
+  asset      String
+  amount     Decimal  @db.Decimal(20, 8)
+  createdAt  DateTime @default(now())
+}
+
+model LiquidationEvent {
+  id                 String   @id @default(cuid())
+  accountId          String
+  positionId         String
+  liquidationOrderId String
+  triggerPrice       Decimal  @db.Decimal(20, 8)
+  executionPrice     Decimal  @db.Decimal(20, 8)
+  executionQuantity  Decimal  @db.Decimal(20, 8)
+  createdAt          DateTime @default(now())
+}
+
+model MarketTick {
+  id            String   @id
+  symbol        String
+  bid           Decimal  @db.Decimal(20, 8)
+  ask           Decimal  @db.Decimal(20, 8)
+  last          Decimal  @db.Decimal(20, 8)
+  spread        Decimal  @db.Decimal(20, 8)
+  volatilityTag String?
+  tickTime      DateTime
+  createdAt     DateTime @default(now())
+}
+
+model SimulationEvent {
+  id                  String   @id
+  sequence            Int
+  simulationSessionId String
+  accountId           String
+  symbol              String
+  source              String
+  eventType           String
+  payload             Json
+  occurredAt          DateTime
+  createdAt           DateTime @default(now())
+
+  @@unique([simulationSessionId, sequence])
+}
