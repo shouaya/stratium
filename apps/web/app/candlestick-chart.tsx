@@ -52,7 +52,8 @@ export function CandlestickChart({
     }
 
     const chart = createChart(container, {
-      autoSize: true,
+      width: container.clientWidth,
+      height: container.clientHeight,
       layout: {
         background: {
           type: ColorType.Solid,
@@ -179,10 +180,7 @@ export function CandlestickChart({
     updateLegend();
 
     const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({
-        width: container.clientWidth,
-        height: container.clientHeight
-      });
+      chart.resize(container.clientWidth, container.clientHeight);
     });
 
     resizeObserver.observe(container);
@@ -228,7 +226,7 @@ export function CandlestickChart({
           fontVariantNumeric: "tabular-nums"
         }}
       />
-      <div ref={containerRef} style={{ width: "100%", height: 520, borderRadius: 12, overflow: "hidden" }} />
+      <div ref={containerRef} style={{ width: "100%", height: 430, borderRadius: 12, overflow: "hidden" }} />
     </div>
   );
 }

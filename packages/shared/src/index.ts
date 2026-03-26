@@ -31,6 +31,7 @@ export type OrderStatus =
   | "REJECTED";
 
 export type PositionSide = "long" | "short" | "flat";
+export type LiquidityRole = "maker" | "taker";
 
 export type RejectionCode =
   | "INVALID_SYMBOL"
@@ -129,6 +130,7 @@ export interface TradingSymbolConfig {
   leverage: number;
   maintenanceMarginRate: number;
   takerFeeRate: number;
+  makerFeeRate: number;
   baseSlippageBps: number;
   partialFillEnabled: boolean;
 }
@@ -174,6 +176,8 @@ export interface FillPayload {
   remainingQuantity: number;
   slippage: number;
   fee: number;
+  feeRate: number;
+  liquidityRole: LiquidityRole;
   filledAt: string;
 }
 

@@ -117,6 +117,38 @@ model SimulationEvent {
   @@unique([simulationSessionId, sequence])
 }
 
+model SymbolConfig {
+  id                           String   @id @default(cuid())
+  source                       String
+  assetIndex                   Int
+  coin                         String
+  symbol                       String   @unique
+  quoteAsset                   String
+  contractType                 String
+  contractMultiplier           Decimal  @db.Decimal(20, 8)
+  szDecimals                   Int
+  maxPriceDecimals             Int
+  maxLeverage                  Int
+  marginTableId                Int
+  onlyIsolated                 Boolean  @default(false)
+  marginMode                   String?
+  isDelisted                   Boolean  @default(false)
+  isActive                     Boolean  @default(true)
+  baseTakerFeeRate             Decimal  @db.Decimal(20, 8)
+  baseMakerFeeRate             Decimal  @db.Decimal(20, 8)
+  engineDefaultLeverage        Int
+  engineMaintenanceMarginRate  Decimal  @db.Decimal(20, 8)
+  engineBaseSlippageBps        Int
+  enginePartialFillEnabled     Boolean  @default(false)
+  lastSyncedAt                 DateTime
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+
+  @@unique([source, assetIndex])
+  @@unique([source, coin])
+  @@index([isActive, symbol])
+}
+
 model MarketBookSnapshot {
   id        String   @id
   source    String
@@ -176,6 +208,22 @@ model MarketCandle {
 
   @@unique([coin, interval, openTime])
   @@index([coin, interval, openTime])
+}
+
+model MarketVolumeRecord {
+  id         String   @id
+  source     String
+  coin       String
+  interval   String
+  bucketStart DateTime
+  bucketEnd   DateTime
+  volume     Decimal  @db.Decimal(20, 8)
+  tradeCount Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([coin, interval, bucketStart])
+  @@index([coin, interval, bucketStart])
 }
 
 model MarketAssetContext {

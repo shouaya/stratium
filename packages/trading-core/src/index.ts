@@ -5,6 +5,7 @@ import type {
   CreateOrderInput,
   EventEnvelope,
   FillPayload,
+  LiquidityRole,
   MarginPayload,
   MarketTick,
   OrderAcceptedPayload,
@@ -54,6 +55,7 @@ const DEFAULT_SYMBOL_CONFIG: TradingSymbolConfig = {
   leverage: 10,
   maintenanceMarginRate: 0.05,
   takerFeeRate: 0.0005,
+  makerFeeRate: 0.00015,
   baseSlippageBps: 5,
   partialFillEnabled: false
 };
@@ -107,7 +109,7 @@ interface PositionComputationResult {
 export class TradingEngine {
   private state: TradingEngineState;
 
-  private readonly symbolConfig: TradingSymbolConfig;
+  private symbolConfig: TradingSymbolConfig;
 
   constructor(
     initialState: TradingEngineState = createInitialTradingState(),
@@ -118,6 +120,20 @@ export class TradingEngine {
   }
 
   getState(): TradingEngineState {
+    return this.state;
+  }
+
+  getSymbolConfig(): TradingSymbolConfig {
+    return this.symbolConfig;
+  }
+
+  setLeverage(leverage: number): TradingEngineState {
+    this.symbolConfig = {
+      ...this.symbolConfig,
+      leverage
+    };
+    this.refreshAccountState();
+
     return this.state;
   }
 
@@ -353,9 +369,11 @@ export class TradingEngine {
     }
 
     const fillQuantity = order.remainingQuantity;
-    const fillPrice = this.applySlippage(order.side, executable);
+    const liquidityRole = this.getLiquidityRole(order, occurredAt);
+    const fillPrice = this.applyExecutionPricing(order.side, executable, liquidityRole);
     const fillNotional = fillQuantity * fillPrice;
-    const fee = round(fillNotional * this.symbolConfig.takerFeeRate);
+    const feeRate = liquidityRole === "maker" ? this.symbolConfig.makerFeeRate : this.symbolConfig.takerFeeRate;
+    const fee = round(fillNotional * feeRate);
     const fillId = `fill_${this.state.nextFillId}`;
     const nextFilledQuantity = round(order.filledQuantity + fillQuantity);
     const nextRemainingQuantity = round(order.remainingQuantity - fillQuantity);
@@ -386,6 +404,8 @@ export class TradingEngine {
       remainingQuantity: nextRemainingQuantity,
       slippage,
       fee,
+      feeRate,
+      liquidityRole,
       filledAt: occurredAt
     };
 
@@ -529,6 +549,32 @@ export class TradingEngine {
   }
 
   private recalculateAccountFromPosition(events: EventEnvelope<unknown>[], occurredAt: string): void {
+    this.refreshAccountState();
+
+    const balancePayload: AccountBalancePayload = {
+      walletBalance: this.state.account.walletBalance,
+      availableBalance: this.state.account.availableBalance,
+      positionMargin: this.state.account.positionMargin,
+      orderMargin: this.state.account.orderMargin,
+      equity: this.state.account.equity
+    };
+
+    const marginPayload: MarginPayload = {
+      initialMargin: this.state.position.initialMargin,
+      maintenanceMargin: this.state.position.maintenanceMargin,
+      riskRatio: this.state.account.riskRatio,
+      liquidationPrice: this.state.position.liquidationPrice
+    };
+
+    events.push(
+      this.createEvent("AccountBalanceUpdated", "system", this.state.position.symbol, balancePayload, occurredAt)
+    );
+    events.push(
+      this.createEvent("MarginUpdated", "system", this.state.position.symbol, marginPayload, occurredAt)
+    );
+  }
+
+  private refreshAccountState(): void {
     const position = {
       ...this.state.position,
       markPrice: this.state.latestTick?.last ?? this.state.position.markPrice
@@ -570,28 +616,6 @@ export class TradingEngine {
         riskRatio
       }
     };
-
-    const balancePayload: AccountBalancePayload = {
-      walletBalance: this.state.account.walletBalance,
-      availableBalance,
-      positionMargin,
-      orderMargin: 0,
-      equity
-    };
-
-    const marginPayload: MarginPayload = {
-      initialMargin: positionMargin,
-      maintenanceMargin,
-      riskRatio,
-      liquidationPrice
-    };
-
-    events.push(
-      this.createEvent("AccountBalanceUpdated", "system", this.state.position.symbol, balancePayload, occurredAt)
-    );
-    events.push(
-      this.createEvent("MarginUpdated", "system", this.state.position.symbol, marginPayload, occurredAt)
-    );
   }
 
   private computeRealizedPnl(
@@ -690,7 +714,9 @@ export class TradingEngine {
     const referencePrice = input.orderType === "market"
       ? this.getMarketReferencePrice(input.side)
       : input.limitPrice ?? 0;
-    const estimatedInitialMargin = round((input.quantity * referencePrice) / this.symbolConfig.leverage);
+    const estimatedInitialMargin = round(
+      (this.getIncrementalExposureQuantity(input.side, input.quantity) * referencePrice) / this.symbolConfig.leverage
+    );
 
     if (estimatedInitialMargin > this.state.account.availableBalance) {
       return {
@@ -726,7 +752,32 @@ export class TradingEngine {
     return side === "buy" ? this.state.latestTick.ask : this.state.latestTick.bid;
   }
 
-  private applySlippage(side: OrderSide, referencePrice: number): number {
+  private getIncrementalExposureQuantity(side: OrderSide, quantity: number): number {
+    const currentSignedQuantity = this.toSignedQuantity(this.state.position.side, this.state.position.quantity);
+    const incomingSignedQuantity = side === "buy" ? quantity : -quantity;
+
+    if (currentSignedQuantity === 0 || Math.sign(currentSignedQuantity) === Math.sign(incomingSignedQuantity)) {
+      return quantity;
+    }
+
+    const remainingExposure = Math.abs(incomingSignedQuantity) - Math.abs(currentSignedQuantity);
+
+    return round(Math.max(remainingExposure, 0));
+  }
+
+  private getLiquidityRole(order: OrderView, occurredAt: string): LiquidityRole {
+    if (order.orderType === "market") {
+      return "taker";
+    }
+
+    return order.createdAt === occurredAt ? "taker" : "maker";
+  }
+
+  private applyExecutionPricing(side: OrderSide, referencePrice: number, liquidityRole: LiquidityRole): number {
+    if (liquidityRole === "maker") {
+      return round(referencePrice);
+    }
+
     const slippage = round(referencePrice * (this.symbolConfig.baseSlippageBps / 10000));
 
     return side === "buy"

@@ -39,6 +39,7 @@ docs/
   event-spec.md
   order-rules.md
   margin-rules.md
+  data-model-reference.md
 prisma/
   schema.prisma
 docker-compose.yml
@@ -128,6 +129,7 @@ If you are connecting from outside the Docker network, try `localhost` instead o
 
 - `GET /health`
 - `GET /api/state`
+- `GET /api/market-volume`
 - `GET /api/account`
 - `GET /api/orders`
 - `GET /api/positions`
@@ -149,6 +151,22 @@ corepack pnpm -r lint
 corepack pnpm --filter @stratium/trading-core test
 corepack pnpm -r build
 docker-compose config
+```
+
+Seed Hyperliquid-aligned symbol configs:
+
+```powershell
+pnpm seed:symbol-configs
+```
+
+Default behavior:
+
+- seeds `BTC` only
+- override with `SYMBOL_CONFIG_WHITELIST`, for example:
+
+```powershell
+$env:SYMBOL_CONFIG_WHITELIST="BTC,ETH,HYPE"
+pnpm seed:symbol-configs
 ```
 
 ## Logs
@@ -196,3 +214,4 @@ Local ad hoc logs, if you create them manually, should go under `logs/`.
 - [docs/event-spec.md](/d:/git/stratium/docs/event-spec.md)
 - [docs/order-rules.md](/d:/git/stratium/docs/order-rules.md)
 - [docs/margin-rules.md](/d:/git/stratium/docs/margin-rules.md)
+- [docs/data-model-reference.md](/d:/git/stratium/docs/data-model-reference.md)

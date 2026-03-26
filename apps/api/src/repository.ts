@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { EventEnvelope, FillPayload, MarketTick, OrderView, PositionView } from "@stratium/shared";
+import type { EventEnvelope, FillPayload, MarketTick, OrderView, PositionView, TradingSymbolConfig } from "@stratium/shared";
 import type { TradingEngineState } from "@stratium/trading-core";
 import type {
   HyperliquidAssetContext,
@@ -46,6 +46,62 @@ export class TradingRepository {
       source: event.source as EventEnvelope["source"],
       payload: event.payload as EventEnvelope["payload"]
     }));
+  }
+
+  async loadSymbolConfig(symbol: string): Promise<TradingSymbolConfig | null> {
+    const row = await prisma.symbolConfig.findUnique({
+      where: { symbol }
+    });
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      symbol: row.symbol,
+      leverage: row.engineDefaultLeverage,
+      maintenanceMarginRate: toNumber(row.engineMaintenanceMarginRate),
+      takerFeeRate: toNumber(row.baseTakerFeeRate),
+      makerFeeRate: toNumber(row.baseMakerFeeRate),
+      baseSlippageBps: row.engineBaseSlippageBps,
+      partialFillEnabled: row.enginePartialFillEnabled
+    };
+  }
+
+  async loadSymbolConfigMeta(symbol: string): Promise<{
+    symbol: string;
+    coin: string;
+    leverage: number;
+    maxLeverage: number;
+    szDecimals: number;
+    quoteAsset: string;
+  } | null> {
+    const row = await prisma.symbolConfig.findUnique({
+      where: { symbol }
+    });
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      symbol: row.symbol,
+      coin: row.coin,
+      leverage: row.engineDefaultLeverage,
+      maxLeverage: row.maxLeverage,
+      szDecimals: row.szDecimals,
+      quoteAsset: row.quoteAsset
+    };
+  }
+
+  async updateSymbolLeverage(symbol: string, leverage: number): Promise<void> {
+    await prisma.symbolConfig.update({
+      where: { symbol },
+      data: {
+        engineDefaultLeverage: leverage,
+        lastSyncedAt: new Date()
+      }
+    });
   }
 
   async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {
@@ -148,6 +204,23 @@ export class TradingRepository {
           create: {
             id: candle.id,
             ...this.mapMarketCandle(candle, snapshot.source)
+          }
+        })
+      );
+
+      operations.push(
+        prisma.marketVolumeRecord.upsert({
+          where: {
+            coin_interval_bucketStart: {
+              coin: candle.coin,
+              interval: candle.interval,
+              bucketStart: new Date(candle.openTime)
+            }
+          },
+          update: this.mapMarketVolumeRecord(candle, snapshot.source),
+          create: {
+            id: `vol-${candle.coin}-${candle.interval}-${candle.openTime}`,
+            ...this.mapMarketVolumeRecord(candle, snapshot.source)
           }
         })
       );
@@ -258,10 +331,40 @@ export class TradingRepository {
     };
   }
 
+  async loadRecentVolumeRecords(coin: string, interval = "1m", limit = 500): Promise<Array<{
+    id: string;
+    source: string;
+    coin: string;
+    interval: string;
+    bucketStart: number;
+    bucketEnd: number;
+    volume: number;
+    tradeCount: number;
+  }>> {
+    const rows = await prisma.marketVolumeRecord.findMany({
+      where: { coin, interval, source: "hyperliquid" },
+      orderBy: { bucketStart: "asc" },
+      take: Math.max(1, Math.min(limit, 2000))
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      source: row.source,
+      coin: row.coin,
+      interval: row.interval,
+      bucketStart: row.bucketStart.getTime(),
+      bucketEnd: row.bucketEnd.getTime(),
+      volume: toNumber(row.volume),
+      tradeCount: row.tradeCount
+    }));
+  }
+
   async persistState(state: TradingEngineState, events: EventEnvelope<unknown>[]): Promise<void> {
-    await prisma.$transaction(async (tx) => {
-      for (const event of events) {
-        await tx.simulationEvent.upsert({
+    const operations: Promise<unknown>[] = [];
+
+    for (const event of events) {
+      operations.push(
+        prisma.simulationEvent.upsert({
           where: {
             simulationSessionId_sequence: {
               simulationSessionId: event.simulationSessionId,
@@ -285,12 +388,14 @@ export class TradingRepository {
             payload: toJson(event.payload),
             occurredAt: new Date(event.occurredAt)
           }
-        });
+        })
+      );
 
-        if (event.eventType === "MarketTickReceived") {
-          const payload = event.payload as MarketTick;
+      if (event.eventType === "MarketTickReceived") {
+        const payload = event.payload as MarketTick;
 
-          await tx.marketTick.create({
+        operations.push(
+          prisma.marketTick.create({
             data: {
               id: event.eventId,
               symbol: event.symbol,
@@ -301,13 +406,15 @@ export class TradingRepository {
               volatilityTag: payload.volatilityTag,
               tickTime: new Date(payload.tickTime)
             }
-          }).catch(() => undefined);
-        }
+          }).catch(() => undefined)
+        );
+      }
 
-        if (isFillEvent(event.eventType)) {
-          const payload = event.payload as FillPayload;
+      if (isFillEvent(event.eventType)) {
+        const payload = event.payload as FillPayload;
 
-          await tx.fill.upsert({
+        operations.push(
+          prisma.fill.upsert({
             where: {
               id: payload.fillId
             },
@@ -327,11 +434,13 @@ export class TradingRepository {
               slippage: payload.slippage,
               fee: payload.fee
             }
-          });
-        }
+          })
+        );
       }
+    }
 
-      await tx.account.upsert({
+    operations.push(
+      prisma.account.upsert({
         where: {
           id: state.account.accountId
         },
@@ -356,9 +465,11 @@ export class TradingRepository {
           unrealizedPnl: state.account.unrealizedPnl,
           riskRatio: state.account.riskRatio
         }
-      });
+      })
+    );
 
-      await tx.position.upsert({
+    operations.push(
+      prisma.position.upsert({
         where: {
           id: "position_1"
         },
@@ -389,10 +500,12 @@ export class TradingRepository {
           maintenanceMargin: state.position.maintenanceMargin,
           liquidationPrice: state.position.liquidationPrice
         }
-      });
+      })
+    );
 
-      for (const order of state.orders) {
-        await tx.order.upsert({
+    for (const order of state.orders) {
+      operations.push(
+        prisma.order.upsert({
           where: {
             id: order.id
           },
@@ -401,9 +514,11 @@ export class TradingRepository {
             id: order.id,
             ...this.mapOrder(order)
           }
-        });
-      }
-    });
+        })
+      );
+    }
+
+    await Promise.allSettled(operations);
   }
 
   async loadSnapshot(accountId: string): Promise<{
@@ -472,6 +587,18 @@ export class TradingRepository {
       high: candle.high,
       low: candle.low,
       close: candle.close,
+      volume: candle.volume,
+      tradeCount: candle.tradeCount
+    };
+  }
+
+  private mapMarketVolumeRecord(candle: HyperliquidCandle, source: string) {
+    return {
+      source,
+      coin: candle.coin,
+      interval: candle.interval,
+      bucketStart: new Date(candle.openTime),
+      bucketEnd: new Date(candle.closeTime),
       volume: candle.volume,
       tradeCount: candle.tradeCount
     };

@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
-import type { CancelOrderInput, CreateOrderInput, EventEnvelope, MarketTick } from "@stratium/shared";
+import type { CancelOrderInput, CreateOrderInput, EventEnvelope, MarketTick, TradingSymbolConfig } from "@stratium/shared";
 import { TradingEngine, createInitialTradingState, replayEvents } from "@stratium/trading-core";
 import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
 import { HyperliquidMarketClient } from "./hyperliquid-market";
@@ -15,6 +15,8 @@ const repository = new TradingRepository();
 let engine = new TradingEngine(createInitialTradingState());
 const eventStore: EventEnvelope<unknown>[] = [];
 const sockets = new Set<{ send: (message: string) => void }>();
+let bootstrapReady = false;
+let persistQueue: Promise<void> = Promise.resolve();
 
 interface MarketSimulatorState {
   enabled: boolean;
@@ -38,6 +40,15 @@ const DEFAULT_MARKET_SIMULATOR_STATE: MarketSimulatorState = {
   lastPrice: Number(process.env.MARKET_SIMULATOR_INITIAL_PRICE ?? 69830),
   tickCount: 0
 };
+
+interface SymbolConfigState {
+  symbol: string;
+  coin: string;
+  leverage: number;
+  maxLeverage: number;
+  szDecimals: number;
+  quoteAsset: string;
+}
 
 const resolveBootstrapAnchorPrice = (symbol: string, latestPrice: number | undefined): number => {
   if (latestPrice && latestPrice > 0) {
@@ -69,7 +80,16 @@ let marketTickInFlight = false;
 const marketSource = process.env.MARKET_SOURCE ?? "hyperliquid";
 const hyperliquidCoin = process.env.HYPERLIQUID_COIN ?? "BTC";
 const hyperliquidCandleInterval = process.env.HYPERLIQUID_CANDLE_INTERVAL ?? "1m";
+const configuredTradingSymbol = process.env.TRADING_SYMBOL ?? `${hyperliquidCoin}-USD`;
 let lastPersistedMarketSignature = "";
+let symbolConfigState: SymbolConfigState = {
+  symbol: configuredTradingSymbol,
+  coin: hyperliquidCoin,
+  leverage: 10,
+  maxLeverage: 10,
+  szDecimals: 5,
+  quoteAsset: "USDC"
+};
 const hyperliquidClient = new HyperliquidMarketClient({
   coin: hyperliquidCoin,
   candleInterval: hyperliquidCandleInterval,
@@ -114,7 +134,8 @@ const createSocketPayload = (events: EventEnvelope<unknown>[] = []) => ({
   events,
   state: engine.getState(),
   simulator: marketSimulatorState,
-  market: marketData
+  market: marketData,
+  symbolConfig: symbolConfigState
 });
 
 const broadcast = (events: EventEnvelope<unknown>[] = []) => {
@@ -127,7 +148,18 @@ const broadcast = (events: EventEnvelope<unknown>[] = []) => {
 
 const persistEvents = async (events: EventEnvelope<unknown>[]) => {
   eventStore.push(...events);
-  await repository.persistState(engine.getState(), events);
+  persistQueue = persistQueue
+    .then(async () => {
+      if (!bootstrapReady) {
+        return;
+      }
+
+      await repository.persistState(engine.getState(), events);
+    })
+    .catch((error: unknown) => {
+      app.log.error({ error }, "Failed to persist trading state");
+    });
+  await persistQueue;
 
   if (events.length === 0) {
     return;
@@ -295,20 +327,37 @@ const startMarketSimulator = () => {
 
 const bootstrapEngine = async () => {
   await repository.connect();
+  const persistedSymbolConfig = await repository.loadSymbolConfig(configuredTradingSymbol);
+  const persistedSymbolMeta = await repository.loadSymbolConfigMeta(configuredTradingSymbol);
   const persistedEvents = await repository.loadEvents("session-1");
   const persistedMarketSnapshot = await repository.loadRecentMarketSnapshot(hyperliquidCoin, hyperliquidCandleInterval);
+  const engineOptions: { sessionId: string; symbolConfig?: TradingSymbolConfig } = {
+    sessionId: "session-1",
+    symbolConfig: persistedSymbolConfig ?? undefined
+  };
 
   if (persistedEvents.length > 0) {
     eventStore.push(...persistedEvents);
     engine = new TradingEngine(replayEvents(persistedEvents, {
-      sessionId: "session-1"
-    }).state);
+      sessionId: "session-1",
+      symbolConfig: persistedSymbolConfig ?? undefined
+    }).state, engineOptions);
   } else {
+    engine = new TradingEngine(createInitialTradingState(engineOptions), engineOptions);
     await repository.persistState(engine.getState(), []);
   }
 
   if (persistedMarketSnapshot) {
     marketData = persistedMarketSnapshot;
+  }
+
+  if (persistedSymbolMeta) {
+    symbolConfigState = persistedSymbolMeta;
+  } else if (persistedSymbolConfig) {
+    symbolConfigState = {
+      ...symbolConfigState,
+      leverage: persistedSymbolConfig.leverage
+    };
   }
 
   const bootPrice = resolveBootstrapAnchorPrice(
@@ -322,6 +371,8 @@ const bootstrapEngine = async () => {
     anchorPrice: bootPrice,
     lastPrice: bootPrice
   };
+
+  bootstrapReady = true;
 
   if ((process.env.ENABLE_MARKET_SIMULATOR ?? "true") === "true") {
     if (marketSource === "hyperliquid") {
@@ -350,7 +401,8 @@ app.get("/api/state", async () => ({
   latestTick: engine.getState().latestTick,
   events: eventStore,
   simulator: marketSimulatorState,
-  market: marketData
+  market: marketData,
+  symbolConfig: symbolConfigState
 }));
 
 app.get("/api/market-history", async (request) => {
@@ -369,7 +421,75 @@ app.get("/api/market-history", async (request) => {
   };
 });
 
+app.get("/api/market-volume", async (request) => {
+  const query = request.query as { limit?: string; interval?: string; coin?: string };
+  const limit = Number(query.limit ?? 500);
+  const interval = query.interval ?? hyperliquidCandleInterval;
+  const coin = query.coin ?? hyperliquidCoin;
+  const records = await repository.loadRecentVolumeRecords(coin, interval, limit);
+
+  return {
+    coin,
+    interval,
+    records
+  };
+});
+
 app.get("/api/account", async () => engine.getState().account);
+
+app.post("/api/leverage", async (request, reply) => {
+  const payload = request.body as { symbol?: string; leverage?: number };
+  const symbol = payload.symbol ?? symbolConfigState.symbol;
+  const requestedLeverage = Number(payload.leverage);
+
+  if (!Number.isFinite(requestedLeverage)) {
+    return reply.code(400).send({
+      status: "rejected",
+      message: "Leverage must be a number."
+    });
+  }
+
+  const leverage = Math.floor(requestedLeverage);
+
+  if (leverage < 1) {
+    return reply.code(400).send({
+      status: "rejected",
+      message: "Leverage must be at least 1x."
+    });
+  }
+
+  if (symbol !== symbolConfigState.symbol) {
+    return reply.code(400).send({
+      status: "rejected",
+      message: "Leverage can only be updated for the active trading symbol."
+    });
+  }
+
+  if (leverage > symbolConfigState.maxLeverage) {
+    return reply.code(400).send({
+      status: "rejected",
+      message: `Leverage exceeds max ${symbolConfigState.maxLeverage}x for ${symbol}.`
+    });
+  }
+
+  engine.setLeverage(leverage);
+  await repository.updateSymbolLeverage(symbol, leverage);
+  await repository.persistState(engine.getState(), []);
+
+  symbolConfigState = {
+    ...symbolConfigState,
+    leverage
+  };
+
+  broadcast();
+
+  return reply.code(202).send({
+    status: "updated",
+    symbolConfig: symbolConfigState,
+    account: engine.getState().account,
+    position: engine.getState().position
+  });
+});
 
 app.get("/api/orders", async () => engine.getState().orders);
 
@@ -497,8 +617,10 @@ await app.listen({
 });
 
 const shutdown = async () => {
+  bootstrapReady = false;
   stopMarketSimulator();
   hyperliquidClient.close();
+  await persistQueue.catch(() => undefined);
   await repository.close();
   await app.close();
 };

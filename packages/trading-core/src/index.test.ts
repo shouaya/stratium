@@ -51,6 +51,10 @@ describe("TradingEngine", () => {
     expect(result.state.position.quantity).toBe(2);
     expect(result.events.map((event) => event.eventType)).toContain("OrderFilled");
     expect(result.events.map((event) => event.eventType)).toContain("PositionOpened");
+    const fillEvent = result.events.find((event) => event.eventType === "OrderFilled");
+    expect(fillEvent).toBeDefined();
+    expect((fillEvent?.payload as { liquidityRole: string }).liquidityRole).toBe("taker");
+    expect((fillEvent?.payload as { feeRate: number }).feeRate).toBe(0.0005);
   });
 
   it("keeps a non-marketable limit buy active until a later tick crosses the price", () => {
@@ -80,6 +84,11 @@ describe("TradingEngine", () => {
 
     expect(filled.state.orders[0]?.status).toBe("FILLED");
     expect(filled.events.map((event) => event.eventType)).toContain("OrderFilled");
+    const fillEvent = filled.events.find((event) => event.eventType === "OrderFilled");
+    expect(fillEvent).toBeDefined();
+    expect((fillEvent?.payload as { liquidityRole: string }).liquidityRole).toBe("maker");
+    expect((fillEvent?.payload as { feeRate: number }).feeRate).toBe(0.00015);
+    expect((fillEvent?.payload as { slippage: number }).slippage).toBe(0);
   });
 
   it("cancels an accepted resting order", () => {

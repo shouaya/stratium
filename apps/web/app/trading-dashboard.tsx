@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import type { CSSProperties, HTMLAttributes } from "react";
 import type { AccountView, EventEnvelope, OrderView, PositionView } from "@stratium/shared";
 import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
 import { CandlestickChart } from "./candlestick-chart";
@@ -23,6 +23,14 @@ type State = {
   events: EventEnvelope<unknown>[];
   simulator?: MarketSimulatorState;
   market?: MarketState;
+  symbolConfig?: {
+    symbol: string;
+    coin: string;
+    leverage: number;
+    maxLeverage: number;
+    szDecimals: number;
+    quoteAsset: string;
+  };
 };
 
 type MarketSimulatorState = {
@@ -107,17 +115,30 @@ const TIMEFRAMES: Array<{ id: TimeframeId; label: string; hint: string; bucketMs
 
 const fmt = (n?: number | null, d = 4) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const clock = (s?: string) => s ? new Date(s).toLocaleTimeString("en-US", { hour12: false }) : "--:--:--";
+const dateTime = (s?: string) => s ? new Date(s).toLocaleString("en-US", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false
+}) : "--";
 const priceDigitsForSymbol = (symbol?: string | null) => symbol?.startsWith("BTC-") ? 0 : 4;
-const ghostLinkStyle: React.CSSProperties = {
-  border: "1px solid #253740",
-  background: "#111d24",
-  color: "#dce7ee",
-  padding: "10px 14px",
-  borderRadius: 10,
-  cursor: "pointer",
-  textDecoration: "none",
-  display: "inline-flex",
-  alignItems: "center"
+const coinFromSymbol = (symbol?: string | null) => {
+  if (!symbol) {
+    return "BTC";
+  }
+
+  if (symbol.includes("-")) {
+    return symbol.split("-")[0] ?? symbol;
+  }
+
+  if (symbol.includes("/")) {
+    return symbol.split("/")[0] ?? symbol;
+  }
+
+  return symbol;
 };
 
 const mergeEvents = (currentEvents: EventEnvelope<unknown>[], nextEvents: EventEnvelope<unknown>[] = []) => {
@@ -134,20 +155,37 @@ const mergeEvents = (currentEvents: EventEnvelope<unknown>[], nextEvents: EventE
   return [...merged.values()].sort((left, right) => left.sequence - right.sequence);
 };
 
+const extractResponseMessage = (payload: { events?: EventEnvelope<unknown>[] }, successMessage: string): string => {
+  const rejectedEvent = payload.events?.find((event) => event.eventType === "OrderRejected");
+
+  if (rejectedEvent) {
+    const rejection = rejectedEvent.payload as { reasonMessage?: string };
+    return rejection.reasonMessage ?? "Order rejected.";
+  }
+
+  return successMessage;
+};
+
 export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
-  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"market" | "limit">("market");
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
+  const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("openOrders");
   const [timeframe, setTimeframe] = useState<TimeframeId>("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderForm, setOrderForm] = useState({ accountId: "paper-account-1", symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
+  const [leverageDraft, setLeverageDraft] = useState(10);
   const priceDigits = useMemo(() => priceDigitsForSymbol(orderForm.symbol), [orderForm.symbol]);
+  const contractCoin = useMemo(() => state.market?.coin ?? coinFromSymbol(orderForm.symbol), [orderForm.symbol, state.market?.coin]);
+  const quantityDecimals = state.symbolConfig?.szDecimals ?? 4;
   const selectedTimeframe = useMemo(
     () => TIMEFRAMES.find((entry) => entry.id === timeframe) ?? TIMEFRAMES[0],
     [timeframe]
   );
+  const quantityValue = Number(orderForm.quantity);
+  const limitPriceValue = Number(orderForm.limitPrice);
+  const availableBalance = state.account?.availableBalance ?? 0;
 
   const ticks = useMemo<EnrichedTick[]>(() => {
     const marketTicks = state.events
@@ -371,12 +409,263 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
       .sort((left, right) => new Date(right.time).getTime() - new Date(left.time).getTime())
       .slice(0, 24);
   }, [state.events, state.market, state.orders, ticks]);
+  const activeOrders = useMemo(
+    () => state.orders.filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED"),
+    [state.orders]
+  );
+  const orderValidation = useMemo(() => {
+    if (!orderForm.quantity.trim()) {
+      return "Contracts are required.";
+    }
+
+    if (!Number.isFinite(quantityValue)) {
+      return "Contracts must be a valid number.";
+    }
+
+    if (quantityValue <= 0) {
+      return "Contracts must be greater than zero.";
+    }
+
+    const quantityText = orderForm.quantity.trim();
+    const decimalPart = quantityText.includes(".") ? quantityText.split(".")[1] ?? "" : "";
+
+    if (decimalPart.length > quantityDecimals) {
+      return `Contracts support up to ${quantityDecimals} decimal places for ${contractCoin}.`;
+    }
+
+    if (tab === "limit") {
+      if (!orderForm.limitPrice.trim()) {
+        return "Limit price is required.";
+      }
+
+      if (!Number.isFinite(limitPriceValue) || limitPriceValue <= 0) {
+        return "Limit price must be greater than zero.";
+      }
+    }
+
+    return null;
+  }, [contractCoin, limitPriceValue, orderForm.limitPrice, orderForm.quantity, quantityDecimals, quantityValue, tab]);
+  const quantityFieldError = useMemo(() => {
+    if (!orderForm.quantity.trim()) {
+      return "Enter contracts.";
+    }
+
+    if (!Number.isFinite(quantityValue)) {
+      return "Contracts must be numeric.";
+    }
+
+    if (quantityValue <= 0) {
+      return "Contracts must be greater than zero.";
+    }
+
+    const decimalPart = orderForm.quantity.trim().includes(".") ? orderForm.quantity.trim().split(".")[1] ?? "" : "";
+
+    if (decimalPart.length > quantityDecimals) {
+      return `Max ${quantityDecimals} decimals.`;
+    }
+
+    return null;
+  }, [orderForm.quantity, quantityDecimals, quantityValue]);
+  const limitPriceFieldError = useMemo(() => {
+    if (tab !== "limit") {
+      return null;
+    }
+
+    if (!orderForm.limitPrice.trim()) {
+      return "Enter limit price.";
+    }
+
+    if (!Number.isFinite(limitPriceValue) || limitPriceValue <= 0) {
+      return "Price must be greater than zero.";
+    }
+
+    return null;
+  }, [limitPriceValue, orderForm.limitPrice, tab]);
+  const pricingPreview = useMemo(() => {
+    const marketReferencePrice = side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
+    const price = tab === "limit" ? limitPriceValue : marketReferencePrice;
+    const leverage = state.symbolConfig?.leverage ?? leverageDraft;
+
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0 || !price || !Number.isFinite(price) || leverage <= 0) {
+      return null;
+    }
+
+    const notional = quantityValue * price;
+    const estimatedMargin = notional / leverage;
+    const remainingAvailable = (state.account?.availableBalance ?? 0) - estimatedMargin;
+
+    return {
+      referencePrice: price,
+      notional,
+      estimatedMargin,
+      remainingAvailable
+    };
+  }, [leverageDraft, limitPriceValue, quantityValue, side, state.account?.availableBalance, state.latestTick?.ask, state.latestTick?.bid, state.symbolConfig?.leverage, tab]);
+  const orderError = useMemo(() => {
+    if (orderValidation) {
+      return orderValidation;
+    }
+
+    if (pricingPreview && pricingPreview.estimatedMargin > (state.account?.availableBalance ?? 0)) {
+      return "Estimated margin exceeds available balance.";
+    }
+
+    return null;
+  }, [orderValidation, pricingPreview, state.account?.availableBalance]);
+  const orderCheckItems = useMemo(() => {
+    const marketReferencePrice = side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
+
+    return [
+      {
+        label: "Contracts",
+        ok: !quantityFieldError,
+        detail: quantityFieldError ?? `Precision ok · max ${quantityDecimals} decimals`
+      },
+      {
+        label: tab === "limit" ? "Limit price" : "Reference price",
+        ok: tab === "limit" ? !limitPriceFieldError : Boolean(marketReferencePrice),
+        detail: tab === "limit"
+          ? limitPriceFieldError ?? `Ready at ${fmt(limitPriceValue, priceDigits)}`
+          : marketReferencePrice
+            ? `${side === "buy" ? "Ask" : "Bid"} ${fmt(marketReferencePrice, priceDigits)}`
+            : "Waiting for live quote"
+      },
+      {
+        label: "Margin",
+        ok: Boolean(pricingPreview) && !orderError,
+        detail: pricingPreview
+          ? `${fmt(pricingPreview.estimatedMargin, 2)} USDC required`
+          : "No estimate yet"
+      }
+    ];
+  }, [limitPriceFieldError, limitPriceValue, orderError, priceDigits, pricingPreview, quantityDecimals, quantityFieldError, side, state.latestTick?.ask, state.latestTick?.bid, tab]);
+  const leverageInUse = state.symbolConfig?.leverage ?? leverageDraft;
+  const marginUsageRatio = pricingPreview && availableBalance > 0
+    ? Math.min(pricingPreview.estimatedMargin / availableBalance, 1)
+    : 0;
+  const postTradeAvailableRatio = pricingPreview && state.account?.equity
+    ? Math.max(Math.min((pricingPreview.remainingAvailable / state.account.equity) * 100, 100), -100)
+    : 0;
+  const personalFills = useMemo(() => {
+    type PersonalFill = {
+      id: string;
+      orderId: string;
+      side: "buy" | "sell";
+      orderType: "market" | "limit";
+      symbol: string;
+      price: number;
+      quantity: number;
+      fee: number;
+      slippage: number;
+      feeRate: number;
+      liquidityRole: "maker" | "taker";
+      filledAt: string;
+      entryPrice: number;
+      exitPrice?: number;
+      realizedPnl: number;
+    };
+
+    let runningPositionSide: "long" | "short" | "flat" = "flat";
+    let runningQuantity = 0;
+    let runningAverageEntryPrice = 0;
+    const fills: PersonalFill[] = [];
+
+    state.events
+      .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((event) => {
+        const payload = event.payload as {
+          orderId: string;
+          fillId: string;
+          fillPrice: number;
+          fillQuantity: number;
+          filledQuantityTotal: number;
+          remainingQuantity: number;
+          slippage: number;
+          fee: number;
+          feeRate: number;
+          liquidityRole: "maker" | "taker";
+          filledAt: string;
+        };
+        const order = state.orders.find((entry) => entry.id === payload.orderId);
+        const orderSide = order?.side ?? "buy";
+        const entryPrice = runningAverageEntryPrice;
+        let realizedPnl = 0;
+        const signedPositionQuantity = runningPositionSide === "long" ? runningQuantity : runningPositionSide === "short" ? -runningQuantity : 0;
+        const signedFillQuantity = orderSide === "buy" ? payload.fillQuantity : -payload.fillQuantity;
+        const nextSignedQuantity = signedPositionQuantity + signedFillQuantity;
+        const isClosingFill = signedPositionQuantity !== 0 && Math.sign(signedPositionQuantity) !== Math.sign(signedFillQuantity);
+
+        if (isClosingFill) {
+          const closingQuantity = Math.min(Math.abs(signedPositionQuantity), Math.abs(signedFillQuantity));
+
+          if (runningPositionSide === "long" && orderSide === "sell") {
+            realizedPnl = Number(((payload.fillPrice - runningAverageEntryPrice) * closingQuantity).toFixed(8));
+          } else if (runningPositionSide === "short" && orderSide === "buy") {
+            realizedPnl = Number(((runningAverageEntryPrice - payload.fillPrice) * closingQuantity).toFixed(8));
+          }
+        }
+
+        if (nextSignedQuantity === 0) {
+          runningPositionSide = "flat";
+          runningQuantity = 0;
+          runningAverageEntryPrice = 0;
+        } else if (signedPositionQuantity === 0 || Math.sign(signedPositionQuantity) === Math.sign(signedFillQuantity)) {
+          runningAverageEntryPrice = Number((((Math.abs(signedPositionQuantity) * runningAverageEntryPrice) + (payload.fillQuantity * payload.fillPrice)) / Math.abs(nextSignedQuantity)).toFixed(8));
+          runningPositionSide = nextSignedQuantity > 0 ? "long" : "short";
+          runningQuantity = Math.abs(nextSignedQuantity);
+        } else if (Math.abs(signedFillQuantity) > Math.abs(signedPositionQuantity)) {
+          runningPositionSide = nextSignedQuantity > 0 ? "long" : "short";
+          runningQuantity = Math.abs(nextSignedQuantity);
+          runningAverageEntryPrice = payload.fillPrice;
+        } else {
+          runningPositionSide = nextSignedQuantity > 0 ? "long" : nextSignedQuantity < 0 ? "short" : "flat";
+          runningQuantity = Math.abs(nextSignedQuantity);
+        }
+
+        fills.push({
+          id: payload.fillId,
+          orderId: payload.orderId,
+          side: orderSide,
+          orderType: order?.orderType ?? "market",
+          symbol: order?.symbol ?? event.symbol,
+          price: payload.fillPrice,
+          quantity: payload.fillQuantity,
+          fee: payload.fee,
+          slippage: payload.slippage,
+          feeRate: payload.feeRate,
+          liquidityRole: payload.liquidityRole,
+          filledAt: payload.filledAt,
+          entryPrice: isClosingFill ? entryPrice : payload.fillPrice,
+          exitPrice: isClosingFill ? payload.fillPrice : undefined,
+          realizedPnl
+        });
+      })
+      .slice();
+
+    return fills.sort((left, right) => new Date(right.filledAt).getTime() - new Date(left.filledAt).getTime());
+  }, [state.events, state.orders]);
+
+  useEffect(() => {
+    if (state.symbolConfig?.leverage) {
+      setLeverageDraft(state.symbolConfig.leverage);
+    }
+  }, [state.symbolConfig?.leverage]);
+
+  useEffect(() => {
+    if (state.symbolConfig?.symbol && state.symbolConfig.symbol !== orderForm.symbol) {
+      setOrderForm((current) => ({
+        ...current,
+        symbol: state.symbolConfig?.symbol ?? current.symbol
+      }));
+    }
+  }, [orderForm.symbol, state.symbolConfig?.symbol]);
 
   useEffect(() => {
     void refresh();
     const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws`);
     ws.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: EventEnvelope<unknown>[]; simulator?: MarketSimulatorState; market?: MarketState };
+      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: EventEnvelope<unknown>[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"] };
       if (payload.state) {
         const nextState = payload.state;
         setState((cur) => ({
@@ -386,7 +675,8 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
           latestTick: nextState.latestTick ?? cur.latestTick,
           events: mergeEvents(cur.events, payload.events),
           simulator: payload.simulator ?? cur.simulator,
-          market: payload.market ?? cur.market
+          market: payload.market ?? cur.market,
+          symbolConfig: payload.symbolConfig ?? cur.symbolConfig
         }));
       }
     });
@@ -394,7 +684,6 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [apiBaseUrl]);
 
   const refresh = async () => {
-    setLoading(true);
     try {
       const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store" });
       const payload = await response.json() as State;
@@ -402,29 +691,93 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
       setMessage("");
     } catch {
       setMessage("Failed to fetch API state.");
-    } finally {
-      setLoading(false);
     }
   };
 
   const submitOrder = async () => {
     const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
-    setMessage(response.ok ? "Order submitted." : "Failed to submit order.");
+    const payload = await response.json().catch(() => ({}) as { events?: EventEnvelope<unknown>[] });
+    setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : "Failed to submit order.");
+    if (response.ok) {
+      await refresh();
+      setAccountTab("fills");
+    }
   };
 
   const cancelOrder = async (orderId: string) => {
     const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
     setMessage(response.ok ? `Order ${orderId} canceled.` : "Failed to cancel order.");
+    if (response.ok) {
+      await refresh();
+      setAccountTab("openOrders");
+    }
+  };
+
+  const closePosition = async () => {
+    if (!state.position || state.position.side === "flat" || state.position.quantity <= 0) {
+      setMessage("No open position to close.");
+      return;
+    }
+
+    const closingSide = state.position.side === "long" ? "sell" : "buy";
+    const response = await fetch(`${apiBaseUrl}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId: orderForm.accountId,
+        symbol: state.position.symbol,
+        side: closingSide,
+        orderType: "market",
+        quantity: state.position.quantity
+      })
+    });
+
+    const payload = await response.json().catch(() => ({}) as { events?: EventEnvelope<unknown>[] });
+    setMessage(response.ok ? extractResponseMessage(payload, "Position close order submitted.") : "Failed to close position.");
+
+    if (response.ok) {
+      await refresh();
+      setAccountTab("positions");
+    }
+  };
+
+  const updateLeverage = async () => {
+    const response = await fetch(`${apiBaseUrl}/api/leverage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol: state.symbolConfig?.symbol ?? orderForm.symbol,
+        leverage: leverageDraft
+      })
+    });
+    const payload = await response.json().catch(() => ({}) as { message?: string; symbolConfig?: State["symbolConfig"] });
+
+    if (!response.ok) {
+      setMessage(payload.message ?? "Failed to update leverage.");
+      return;
+    }
+
+    setMessage(`Leverage updated to ${payload.symbolConfig?.leverage ?? leverageDraft}x.`);
+    await refresh();
   };
 
   return (
-    <main style={{ minHeight: "100vh", background: "#071116", color: "#dbe7ef", padding: 8, fontFamily: "\"Segoe UI\", sans-serif" }}>
-      <div style={{ display: "grid", gap: 8 }}>
-        <div style={box("12px 16px")}>
-          <div style={{ display: "grid", gridTemplateColumns: "260px 1fr auto", gap: 16, alignItems: "center" }}>
-            <div>
-              <div style={{ fontSize: 30, fontWeight: 700 }}>{orderForm.symbol}</div>
-              <div style={{ color: "#7e97a5", fontSize: 12 }}>PH1 simulated perpetual market</div>
+    <main style={{ minHeight: "100dvh", width: "100%", background: "#071116", color: "#dbe7ef", padding: 0, fontFamily: "\"Segoe UI\", sans-serif" }}>
+      <div style={{ display: "grid", gap: 8, padding: 0, boxSizing: "border-box" }}>
+        <div style={{ ...box("12px 16px"), position: "sticky", top: 0, zIndex: 20, borderRadius: 0, backdropFilter: "blur(10px)", background: "rgba(11, 22, 29, 0.92)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <img
+                src="/favicon.png"
+                alt="Stratium"
+                width={48}
+                height={48}
+                style={{ width: 48, height: 48, borderRadius: 12, objectFit: "cover", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.28)" }}
+              />
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.1 }}>Stratium</div>
+                <div style={{ color: "#7e97a5", fontSize: 12, marginTop: 2 }}>{contractCoin} perpetual market replica</div>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
               <Metric label="Price" value={fmt(stats.last, priceDigits)} strong />
@@ -435,17 +788,13 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               <Metric label="Oracle" value={fmt(state.market?.assetCtx?.oraclePrice, priceDigits)} />
               <Metric label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
               <Metric label="OI" value={fmt(state.market?.assetCtx?.openInterest, 3)} />
-              <Metric label="24h Volume" value={fmt(state.market?.assetCtx?.dayNotionalVolume, 2)} />
+              <Metric label="24h Volume" value={state.market?.assetCtx?.dayNotionalVolume != null ? `$${fmt(state.market.assetCtx.dayNotionalVolume, 2)}` : "-"} />
               <Metric label="Clock" value={clock(state.latestTick?.tickTime)} />
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Link href="/admin" style={ghostLinkStyle}>Admin UI</Link>
-              <button onClick={() => void refresh()} style={btnGhost}>{loading ? "Syncing" : "Refresh"}</button>
             </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(300px,360px) minmax(300px,360px)", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.8fr) minmax(300px,360px) minmax(300px,360px)", gap: 8, minHeight: 0, padding: "0 8px 8px" }}>
           <div style={{ display: "grid", gap: 8 }}>
             <div style={box()}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #16262f", color: "#7e97a5", fontSize: 12 }}>
@@ -461,7 +810,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div style={{ padding: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                   <div>
-                    <div style={{ fontSize: 20, fontWeight: 700 }}>{orderForm.symbol} Perp</div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>{contractCoin} Perp</div>
                     <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -477,31 +826,104 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
 
             <div style={box()}>
               <div style={{ display: "flex", gap: 4, padding: "0 10px", borderBottom: "1px solid #16262f" }}>
-                <TabButton active label="Balances" />
-                <TabButton active={false} label="Positions" />
-                <TabButton active label="Open Orders" />
+                <TabButton active={accountTab === "balances"} label="Balances" onClick={() => setAccountTab("balances")} />
+                <TabButton active={accountTab === "positions"} label="Positions" onClick={() => setAccountTab("positions")} />
+                <TabButton active={accountTab === "openOrders"} label="Open Orders" onClick={() => setAccountTab("openOrders")} />
+                <TabButton active={accountTab === "fills"} label="Fill History" onClick={() => setAccountTab("fills")} />
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                      <th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Qty</th><th style={th}>Filled</th><th style={th}>Status</th><th style={th}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.orders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No orders yet.</td></tr> : state.orders.map((order) => (
-                      <tr key={order.id} style={{ borderTop: "1px solid #13212a" }}>
-                        <td style={td}>{order.id}</td>
-                        <td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td>
-                        <td style={td}>{order.orderType}</td>
-                        <td style={td}>{fmt(order.quantity)}</td>
-                        <td style={td}>{fmt(order.filledQuantity)}</td>
-                        <td style={td}>{order.status}</td>
-                        <td style={td}>{order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED" ? <button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel</button> : "-"}</td>
+                {accountTab === "balances" ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                        <th style={th}>Metric</th><th style={th}>Value</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {[
+                        ["Wallet", `${fmt(state.account?.walletBalance, 2)} USDC`],
+                        ["Available", `${fmt(state.account?.availableBalance, 2)} USDC`],
+                        ["Equity", `${fmt(state.account?.equity, 2)} USDC`],
+                        ["Realized PnL", `${fmt(state.account?.realizedPnl, 4)} USDC`],
+                        ["Unrealized PnL", `${fmt(state.account?.unrealizedPnl, 4)} USDC`]
+                      ].map(([label, value]) => (
+                        <tr key={label} style={{ borderTop: "1px solid #13212a" }}>
+                          <td style={td}>{label}</td>
+                          <td style={td}>{value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : accountTab === "positions" ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                        <th style={th}>Symbol</th><th style={th}>Side</th><th style={th}>Contracts</th><th style={th}>Entry</th><th style={th}>Mark</th><th style={th}>Unrealized PnL</th><th style={th}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!state.position || state.position.side === "flat" ? (
+                        <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No position.</td></tr>
+                      ) : (
+                        <tr style={{ borderTop: "1px solid #13212a" }}>
+                          <td style={td}>{state.position.symbol}</td>
+                          <td style={{ ...td, color: state.position.side === "long" ? "#2dd4bf" : "#f87171" }}>{state.position.side}</td>
+                          <td style={td}>{fmt(state.position.quantity, 4)}</td>
+                          <td style={td}>{fmt(state.position.averageEntryPrice, priceDigits)}</td>
+                          <td style={td}>{fmt(state.position.markPrice, priceDigits)}</td>
+                          <td style={td}>{fmt(state.position.unrealizedPnl, 4)} USDC</td>
+                          <td style={td}><button onClick={() => void closePosition()} style={btnInline}>Close Position</button></td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                ) : accountTab === "openOrders" ? (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                        <th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Contracts</th><th style={th}>Filled</th><th style={th}>Status</th><th style={th}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeOrders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No open orders.</td></tr> : activeOrders.map((order) => (
+                        <tr key={order.id} style={{ borderTop: "1px solid #13212a" }}>
+                          <td style={td}>{order.id}</td>
+                          <td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td>
+                          <td style={td}>{order.orderType}</td>
+                          <td style={td}>{fmt(order.quantity)}</td>
+                          <td style={td}>{fmt(order.filledQuantity)}</td>
+                          <td style={td}>{order.status}</td>
+                          <td style={td}><button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                        <th style={th}>Time</th><th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Role</th><th style={th}>Entry Price</th><th style={th}>Exit Price</th><th style={th}>Contracts</th><th style={th}>PnL</th><th style={th}>Fee</th><th style={th}>Slippage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {personalFills.length === 0 ? <tr><td colSpan={11} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No fills yet.</td></tr> : personalFills.map((fill) => (
+                        <tr key={fill.id} style={{ borderTop: "1px solid #13212a" }}>
+                          <td style={td}>{dateTime(fill.filledAt)}</td>
+                          <td style={td}>{fill.orderId}</td>
+                          <td style={{ ...td, color: fill.side === "buy" ? "#2dd4bf" : "#f87171" }}>{fill.side}</td>
+                          <td style={td}>{fill.orderType}</td>
+                          <td style={{ ...td, textTransform: "uppercase", color: fill.liquidityRole === "maker" ? "#22c55e" : "#f59e0b" }}>{fill.liquidityRole}</td>
+                          <td style={td}>{fmt(fill.entryPrice, priceDigits)}</td>
+                          <td style={td}>{fill.exitPrice != null ? fmt(fill.exitPrice, priceDigits) : "-"}</td>
+                          <td style={td}>{fmt(fill.quantity, 4)}</td>
+                          <td style={{ ...td, color: fill.realizedPnl > 0 ? "#2dd4bf" : fill.realizedPnl < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(fill.realizedPnl, 4)} USDC</td>
+                          <td style={td}>{fmt(fill.fee, 6)} <span style={{ color: "#60727f" }}>({fmt(fill.feeRate * 100, 3)}%)</span></td>
+                          <td style={td}>{fmt(fill.slippage, 6)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>
@@ -513,7 +935,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
             </div>
             {bookTab === "book" ? (
               <div style={{ padding: 14 }}>
-                <div style={bookHead}><span>Price</span><span>Size</span><span>Total</span></div>
+                <div style={bookHead}><span>Price</span><span>Size (Contracts)</span><span>Total (Contracts)</span></div>
                 {bookWithDepth.asks.map((row) => (
                   <BookRow
                     key={`a-${row.price}`}
@@ -540,7 +962,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             ) : (
               <div style={{ padding: 14, display: "grid", gap: 8 }}>
-                <div style={bookHead}><span>Time</span><span>Price</span><span>Size</span></div>
+                <div style={bookHead}><span>Time</span><span>Price</span><span>Contracts</span></div>
                 {trades.length === 0 ? <div style={{ color: "#60727f" }}>No trades yet.</div> : trades.map((trade) => {
                   return <div key={trade.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, opacity: trade.source === "tape" ? 0.84 : 1 }}><span>{clock(trade.time)}</span><strong style={{ color: trade.side === "sell" ? "#f87171" : "#2dd4bf" }}>{fmt(trade.price, priceDigits)}</strong><span>{fmt(trade.size, 4)}</span></div>;
                 })}
@@ -559,30 +981,129 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <button onClick={() => setSide("sell")} style={side === "sell" ? btnSellActive : btnSide}>Sell</button>
               </div>
               <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
-                <Line label="Available" value={`${fmt(state.account?.availableBalance, 2)} USDT`} />
+                <Line label="Available Margin" value={`${fmt(state.account?.availableBalance, 2)} USDC`} />
+                <Line label="Leverage" value={`${leverageInUse}x / max ${state.symbolConfig?.maxLeverage ?? leverageDraft}x`} />
                 <Line label="Rolling Market" value={state.simulator?.enabled ? `Running · ${state.simulator.intervalMs}ms` : "Stopped"} />
                 <Line label="Mark Price" value={fmt(state.market?.assetCtx?.markPrice ?? state.market?.markPrice, priceDigits)} />
                 <Line label="Oracle Price" value={fmt(state.market?.assetCtx?.oraclePrice, priceDigits)} />
                 <Line label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
                 <Line label="24h Notional" value={fmt(state.market?.assetCtx?.dayNotionalVolume, 2)} />
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "#7e97a5", fontSize: 12 }}>Adjust Leverage</span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={state.symbolConfig?.maxLeverage ?? 10}
+                    step={1}
+                    value={leverageDraft}
+                    onChange={(event) => setLeverageDraft(Number(event.target.value))}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "#7e97a5", fontSize: 12 }}>
+                    <span>1x</span>
+                    <strong style={{ color: "#f8fafc" }}>{leverageDraft}x</strong>
+                    <span>{state.symbolConfig?.maxLeverage ?? 10}x</span>
+                  </div>
+                  <button onClick={() => void updateLeverage()} style={btnGhost}>Apply Leverage</button>
+                </label>
                 <Field label="Account" value={orderForm.accountId} onChange={(v) => setOrderForm((s) => ({ ...s, accountId: v }))} />
-                <Field label="Symbol" value={orderForm.symbol} onChange={(v) => setOrderForm((s) => ({ ...s, symbol: v }))} />
-                <Field label="Size" value={orderForm.quantity} onChange={(v) => setOrderForm((s) => ({ ...s, quantity: v }))} />
-                {tab === "limit" && <Field label="Limit Price" value={orderForm.limitPrice} onChange={(v) => setOrderForm((s) => ({ ...s, limitPrice: v }))} />}
-                <button onClick={() => void submitOrder()} style={side === "buy" ? btnBuySubmit : btnSellSubmit}>{side === "buy" ? "Buy" : "Sell"} {orderForm.symbol}</button>
-                <Link href="/admin" style={ghostLinkStyle}>Open Admin Controls</Link>
+                <Field
+                  label="Contract"
+                  value={orderForm.symbol}
+                  onChange={(v) => setOrderForm((s) => ({ ...s, symbol: v }))}
+                  readOnly
+                  hint="Locked to the active BTC perp market."
+                />
+                <Field
+                  label="Contracts"
+                  value={orderForm.quantity}
+                  onChange={(v) => setOrderForm((s) => ({ ...s, quantity: v }))}
+                  inputMode="decimal"
+                  error={quantityFieldError ?? undefined}
+                  hint={!quantityFieldError ? `Margin preview updates on each keystroke · precision ${quantityDecimals} decimals` : undefined}
+                />
+                {tab === "limit" && (
+                  <Field
+                    label="Limit Price"
+                    value={orderForm.limitPrice}
+                    onChange={(v) => setOrderForm((s) => ({ ...s, limitPrice: v }))}
+                    inputMode="decimal"
+                    error={limitPriceFieldError ?? undefined}
+                    hint={!limitPriceFieldError ? `Reference ${side === "buy" ? "ask" : "bid"} ${fmt(side === "buy" ? state.latestTick?.ask : state.latestTick?.bid, priceDigits)}` : undefined}
+                  />
+                )}
+                <div style={{ color: "#7e97a5", fontSize: 12 }}>1 contract = 1 {contractCoin}</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {orderCheckItems.map((item) => (
+                    <div
+                      key={item.label}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "9px 10px",
+                        borderRadius: 10,
+                        border: item.ok ? "1px solid #17433c" : "1px solid #4a2424",
+                        background: item.ok ? "rgba(19, 78, 74, 0.2)" : "rgba(127, 29, 29, 0.16)",
+                        fontSize: 12
+                      }}
+                    >
+                      <strong style={{ color: item.ok ? "#86efac" : "#fda4af" }}>{item.label}</strong>
+                      <span style={{ color: item.ok ? "#d1fae5" : "#fecdd3", textAlign: "right" }}>{item.detail}</span>
+                    </div>
+                  ))}
+                </div>
+                {pricingPreview ? (
+                  <div style={{ display: "grid", gap: 6, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e", fontSize: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Estimated Price</span><strong>{fmt(pricingPreview.referencePrice, priceDigits)}</strong></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Notional</span><strong>{fmt(pricingPreview.notional, 2)} USDC</strong></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Required Margin</span><strong>{fmt(pricingPreview.estimatedMargin, 2)} USDC</strong></div>
+                    <div style={{ display: "grid", gap: 6, marginTop: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ color: "#7e97a5" }}>Margin Usage</span>
+                        <strong>{fmt(marginUsageRatio * 100, 1)}%</strong>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 999, background: "#0b151b", overflow: "hidden" }}>
+                        <div style={{ width: `${marginUsageRatio * 100}%`, height: "100%", background: marginUsageRatio > 0.85 ? "#ef4444" : marginUsageRatio > 0.6 ? "#f59e0b" : "#22c55e" }} />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Available After</span><strong style={{ color: pricingPreview.remainingAvailable < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(pricingPreview.remainingAvailable, 2)} USDC</strong></div>
+                    <div style={{ color: "#7e97a5" }}>Post-trade free margin: {fmt(postTradeAvailableRatio, 1)}% of current equity</div>
+                  </div>
+                ) : null}
+                {orderError ? <div style={{ color: "#f87171", fontSize: 12 }}>{orderError}</div> : <div style={{ color: "#7e97a5", fontSize: 12 }}>Checks passed for current order input.</div>}
+                <button disabled={Boolean(orderError)} onClick={() => void submitOrder()} style={{ ...(side === "buy" ? btnBuySubmit : btnSellSubmit), opacity: orderError ? 0.5 : 1, cursor: orderError ? "not-allowed" : "pointer" }}>{side === "buy" ? "Buy" : "Sell"} {contractCoin} Perp</button>
+              </div>
+            </div>
+
+            <div style={box()}>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>Active Orders</div>
+              <div style={{ padding: 14, display: "grid", gap: 10 }}>
+                {activeOrders.length === 0 ? (
+                  <div style={{ color: "#60727f", fontSize: 13 }}>No active orders.</div>
+                ) : activeOrders.map((order) => (
+                  <div key={order.id} style={{ border: "1px solid #15262e", borderRadius: 10, padding: 12, display: "grid", gap: 8, background: "#0c171d" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <strong>{order.id}</strong>
+                      <span style={{ color: order.side === "buy" ? "#2dd4bf" : "#f87171", textTransform: "capitalize" }}>{order.side}</span>
+                    </div>
+                    <div style={{ color: "#7e97a5", fontSize: 12 }}>
+                      {order.orderType} · {fmt(order.remainingQuantity, 4)} / {fmt(order.quantity, 4)} contracts
+                    </div>
+                    <button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel Order</button>
+                  </div>
+                ))}
               </div>
             </div>
 
             <div style={box()}>
               <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>Account Equity</div>
               <div style={{ padding: 14, display: "grid", gap: 10 }}>
-                <Line label="Wallet" value={`${fmt(state.account?.walletBalance, 2)} USDT`} />
-                <Line label="Equity" value={`${fmt(state.account?.equity, 2)} USDT`} />
-                <Line label="Position Margin" value={`${fmt(state.account?.positionMargin, 2)} USDT`} />
+                <Line label="Wallet" value={`${fmt(state.account?.walletBalance, 2)} USDC`} />
+                <Line label="Equity" value={`${fmt(state.account?.equity, 2)} USDC`} />
+                <Line label="Position Margin" value={`${fmt(state.account?.positionMargin, 2)} USDC`} />
                 <Line label="Position" value={state.position?.side ?? "flat"} />
                 <Line label="Entry Price" value={fmt(state.position?.averageEntryPrice, 4)} />
-                <Line label="Unrealized" value={`${fmt(state.position?.unrealizedPnl, 4)} USDT`} />
+                <Line label="Unrealized PnL" value={`${fmt(state.position?.unrealizedPnl, 4)} USDC`} />
               </div>
             </div>
           </div>
@@ -600,8 +1121,46 @@ function Line({ label, value }: { label: string; value: string }) {
   return <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}><span style={{ color: "#7e97a5" }}>{label}</span><strong>{value}</strong></div>;
 }
 
-function Field({ label, value, onChange, compact }: { label: string; value: string; onChange: (value: string) => void; compact?: boolean }) {
-  return <label style={{ display: "grid", gap: 6 }}><span style={{ color: "#7e97a5", fontSize: 12 }}>{label}</span><input value={value} onChange={(e) => onChange(e.target.value)} style={{ borderRadius: 10, border: "1px solid #22343d", background: "#101b22", color: "#f8fafc", padding: compact ? "9px 10px" : "11px 12px" }} /></label>;
+function Field({
+  label,
+  value,
+  onChange,
+  compact,
+  error,
+  hint,
+  inputMode,
+  readOnly
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  compact?: boolean;
+  error?: string;
+  hint?: string;
+  inputMode?: HTMLAttributes<HTMLInputElement>["inputMode"];
+  readOnly?: boolean;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ color: "#7e97a5", fontSize: 12 }}>{label}</span>
+      <input
+        value={value}
+        inputMode={inputMode}
+        readOnly={readOnly}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          borderRadius: 10,
+          border: error ? "1px solid #7f1d1d" : "1px solid #22343d",
+          background: readOnly ? "#0d171d" : "#101b22",
+          color: "#f8fafc",
+          padding: compact ? "9px 10px" : "11px 12px",
+          outline: "none",
+          boxShadow: error ? "0 0 0 1px rgba(248, 113, 113, 0.16)" : "none"
+        }}
+      />
+      {error ? <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span> : hint ? <span style={{ color: "#7e97a5", fontSize: 12 }}>{hint}</span> : null}
+    </label>
+  );
 }
 
 function BookRow({
@@ -652,13 +1211,13 @@ function BookRow({
   );
 }
 
-function TabButton({ label, active }: { label: string; active: boolean }) {
-  return <button style={{ border: 0, background: "transparent", color: active ? "#f8fafc" : "#7e97a5", padding: "12px 10px", borderBottom: active ? "2px solid #2dd4bf" : "2px solid transparent" }}>{label}</button>;
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick?: () => void }) {
+  return <button onClick={onClick} style={{ border: 0, background: "transparent", color: active ? "#f8fafc" : "#7e97a5", padding: "12px 10px", borderBottom: active ? "2px solid #2dd4bf" : "2px solid transparent", cursor: "pointer" }}>{label}</button>;
 }
 
-const box = (padding?: string): React.CSSProperties => ({ background: "#0b161d", border: "1px solid #16262f", borderRadius: 12, overflow: "hidden", padding });
-const chipButton = (active?: boolean): React.CSSProperties => ({ color: active ? "#f8fafc" : "#7e97a5", background: active ? "#15252d" : "transparent", border: active ? "1px solid #23414d" : "1px solid transparent", padding: "5px 8px", borderRadius: 8, cursor: "pointer" });
-const tabIdle: React.CSSProperties = {
+const box = (padding?: string): CSSProperties => ({ background: "#0b161d", border: "1px solid #16262f", borderRadius: 12, overflow: "hidden", padding });
+const chipButton = (active?: boolean): CSSProperties => ({ color: active ? "#f8fafc" : "#7e97a5", background: active ? "#15252d" : "transparent", border: active ? "1px solid #23414d" : "1px solid transparent", padding: "5px 8px", borderRadius: 8, cursor: "pointer" });
+const tabIdle: CSSProperties = {
   border: 0,
   background: "transparent",
   color: "#7e97a5",
@@ -667,10 +1226,10 @@ const tabIdle: React.CSSProperties = {
   borderBottomStyle: "solid",
   borderBottomColor: "transparent"
 };
-const tabActive: React.CSSProperties = { ...tabIdle, color: "#f8fafc", borderBottomColor: "#2dd4bf" };
-const btnGhost: React.CSSProperties = { border: "1px solid #253740", background: "#111d24", color: "#dce7ee", padding: "10px 14px", borderRadius: 10, cursor: "pointer" };
-const btnInline: React.CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
-const btnSide: React.CSSProperties = {
+const tabActive: CSSProperties = { ...tabIdle, color: "#f8fafc", borderBottomColor: "#2dd4bf" };
+const btnGhost: CSSProperties = { border: "1px solid #253740", background: "#111d24", color: "#dce7ee", padding: "10px 14px", borderRadius: 10, cursor: "pointer" };
+const btnInline: CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
+const btnSide: CSSProperties = {
   borderWidth: 1,
   borderStyle: "solid",
   borderColor: "#24353d",
@@ -681,10 +1240,10 @@ const btnSide: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700
 };
-const btnBuyActive: React.CSSProperties = { ...btnSide, background: "#1e6b5f", borderColor: "#1e6b5f", color: "#f8fafc" };
-const btnSellActive: React.CSSProperties = { ...btnSide, background: "#7f3d38", borderColor: "#7f3d38", color: "#f8fafc" };
-const btnBuySubmit: React.CSSProperties = { border: 0, borderRadius: 12, background: "#22c55e", color: "#041015", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
-const btnSellSubmit: React.CSSProperties = { border: 0, borderRadius: 12, background: "#ef4444", color: "#fff7f7", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
-const th: React.CSSProperties = { padding: "12px 14px", fontWeight: 500 };
-const td: React.CSSProperties = { padding: "12px 14px" };
-const bookHead: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, color: "#60727f", fontSize: 12, padding: "0 8px 8px" };
+const btnBuyActive: CSSProperties = { ...btnSide, background: "#1e6b5f", borderColor: "#1e6b5f", color: "#f8fafc" };
+const btnSellActive: CSSProperties = { ...btnSide, background: "#7f3d38", borderColor: "#7f3d38", color: "#f8fafc" };
+const btnBuySubmit: CSSProperties = { border: 0, borderRadius: 12, background: "#22c55e", color: "#041015", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
+const btnSellSubmit: CSSProperties = { border: 0, borderRadius: 12, background: "#ef4444", color: "#fff7f7", padding: "14px 16px", cursor: "pointer", fontWeight: 800 };
+const th: CSSProperties = { padding: "12px 14px", fontWeight: 500 };
+const td: CSSProperties = { padding: "12px 14px" };
+const bookHead: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, color: "#60727f", fontSize: 12, padding: "0 8px 8px" };
