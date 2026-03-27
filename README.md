@@ -32,6 +32,7 @@ Current PH1 focus:
 ```text
 apps/
   api/               Fastify API + WebSocket
+  batch/             Hyperliquid websocket collector + S3 uploader
   web/               Next.js UI
 packages/
   shared/            shared types and event models
@@ -69,6 +70,7 @@ Important defaults:
 - API port: `4000`
 - Web port: `3000`
 - Adminer port: `8080`
+- Batch spool dir: `logs/hyperliquid-batch`
 
 ## Start
 
@@ -183,6 +185,99 @@ docker-compose logs -f adminer
 ```
 
 The compose file uses `json-file` logging with rotation.
+
+## Hyperliquid Batch
+
+The repo now includes a long-running batch collector in `apps/batch`.
+
+What it does:
+
+- keeps a persistent websocket connection to Hyperliquid
+- subscribes to `l2Book`, `trades`, `candle`, and `activeAssetCtx`
+- writes normalized raw events into rolling `.ndjson` files
+- compresses closed files as `.gz`
+- uploads them to `s3://<BATCH_S3_BUCKET>/<BATCH_S3_PREFIX>/...`
+- sends an SQS message after each successful upload
+- sends an email-task SQS message when S3 or SQS delivery fails
+
+Required env vars for the batch:
+
+- `BATCH_S3_BUCKET`
+- `BATCH_S3_PREFIX`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `BATCH_SQS_QUEUE_URL`
+- `BATCH_ALERT_SQS_QUEUE_URL`
+- `BATCH_ALERT_EMAIL_TO`
+
+Failure alerts are not sent directly by the batch. Instead, the batch pushes an email task into a dedicated SQS queue with this shape:
+
+```json
+{
+  "to": "alert@example.com",
+  "subject": "[stratium-batch] delivery failed for ...",
+  "html": "<p>...</p>"
+}
+```
+
+That means:
+
+- the configured AWS credentials must have `sqs:SendMessage`
+- `BATCH_SQS_QUEUE_URL` is for successful upload events
+- `BATCH_ALERT_SQS_QUEUE_URL` is for email-task messages consumed by your mail worker
+
+Useful optional env vars:
+
+- `HYPERLIQUID_COINS=BTC,ETH`
+- `HYPERLIQUID_CANDLE_INTERVAL=1m`
+- `BATCH_FILE_ROLL_MINUTES=5`
+- `BATCH_UPLOAD_INTERVAL_SECONDS=60`
+- `BATCH_SPOOL_DIR=logs/hyperliquid-batch`
+
+Run it directly:
+
+```powershell
+pnpm --filter @stratium/batch dev
+```
+
+Build and run in production:
+
+```powershell
+pnpm batch:build
+pnpm batch:start
+```
+
+Run it in an isolated Docker environment:
+
+```powershell
+docker-compose --env-file .env.batch -f docker-compose.batch.yml up --build -d
+```
+
+Stop the isolated batch container:
+
+```powershell
+docker-compose --env-file .env.batch -f docker-compose.batch.yml down
+```
+
+Example with PM2 on an EC2 host that already has Node.js and `pnpm`:
+
+```powershell
+pnpm batch:build
+pm2 start pnpm --name stratium-hyperliquid-batch -- batch:start
+pm2 save
+```
+
+The standalone Docker runtime uses [docker-compose.batch.yml](/d:/git/stratium/docker-compose.batch.yml) and [apps/batch/Dockerfile](/d:/git/stratium/apps/batch/Dockerfile). It only starts the batch collector and persists local spool files in a dedicated Docker volume. Use a dedicated env file such as `.env.batch` on the target server.
+
+For Docker deployment on EC2, put `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `.env.batch` so the container can authenticate to S3 and SQS. If you are using temporary credentials, also set `AWS_SESSION_TOKEN`.
+
+For EC2 auto-start behavior:
+
+- the batch container uses `restart: always`
+- the standalone batch container keeps only a small rotated Docker log with `json-file`, `max-size: 5m`, and `max-file: 2`
+- Docker itself must be enabled on boot on the EC2 host, for example `sudo systemctl enable docker`
+- after the first `docker-compose --env-file .env.batch -f docker-compose.batch.yml up -d`, the container will come back automatically after instance reboot as long as the Docker service starts
 
 ## Docker Notes
 

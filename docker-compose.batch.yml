@@ -1,0 +1,35 @@
+services:
+  batch:
+    build:
+      context: .
+      dockerfile: apps/batch/Dockerfile
+    container_name: stratium-hyperliquid-batch
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: always
+    environment:
+      NODE_ENV: production
+      AWS_REGION: ${AWS_REGION:-ap-northeast-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      HYPERLIQUID_COINS: ${HYPERLIQUID_COINS:-BTC}
+      HYPERLIQUID_CANDLE_INTERVAL: ${HYPERLIQUID_CANDLE_INTERVAL:-1m}
+      BATCH_SPOOL_DIR: ${BATCH_SPOOL_DIR:-/var/lib/stratium-batch/spool}
+      BATCH_FILE_ROLL_MINUTES: ${BATCH_FILE_ROLL_MINUTES:-5}
+      BATCH_UPLOAD_INTERVAL_SECONDS: ${BATCH_UPLOAD_INTERVAL_SECONDS:-60}
+      BATCH_RECONNECT_DELAY_MS: ${BATCH_RECONNECT_DELAY_MS:-3000}
+      BATCH_S3_BUCKET: ${BATCH_S3_BUCKET}
+      BATCH_S3_PREFIX: ${BATCH_S3_PREFIX:-hyperliquid/raw}
+      BATCH_S3_STORAGE_CLASS: ${BATCH_S3_STORAGE_CLASS:-}
+      BATCH_SQS_QUEUE_URL: ${BATCH_SQS_QUEUE_URL}
+      BATCH_ALERT_SQS_QUEUE_URL: ${BATCH_ALERT_SQS_QUEUE_URL}
+      BATCH_ALERT_EMAIL_TO: ${BATCH_ALERT_EMAIL_TO}
+    volumes:
+      - batch-spool:/var/lib/stratium-batch/spool
+
+volumes:
+  batch-spool:

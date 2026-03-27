@@ -1,0 +1,20 @@
+{
+  "name": "@stratium/batch",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm exec tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node --experimental-specifier-resolution=node dist/index.js",
+    "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm exec vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.862.0",
+    "@aws-sdk/client-sqs": "^3.862.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}
