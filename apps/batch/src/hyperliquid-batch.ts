@@ -71,7 +71,7 @@ const listPendingFiles = async (baseDir: string): Promise<Array<{ fullPath: stri
         continue;
       }
 
-      if (entry.isFile() && fullPath.endsWith(".ndjson")) {
+      if (entry.isFile() && fullPath.endsWith(".ndjson") && !fullPath.endsWith(".open.ndjson")) {
         pending.push({
           fullPath,
           relativePath: path.relative(baseDir, fullPath)
@@ -254,6 +254,7 @@ export class HyperliquidBatchCollector {
 
     try {
       await this.writer.sealExpiredFile();
+      await this.writer.flushFinalizations();
       const pendingFiles = await listPendingFiles(this.config.spoolDir);
 
       for (const file of pendingFiles) {

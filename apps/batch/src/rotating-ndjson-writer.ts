@@ -35,6 +35,8 @@ export class RotatingNdjsonWriter {
 
   private active?: ActiveFile;
 
+  private readonly pendingFinalizations = new Set<Promise<RotatingFileMetadata>>();
+
   constructor(baseDir: string, rollMinutes: number, filePrefix: string) {
     this.baseDir = baseDir;
     this.windowMs = rollMinutes * 60_000;
@@ -53,26 +55,35 @@ export class RotatingNdjsonWriter {
 
   async close(): Promise<RotatingFileMetadata | null> {
     if (!this.active) {
+      await this.awaitPendingFinalizations();
       return null;
     }
 
     const metadata = await this.finalizeActiveFile(this.active);
     this.active = undefined;
+    await this.awaitPendingFinalizations();
     return metadata;
   }
 
   async sealExpiredFile(nowMs = Date.now()): Promise<RotatingFileMetadata | null> {
     if (!this.active) {
+      await this.awaitPendingFinalizations();
       return null;
     }
 
     if (this.active.startedAt + this.windowMs > nowMs) {
+      await this.awaitPendingFinalizations();
       return null;
     }
 
     const metadata = await this.finalizeActiveFile(this.active);
     this.active = undefined;
+    await this.awaitPendingFinalizations();
     return metadata;
+  }
+
+  async flushFinalizations(): Promise<void> {
+    await this.awaitPendingFinalizations();
   }
 
   private ensureActiveFile(timestampMs: number): ActiveFile {
@@ -85,8 +96,12 @@ export class RotatingNdjsonWriter {
     const previous = this.active;
     if (previous) {
       this.active = undefined;
-      void this.finalizeActiveFile(previous).catch((error: unknown) => {
+      const finalization = this.finalizeActiveFile(previous);
+      this.pendingFinalizations.add(finalization);
+      void finalization.catch((error: unknown) => {
         console.error("Failed to finalize rotated file", error);
+      }).finally(() => {
+        this.pendingFinalizations.delete(finalization);
       });
     }
 
@@ -158,5 +173,13 @@ export class RotatingNdjsonWriter {
         }
       }
     }
+  }
+
+  private async awaitPendingFinalizations(): Promise<void> {
+    if (this.pendingFinalizations.size === 0) {
+      return;
+    }
+
+    await Promise.allSettled([...this.pendingFinalizations]);
   }
 }
