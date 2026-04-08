@@ -9,8 +9,12 @@
     "postinstall": "pnpm exec prisma generate",
     "prisma:generate": "pnpm exec prisma generate",
     "db:push": "pnpm exec prisma db push",
+    "db:seed": "pnpm exec prisma db seed",
     "seed:symbol-configs": "node prisma/seed-symbol-configs.mjs",
     "test": "pnpm -r test"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.mjs"
   },
   "devDependencies": {
     "@prisma/client": "^6.19.2",

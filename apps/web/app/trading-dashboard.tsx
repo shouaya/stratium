@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, HTMLAttributes } from "react";
 import type { AccountView, AnyEventEnvelope, OrderView, PositionView } from "@stratium/shared";
 import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
+import type { AuthUser, PlatformSettings } from "./auth-client";
+import { authHeaders } from "./auth-client";
 import { CandlestickChart } from "./candlestick-chart";
 
 type TickPayload = {
@@ -31,6 +33,7 @@ type State = {
     szDecimals: number;
     quoteAsset: string;
   };
+  platform?: PlatformSettings;
 };
 
 type MarketSimulatorState = {
@@ -166,7 +169,17 @@ const extractResponseMessage = (payload: { events?: AnyEventEnvelope[] }, succes
   return successMessage;
 };
 
-export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
+export function TradingDashboard({
+  apiBaseUrl,
+  authToken,
+  viewer,
+  onLogout
+}: {
+  apiBaseUrl: string;
+  authToken: string;
+  viewer: AuthUser;
+  onLogout: () => void;
+}) {
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"market" | "limit">("market");
@@ -174,7 +187,12 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("balances");
   const [timeframe, setTimeframe] = useState<TimeframeId>("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderForm, setOrderForm] = useState({ accountId: "paper-account-1", symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
+  const [orderForm, setOrderForm] = useState({
+    accountId: viewer.tradingAccountId ?? "paper-account-1",
+    symbol: "BTC-USD",
+    quantity: "1",
+    limitPrice: "100"
+  });
   const [leverageDraft, setLeverageDraft] = useState(10);
   const priceDigits = useMemo(() => priceDigitsForSymbol(orderForm.symbol), [orderForm.symbol]);
   const contractCoin = useMemo(() => state.market?.coin ?? coinFromSymbol(orderForm.symbol), [orderForm.symbol, state.market?.coin]);
@@ -669,10 +687,17 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [orderForm.symbol, state.symbolConfig?.symbol]);
 
   useEffect(() => {
+    setOrderForm((current) => ({
+      ...current,
+      accountId: viewer.tradingAccountId ?? current.accountId
+    }));
+  }, [viewer.tradingAccountId]);
+
+  useEffect(() => {
     void refresh();
-    const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws`);
+    const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
     ws.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"] };
+      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"]; platform?: PlatformSettings };
       if (payload.state) {
         const nextState = payload.state;
         setState((cur) => ({
@@ -683,16 +708,24 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
           events: mergeEvents(cur.events, payload.events),
           simulator: payload.simulator ?? cur.simulator,
           market: payload.market ?? cur.market,
-          symbolConfig: payload.symbolConfig ?? cur.symbolConfig
+          symbolConfig: payload.symbolConfig ?? cur.symbolConfig,
+          platform: payload.platform ?? cur.platform
         }));
       }
     });
     return () => ws.close();
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, authToken]);
 
   const refresh = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store" });
+      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken) });
+
+      if (response.status === 401) {
+        setMessage("Session expired.");
+        onLogout();
+        return;
+      }
+
       const payload = await response.json() as State;
       setState(payload);
       setMessage("");
@@ -702,7 +735,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   };
 
   const submitOrder = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
+    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
     const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
     setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : "Failed to submit order.");
     if (response.ok) {
@@ -712,7 +745,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   };
 
   const cancelOrder = async (orderId: string) => {
-    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
+    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
     setMessage(response.ok ? `Order ${orderId} canceled.` : "Failed to cancel order.");
     if (response.ok) {
       await refresh();
@@ -729,7 +762,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
     const closingSide = state.position.side === "long" ? "sell" : "buy";
     const response = await fetch(`${apiBaseUrl}/api/orders`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         accountId: orderForm.accountId,
         symbol: state.position.symbol,
@@ -751,7 +784,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
   const updateLeverage = async () => {
     const response = await fetch(`${apiBaseUrl}/api/leverage`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         symbol: state.symbolConfig?.symbol ?? orderForm.symbol,
         leverage: leverageDraft
@@ -798,9 +831,16 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
               <Metric label="24h Volume" value={state.market?.assetCtx?.dayNotionalVolume != null ? `$${fmt(state.market.assetCtx.dayNotionalVolume, 2)}` : "-"} />
               <Metric label="Clock" value={clock(state.latestTick?.tickTime)} />
             </div>
-            <div style={{ justifySelf: "end", textAlign: "right" }}>
-              <div style={{ color: "#60727f", fontSize: 11 }}>Account</div>
-              <div style={{ color: "#f8fafc", fontSize: 14, fontWeight: 700 }}>{state.account?.accountId ?? "paper-account-1"}</div>
+            <div style={{ justifySelf: "end", display: "grid", gap: 8, textAlign: "right" }}>
+              <div>
+                <div style={{ color: "#56d7c4", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em" }}>{viewer.displayName}</div>
+                <div style={{ color: "#9ab0bc", fontSize: 12 }}>{viewer.username}</div>
+              </div>
+              <div>
+                <div style={{ color: "#60727f", fontSize: 11 }}>Trading Account</div>
+                <div style={{ color: "#f8fafc", fontSize: 14, fontWeight: 700 }}>{viewer.tradingAccountId ?? state.account?.accountId ?? "paper-account-1"}</div>
+              </div>
+              <button onClick={onLogout} style={btnInline}>Logout</button>
             </div>
           </div>
         </div>
@@ -823,7 +863,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700 }}>{contractCoin} Perp</div>
-                    <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
+                    <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || state.platform?.platformAnnouncement || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ color: stats.change && stats.change < 0 ? "#f87171" : "#2dd4bf", fontSize: 22, fontWeight: 700 }}>{fmt(stats.last, priceDigits)}</div>

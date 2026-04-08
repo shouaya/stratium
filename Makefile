@@ -2,8 +2,10 @@ PNPM ?= corepack pnpm
 COMPOSE ?= docker-compose
 COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
+DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
+MIGRATION_NAME ?= schema-update
 
-.PHONY: help install dev lint test build check prisma-generate db-push seed-symbol-configs \
+.PHONY: help install dev lint test build check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
 	config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
@@ -16,8 +18,11 @@ help:
 	@echo Setup
 	@echo   make install              Install workspace dependencies
 	@echo   make prisma-generate      Run Prisma client generation
-	@echo   make db-push              Push Prisma schema to database
-	@echo   make seed-symbol-configs  Seed default symbol configs
+	@echo   make db-migrate           Run Prisma migrate dev inside the batch container, pass MIGRATION_NAME="..."
+	@echo   make db-push              Push Prisma schema inside the batch container
+	@echo   make db-seed              Seed default app accounts and platform settings inside the batch container
+	@echo   make db-bootstrap         Run db push, db seed, and symbol config seed inside the batch container
+	@echo   make seed-symbol-configs  Seed default symbol configs inside the batch container
 	@echo.
 	@echo Local development
 	@echo   make dev                  Run api + web in local dev mode
@@ -67,11 +72,19 @@ check: lint test build config
 prisma-generate:
 	$(PNPM) prisma:generate
 
+db-migrate:
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma migrate dev --name $(MIGRATION_NAME)"
+
 db-push:
-	$(PNPM) db:push
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma db push"
+
+db-seed:
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma db seed"
+
+db-bootstrap: db-push db-seed seed-symbol-configs
 
 seed-symbol-configs:
-	$(PNPM) seed:symbol-configs
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "node prisma/seed-symbol-configs.mjs"
 
 up:
 	$(COMPOSE) up

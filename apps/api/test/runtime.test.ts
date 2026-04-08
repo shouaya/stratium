@@ -4,6 +4,8 @@ import type { AnyEventEnvelope, MarketTick } from "@stratium/shared";
 const repositoryMocks = vi.hoisted(() => ({
   connect: vi.fn(),
   close: vi.fn(),
+  ensureDefaultAccess: vi.fn(),
+  getPlatformSettings: vi.fn(),
   loadSymbolConfig: vi.fn(),
   loadSymbolConfigMeta: vi.fn(),
   loadEvents: vi.fn(),
@@ -71,6 +73,8 @@ vi.mock("../src/repository", () => ({
   TradingRepository: class {
     connect = repositoryMocks.connect;
     close = repositoryMocks.close;
+    ensureDefaultAccess = repositoryMocks.ensureDefaultAccess;
+    getPlatformSettings = repositoryMocks.getPlatformSettings;
     loadSymbolConfig = repositoryMocks.loadSymbolConfig;
     loadSymbolConfigMeta = repositoryMocks.loadSymbolConfigMeta;
     loadEvents = repositoryMocks.loadEvents;
@@ -327,6 +331,14 @@ describe("ApiRuntime", () => {
     repositoryMocks.loadSymbolConfigMeta.mockResolvedValue(null);
     repositoryMocks.loadEvents.mockResolvedValue([]);
     repositoryMocks.loadRecentMarketSnapshot.mockResolvedValue(null);
+    repositoryMocks.ensureDefaultAccess.mockResolvedValue(undefined);
+    repositoryMocks.getPlatformSettings.mockResolvedValue({
+      platformName: "Stratium Demo",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: true
+    });
     repositoryMocks.persistState.mockResolvedValue(undefined);
     repositoryMocks.updateSymbolLeverage.mockResolvedValue(undefined);
     repositoryMocks.loadRecentVolumeRecords.mockResolvedValue([{ id: "vol-1" }]);

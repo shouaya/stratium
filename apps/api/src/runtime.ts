@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth";
 import { loadApiBootstrapState } from "./bootstrap";
 import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime";
 import {
@@ -19,6 +20,13 @@ export class ApiRuntime {
   private readonly webSocketHub = new WebSocketHub();
 
   private symbolConfigState: SymbolConfigState;
+  private platformSettings: PlatformSettingsView = {
+    platformName: "Stratium Demo",
+    platformAnnouncement: "",
+    allowFrontendTrading: true,
+    allowManualTicks: true,
+    allowSimulatorControl: true
+  };
 
   private readonly marketSource = process.env.MARKET_SOURCE ?? "hyperliquid";
 
@@ -31,6 +39,7 @@ export class ApiRuntime {
   private readonly marketRuntime: MarketRuntime;
 
   private readonly tradingRuntime: TradingRuntime;
+  private readonly authRuntime: AuthRuntime;
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.symbolConfigState = {
@@ -62,6 +71,8 @@ export class ApiRuntime {
         this.broadcast(events);
       }
     });
+
+    this.authRuntime = new AuthRuntime(this.repository);
   }
 
   getEngineState() {
@@ -92,14 +103,28 @@ export class ApiRuntime {
     return this.marketRuntime.getHyperliquidCandleInterval();
   }
 
+  getPlatformSettings() {
+    return this.platformSettings;
+  }
+
   getStatePayload() {
     return createStatePayload({
       state: this.tradingRuntime.getEngineState(),
       events: this.tradingRuntime.getEventStore(),
       simulator: this.marketRuntime.getMarketSimulatorState(),
       market: this.marketRuntime.getMarketData(),
-      symbolConfig: this.symbolConfigState
+      symbolConfig: this.symbolConfigState,
+      platform: this.platformSettings
     });
+  }
+
+  getAdminStatePayload() {
+    return {
+      latestTick: this.tradingRuntime.getEngineState().latestTick,
+      simulator: this.marketRuntime.getMarketSimulatorState(),
+      events: this.tradingRuntime.getEventStore(),
+      platform: this.platformSettings
+    };
   }
 
   getReplayPayload(sessionId: string) {
@@ -108,12 +133,14 @@ export class ApiRuntime {
       this.tradingRuntime.getReplayState(this.tradingRuntime.getEngineState().simulationSessionId),
       this.tradingRuntime.getEventStore(),
       this.marketRuntime.getMarketSimulatorState(),
-      this.marketRuntime.getMarketData()
+      this.marketRuntime.getMarketData(),
+      this.platformSettings
     );
   }
 
   async bootstrap(): Promise<void> {
     await this.repository.connect();
+    this.platformSettings = await this.authRuntime.bootstrap();
     const bootstrapState = await loadApiBootstrapState(this.repository, {
       sessionId: "session-1",
       configuredTradingSymbol: this.configuredTradingSymbol,
@@ -160,9 +187,50 @@ export class ApiRuntime {
         this.tradingRuntime.getEngineState(),
         this.tradingRuntime.getEventStore(),
         this.marketRuntime.getMarketSimulatorState(),
-        this.marketRuntime.getMarketData()
+        this.marketRuntime.getMarketData(),
+        this.platformSettings
       )
     );
+  }
+
+  async login(username: string, password: string, role: AuthRole) {
+    return this.authRuntime.login(username, password, role);
+  }
+
+  logout(token: string | undefined): void {
+    this.authRuntime.logout(token);
+  }
+
+  getSession(token: string | undefined): AuthSession | null {
+    return this.authRuntime.getSession(token);
+  }
+
+  async listFrontendUsers(): Promise<FrontendUserView[]> {
+    return this.authRuntime.listFrontendUsers();
+  }
+
+  async createFrontendUser(input: {
+    username: string;
+    password: string;
+    displayName: string;
+    tradingAccountId?: string | null;
+  }): Promise<FrontendUserView> {
+    return this.authRuntime.createFrontendUser(input);
+  }
+
+  async updateFrontendUser(userId: string, input: {
+    password?: string;
+    displayName?: string;
+    tradingAccountId?: string | null;
+    isActive?: boolean;
+  }): Promise<FrontendUserView> {
+    return this.authRuntime.updateFrontendUser(userId, input);
+  }
+
+  async updatePlatformSettings(input: PlatformSettingsView): Promise<PlatformSettingsView> {
+    this.platformSettings = await this.authRuntime.updatePlatformSettings(input);
+    this.broadcast();
+    return this.platformSettings;
   }
 
   removeSocket(socket: SocketLike): void {
@@ -230,7 +298,8 @@ export class ApiRuntime {
       events,
       this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
-      this.symbolConfigState
+      this.symbolConfigState,
+      this.platformSettings
     );
   }
 

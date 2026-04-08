@@ -49,12 +49,29 @@ Stratium is a PH1 trading simulation platform focused on a deterministic trading
 ```bash
 make help
 make install
+make db-migrate MIGRATION_NAME=add-auth-access
+make db-seed
+make db-bootstrap
 make dev
 make up
 make up-build
 make down
 make logs
 make check
+```
+
+## Demo Accounts
+
+Run `make db-seed` or `make db-bootstrap` before first login. Database setup commands run inside the batch container.
+
+```text
+Frontend login
+  username: demo
+  password: demo123456
+
+Admin login
+  username: admin
+  password: admin123456
 ```
 
 ### Batch / Market Data

@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import type { AnyEventEnvelope, FillPayload, MarketTick, OrderView, PositionView, TradingSymbolConfig } from "@stratium/shared";
 import type { TradingEngineState } from "@stratium/trading-core";
+import type { PlatformSettingsView } from "./auth";
 import type {
   HyperliquidAssetContext,
   HyperliquidCandle,
@@ -16,6 +17,13 @@ const toJson = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJ
 const isFillEvent = (eventType: string): boolean =>
   eventType === "OrderFilled" || eventType === "OrderPartiallyFilled";
 
+type AuthSeedInput = {
+  username: string;
+  passwordHash: string;
+  displayName: string;
+  tradingAccountId?: string;
+};
+
 export class TradingRepository {
   async connect(): Promise<void> {
     await prisma.$connect();
@@ -23,6 +31,227 @@ export class TradingRepository {
 
   async close(): Promise<void> {
     await prisma.$disconnect();
+  }
+
+  async ensureDefaultAccess(input: {
+    frontend: AuthSeedInput;
+    admin: AuthSeedInput;
+  }): Promise<void> {
+    await prisma.appUser.upsert({
+      where: { username: input.frontend.username },
+      update: {},
+      create: {
+        username: input.frontend.username,
+        passwordHash: input.frontend.passwordHash,
+        role: "frontend",
+        displayName: input.frontend.displayName,
+        tradingAccountId: input.frontend.tradingAccountId ?? "paper-account-1",
+        isActive: true
+      }
+    });
+
+    await prisma.appUser.upsert({
+      where: { username: input.admin.username },
+      update: {},
+      create: {
+        username: input.admin.username,
+        passwordHash: input.admin.passwordHash,
+        role: "admin",
+        displayName: input.admin.displayName,
+        tradingAccountId: null,
+        isActive: true
+      }
+    });
+
+    await prisma.platformSettings.upsert({
+      where: { id: "platform" },
+      update: {},
+      create: {
+        id: "platform",
+        platformName: "Stratium Demo",
+        platformAnnouncement: "Demo environment. Accounts are issued by admin only.",
+        allowFrontendTrading: true,
+        allowManualTicks: true,
+        allowSimulatorControl: true
+      }
+    });
+  }
+
+  async findUserByUsername(username: string): Promise<{
+    id: string;
+    username: string;
+    passwordHash: string;
+    role: "frontend" | "admin";
+    displayName: string;
+    tradingAccountId: string | null;
+    isActive: boolean;
+  } | null> {
+    const user = await prisma.appUser.findUnique({
+      where: { username }
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: user.id,
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: user.role as "frontend" | "admin",
+      displayName: user.displayName,
+      tradingAccountId: user.tradingAccountId,
+      isActive: user.isActive
+    };
+  }
+
+  async listFrontendUsers(): Promise<Array<{
+    id: string;
+    username: string;
+    passwordHash: string;
+    role: "frontend";
+    displayName: string;
+    tradingAccountId: string | null;
+    isActive: boolean;
+  }>> {
+    const users = await prisma.appUser.findMany({
+      where: { role: "frontend" },
+      orderBy: { username: "asc" }
+    });
+
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: "frontend" as const,
+      displayName: user.displayName,
+      tradingAccountId: user.tradingAccountId,
+      isActive: user.isActive
+    }));
+  }
+
+  async createFrontendUser(input: {
+    username: string;
+    passwordHash: string;
+    displayName: string;
+    tradingAccountId: string;
+  }): Promise<{
+    id: string;
+    username: string;
+    passwordHash: string;
+    role: "frontend";
+    displayName: string;
+    tradingAccountId: string | null;
+    isActive: boolean;
+  }> {
+    const user = await prisma.appUser.create({
+      data: {
+        username: input.username,
+        passwordHash: input.passwordHash,
+        role: "frontend",
+        displayName: input.displayName,
+        tradingAccountId: input.tradingAccountId,
+        isActive: true
+      }
+    });
+
+    return {
+      id: user.id,
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: "frontend",
+      displayName: user.displayName,
+      tradingAccountId: user.tradingAccountId,
+      isActive: user.isActive
+    };
+  }
+
+  async updateFrontendUser(userId: string, input: {
+    passwordHash?: string;
+    displayName?: string;
+    tradingAccountId?: string | null;
+    isActive?: boolean;
+  }): Promise<{
+    id: string;
+    username: string;
+    passwordHash: string;
+    role: "frontend";
+    displayName: string;
+    tradingAccountId: string | null;
+    isActive: boolean;
+  }> {
+    const user = await prisma.appUser.update({
+      where: { id: userId },
+      data: {
+        ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+        ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+        ...(input.tradingAccountId !== undefined ? { tradingAccountId: input.tradingAccountId } : {}),
+        ...(input.isActive !== undefined ? { isActive: input.isActive } : {})
+      }
+    });
+
+    return {
+      id: user.id,
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: "frontend",
+      displayName: user.displayName,
+      tradingAccountId: user.tradingAccountId,
+      isActive: user.isActive
+    };
+  }
+
+  async getPlatformSettings(): Promise<PlatformSettingsView> {
+    const settings = await prisma.platformSettings.findUnique({
+      where: { id: "platform" }
+    });
+
+    if (!settings) {
+      return {
+        platformName: "Stratium Demo",
+        platformAnnouncement: "",
+        allowFrontendTrading: true,
+        allowManualTicks: true,
+        allowSimulatorControl: true
+      };
+    }
+
+    return {
+      platformName: settings.platformName,
+      platformAnnouncement: settings.platformAnnouncement ?? "",
+      allowFrontendTrading: settings.allowFrontendTrading,
+      allowManualTicks: settings.allowManualTicks,
+      allowSimulatorControl: settings.allowSimulatorControl
+    };
+  }
+
+  async updatePlatformSettings(input: PlatformSettingsView): Promise<PlatformSettingsView> {
+    const settings = await prisma.platformSettings.upsert({
+      where: { id: "platform" },
+      update: {
+        platformName: input.platformName,
+        platformAnnouncement: input.platformAnnouncement || null,
+        allowFrontendTrading: input.allowFrontendTrading,
+        allowManualTicks: input.allowManualTicks,
+        allowSimulatorControl: input.allowSimulatorControl
+      },
+      create: {
+        id: "platform",
+        platformName: input.platformName,
+        platformAnnouncement: input.platformAnnouncement || null,
+        allowFrontendTrading: input.allowFrontendTrading,
+        allowManualTicks: input.allowManualTicks,
+        allowSimulatorControl: input.allowSimulatorControl
+      }
+    });
+
+    return {
+      platformName: settings.platformName,
+      platformAnnouncement: settings.platformAnnouncement ?? "",
+      allowFrontendTrading: settings.allowFrontendTrading,
+      allowManualTicks: settings.allowManualTicks,
+      allowSimulatorControl: settings.allowSimulatorControl
+    };
   }
 
   async loadEvents(sessionId: string): Promise<AnyEventEnvelope[]> {

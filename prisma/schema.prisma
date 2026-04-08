@@ -21,6 +21,29 @@ model Account {
   updatedAt        DateTime @updatedAt
 }
 
+model AppUser {
+  id              String   @id @default(cuid())
+  username        String   @unique
+  passwordHash    String
+  role            String
+  displayName     String
+  tradingAccountId String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model PlatformSettings {
+  id                    String   @id
+  platformName          String
+  platformAnnouncement  String?
+  allowFrontendTrading  Boolean  @default(true)
+  allowManualTicks      Boolean  @default(true)
+  allowSimulatorControl Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
 model Order {
   id                String   @id
   accountId        String

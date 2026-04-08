@@ -1,4 +1,5 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
+import type { PlatformSettingsView } from "./auth";
 import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
 import type { MarketSimulatorState, SymbolConfigState } from "./market-runtime";
 
@@ -16,6 +17,7 @@ interface RuntimePayloadInput {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
+  platform: PlatformSettingsView;
 }
 
 export interface StatePayload {
@@ -28,6 +30,7 @@ export interface StatePayload {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
+  platform: PlatformSettingsView;
 }
 
 export interface ReplayPayload {
@@ -36,6 +39,7 @@ export interface ReplayPayload {
   state: TradingStateLike;
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
+  platform: PlatformSettingsView;
 }
 
 export interface SocketBootstrapPayload {
@@ -44,6 +48,7 @@ export interface SocketBootstrapPayload {
   events: AnyEventEnvelope[];
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
+  platform: PlatformSettingsView;
 }
 
 export interface SocketEventsPayload {
@@ -53,6 +58,7 @@ export interface SocketEventsPayload {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
+  platform: PlatformSettingsView;
 }
 
 export const createStatePayload = (input: RuntimePayloadInput): StatePayload => ({
@@ -64,7 +70,8 @@ export const createStatePayload = (input: RuntimePayloadInput): StatePayload => 
   events: input.events,
   simulator: input.simulator,
   market: input.market,
-  symbolConfig: input.symbolConfig
+  symbolConfig: input.symbolConfig,
+  platform: input.platform
 });
 
 export const createReplayPayload = (
@@ -72,26 +79,30 @@ export const createReplayPayload = (
   state: TradingStateLike,
   events: AnyEventEnvelope[],
   simulator: MarketSimulatorState,
-  market: HyperliquidMarketSnapshot
+  market: HyperliquidMarketSnapshot,
+  platform: PlatformSettingsView
 ): ReplayPayload => ({
   sessionId,
   events,
   state,
   simulator,
-  market
+  market,
+  platform
 });
 
 export const createSocketBootstrapPayload = (
   state: TradingStateLike,
   events: AnyEventEnvelope[],
   simulator: MarketSimulatorState,
-  market: HyperliquidMarketSnapshot
+  market: HyperliquidMarketSnapshot,
+  platform: PlatformSettingsView
 ): SocketBootstrapPayload => ({
   type: "bootstrap" as const,
   state,
   events,
   simulator,
-  market
+  market,
+  platform
 });
 
 export const createSocketEventsPayload = (
@@ -99,12 +110,14 @@ export const createSocketEventsPayload = (
   events: AnyEventEnvelope[],
   simulator: MarketSimulatorState,
   market: HyperliquidMarketSnapshot,
-  symbolConfig: SymbolConfigState
+  symbolConfig: SymbolConfigState,
+  platform: PlatformSettingsView
 ): SocketEventsPayload => ({
   type: "events" as const,
   events,
   state,
   simulator,
   market,
-  symbolConfig
+  symbolConfig,
+  platform
 });
