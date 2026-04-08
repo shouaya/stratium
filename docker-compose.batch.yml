@@ -3,13 +3,11 @@ services:
     build:
       context: .
       dockerfile: apps/batch/Dockerfile
-    container_name: stratium-hyperliquid-batch
     logging:
       driver: "json-file"
       options:
         max-size: "5m"
         max-file: "2"
-    restart: always
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
@@ -33,6 +31,7 @@ services:
       - batch-spool:/var/lib/stratium-batch/spool
     networks:
       - stratium
+    command: ["sh", "-lc", "echo 'Specify a batch job command with docker compose run.' && exit 1"]
 
 volumes:
   batch-spool:

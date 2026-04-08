@@ -1,4 +1,4 @@
-import { connectPrismaWithLocalhostFallback } from "./prisma-connection.js";
+import { connectPrismaWithLocalhostFallback } from "../infra/prisma-connection.js";
 
 interface CliOptions {
   all: boolean;

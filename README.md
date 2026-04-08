@@ -60,11 +60,18 @@ make check
 ### Batch / Market Data
 
 ```bash
-make batch-compose-up
+make batch-build
+make batch-run-collector
 make batch-clear-kline ARGS="--coin BTC --interval 1m"
 make batch-import-hl-day ARGS="--coin BTC --date 2026-04-08"
 make batch-refresh-hl-day COIN=BTC DATE=2026-04-08
 ```
+
+Batch is docker-job only:
+
+- it is not part of the main `api/web/db` compose stack
+- it does not auto-start
+- run every batch task through `make` or `docker compose -f docker-compose.batch.yml run --rm ...`
 
 ## Main Docs
 

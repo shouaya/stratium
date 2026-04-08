@@ -22,4 +22,4 @@ RUN pnpm --filter @stratium/batch build
 
 WORKDIR /workspace/apps/batch
 
-CMD ["node", "--experimental-specifier-resolution=node", "dist/index.js"]
+CMD ["sh", "-lc", "echo 'Batch is docker-job only. Pass an explicit command to docker compose run.' && exit 1"]

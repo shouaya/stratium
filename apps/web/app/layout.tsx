@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Stratium PH1",
+  title: "Stratium Weget",
   description: "Trading simulation core and Web prototype"
 };
 
