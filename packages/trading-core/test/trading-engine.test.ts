@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MarketTick } from "@stratium/shared";
-import { TradingEngine, createInitialTradingState, replayEvents } from "./index";
+import { TradingEngine, createInitialTradingState, replayEvents } from "../src";
 
 const baseTick: MarketTick = {
   symbol: "BTC-USD",

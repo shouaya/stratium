@@ -8,7 +8,8 @@
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",
     "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
-    "test": "pnpm exec vitest run --passWithNoTests"
+    "test": "pnpm exec vitest run --passWithNoTests",
+    "test:coverage": "pnpm exec vitest run --coverage"
   },
   "dependencies": {
     "@stratium/shared": "workspace:*"
