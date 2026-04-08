@@ -57,6 +57,9 @@ importers:
       '@aws-sdk/client-sqs':
         specifier: ^3.862.0
         version: 3.1018.0
+      '@prisma/client':
+        specifier: ^6.19.2
+        version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
       tsx:
         specifier: ^4.19.3

@@ -12,6 +12,7 @@ services:
     restart: always
     environment:
       NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
       AWS_REGION: ${AWS_REGION:-ap-northeast-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
@@ -30,6 +31,13 @@ services:
       BATCH_ALERT_EMAIL_TO: ${BATCH_ALERT_EMAIL_TO}
     volumes:
       - batch-spool:/var/lib/stratium-batch/spool
+    networks:
+      - stratium
 
 volumes:
   batch-spool:
+
+networks:
+  stratium:
+    external: true
+    name: ${BATCH_DOCKER_NETWORK:-stratium_default}

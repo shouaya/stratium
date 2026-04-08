@@ -11,6 +11,16 @@ const app = Fastify({
   logger: true
 });
 
+const mergeByKey = <T,>(items: T[], keyOf: (item: T) => string): T[] => {
+  const map = new Map<string, T>();
+
+  for (const item of items) {
+    map.set(keyOf(item), item);
+  }
+
+  return [...map.values()];
+};
+
 const repository = new TradingRepository();
 let engine = new TradingEngine(createInitialTradingState());
 const eventStore: EventEnvelope<unknown>[] = [];
@@ -108,19 +118,50 @@ const hyperliquidClient = new HyperliquidMarketClient({
     }
   },
   onSnapshot: (snapshot) => {
-    marketData = snapshot;
+    if (snapshot.source === "hyperliquid") {
+      const mergedTrades = mergeByKey(
+        [...snapshot.trades, ...marketData.trades],
+        (trade) => trade.id
+      )
+        .sort((left, right) => right.time - left.time)
+        .slice(0, 200);
+      const mergedCandles = mergeByKey(
+        [...marketData.candles, ...snapshot.candles],
+        (candle) => candle.id
+      )
+        .sort((left, right) => left.openTime - right.openTime)
+        .slice(-500);
+
+      marketData = {
+        source: "hyperliquid",
+        coin: snapshot.coin,
+        connected: snapshot.connected,
+        bestBid: snapshot.bestBid ?? marketData.bestBid,
+        bestAsk: snapshot.bestAsk ?? marketData.bestAsk,
+        markPrice: snapshot.markPrice ?? marketData.markPrice,
+        book: snapshot.book.bids.length > 0 || snapshot.book.asks.length > 0
+          ? snapshot.book
+          : marketData.book,
+        trades: mergedTrades,
+        candles: mergedCandles,
+        assetCtx: snapshot.assetCtx ?? marketData.assetCtx
+      };
+    } else {
+      marketData = snapshot;
+    }
+
     const marketSignature = JSON.stringify({
-      bestBid: snapshot.bestBid,
-      bestAsk: snapshot.bestAsk,
-      bookUpdatedAt: snapshot.book.updatedAt,
-      topTradeId: snapshot.trades[0]?.id,
-      latestCandleId: snapshot.candles[snapshot.candles.length - 1]?.id,
-      assetCtxAt: snapshot.assetCtx?.capturedAt
+      bestBid: marketData.bestBid,
+      bestAsk: marketData.bestAsk,
+      bookUpdatedAt: marketData.book.updatedAt,
+      topTradeId: marketData.trades[0]?.id,
+      latestCandleId: marketData.candles[marketData.candles.length - 1]?.id,
+      assetCtxAt: marketData.assetCtx?.capturedAt
     });
 
-    if (snapshot.source === "hyperliquid" && marketSignature !== lastPersistedMarketSignature) {
+    if (marketData.source === "hyperliquid" && marketSignature !== lastPersistedMarketSignature) {
       lastPersistedMarketSignature = marketSignature;
-      void repository.persistMarketSnapshot(snapshot).catch((error: unknown) => {
+      void repository.persistMarketSnapshot(marketData).catch((error: unknown) => {
         app.log.error({ error }, "Failed to persist Hyperliquid market snapshot");
       });
     }
@@ -147,7 +188,9 @@ const broadcast = (events: EventEnvelope<unknown>[] = []) => {
 };
 
 const persistEvents = async (events: EventEnvelope<unknown>[]) => {
-  eventStore.push(...events);
+  for (const event of events) {
+    eventStore.push(event);
+  }
   persistQueue = persistQueue
     .then(async () => {
       if (!bootstrapReady) {
@@ -337,7 +380,9 @@ const bootstrapEngine = async () => {
   };
 
   if (persistedEvents.length > 0) {
-    eventStore.push(...persistedEvents);
+    for (const event of persistedEvents) {
+      eventStore.push(event);
+    }
     engine = new TradingEngine(replayEvents(persistedEvents, {
       sessionId: "session-1",
       symbolConfig: persistedSymbolConfig ?? undefined
@@ -408,16 +453,36 @@ app.get("/api/state", async () => ({
 app.get("/api/market-history", async (request) => {
   const query = request.query as { limit?: string };
   const limit = Number(query.limit ?? 200);
-  const candles = marketData.candles.slice(-Math.max(10, Math.min(limit, 500)));
-  const trades = marketData.trades.slice(0, Math.max(10, Math.min(limit, 200)));
+  const persistedMarketSnapshot = await repository.loadRecentMarketSnapshot(hyperliquidCoin, hyperliquidCandleInterval);
+  const sourceMarket = persistedMarketSnapshot
+    ? {
+      ...persistedMarketSnapshot,
+      connected: marketData.connected,
+      bestBid: marketData.bestBid ?? persistedMarketSnapshot.bestBid,
+      bestAsk: marketData.bestAsk ?? persistedMarketSnapshot.bestAsk,
+      markPrice: marketData.markPrice ?? persistedMarketSnapshot.markPrice,
+      book: marketData.book.bids.length > 0 || marketData.book.asks.length > 0 ? marketData.book : persistedMarketSnapshot.book,
+      assetCtx: marketData.assetCtx ?? persistedMarketSnapshot.assetCtx,
+      trades: mergeByKey(
+        [...marketData.trades, ...persistedMarketSnapshot.trades],
+        (trade) => trade.id
+      ).sort((left, right) => right.time - left.time),
+      candles: mergeByKey(
+        [...persistedMarketSnapshot.candles, ...marketData.candles],
+        (candle) => candle.id
+      ).sort((left, right) => left.openTime - right.openTime)
+    }
+    : marketData;
+  const candles = sourceMarket.candles.slice(-Math.max(10, Math.min(limit, 500)));
+  const trades = sourceMarket.trades.slice(0, Math.max(10, Math.min(limit, 200)));
 
   return {
-    coin: marketData.coin,
+    coin: sourceMarket.coin,
     interval: hyperliquidCandleInterval,
     candles,
     trades,
-    book: marketData.book,
-    assetCtx: marketData.assetCtx
+    book: sourceMarket.book,
+    assetCtx: sourceMarket.assetCtx
   };
 });
 

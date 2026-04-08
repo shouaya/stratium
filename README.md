@@ -52,11 +52,29 @@ docker-compose.yml
 
 - Docker
 - Docker Compose
+- `make` if you want a single command entrypoint
 
 If you want to run checks outside containers:
 
 - Node.js 22
 - `pnpm` 10
+
+## Make Targets
+
+The repo now includes a root `Makefile` so common commands can be run with `make`.
+
+Examples:
+
+```powershell
+make help
+make install
+make dev
+make up-build
+make check
+make batch-compose-up
+```
+
+The `Makefile` wraps the existing `pnpm` and `docker-compose` commands. You can still run the original commands directly if you prefer.
 
 ## Environment
 
@@ -241,6 +259,54 @@ Run it directly:
 pnpm --filter @stratium/batch dev
 ```
 
+Import batch data back from S3 into PostgreSQL:
+
+```powershell
+pnpm --filter @stratium/batch import:s3
+```
+
+Run the import as a one-off Docker command without starting the long-running websocket collector:
+
+```powershell
+docker-compose --env-file .env -f docker-compose.batch.yml run --rm batch pnpm import:s3
+```
+
+The import command requires `DATABASE_URL` in the env file because it writes directly into PostgreSQL.
+
+Import behavior:
+
+- reads `.ndjson.gz` files from `s3://<BATCH_S3_BUCKET>/<BATCH_S3_PREFIX>/...`
+- writes into the existing market tables in PostgreSQL
+- if some minutes are missing in S3, the importer leaves those minutes empty in the database
+- by default it imports everything under `BATCH_S3_PREFIX`
+- you can optionally narrow the import with command-line args `--year`, `--month`, and `--day`
+
+Examples:
+
+```powershell
+pnpm --filter @stratium/batch import:s3 -- --year 2026
+```
+
+```powershell
+docker-compose --env-file .env -f docker-compose.batch.yml run --rm batch pnpm import:s3 -- --year 2026
+```
+
+```powershell
+pnpm --filter @stratium/batch import:s3 -- --year 2026 --month 3
+```
+
+```powershell
+docker-compose --env-file .env -f docker-compose.batch.yml run --rm batch pnpm import:s3 -- --year 2026 --month 3
+```
+
+```powershell
+pnpm --filter @stratium/batch import:s3 -- --year 2026 --month 3 --day 27
+```
+
+```powershell
+docker-compose --env-file .env -f docker-compose.batch.yml run --rm batch pnpm import:s3 -- --year 2026 --month 3 --day 27
+```
+
 Build and run in production:
 
 ```powershell
@@ -271,6 +337,8 @@ pm2 save
 The standalone Docker runtime uses [docker-compose.batch.yml](/d:/git/stratium/docker-compose.batch.yml) and [apps/batch/Dockerfile](/d:/git/stratium/apps/batch/Dockerfile). It only starts the batch collector and persists local spool files in a dedicated Docker volume. Use a dedicated env file such as `.env.batch` on the target server.
 
 For Docker deployment on EC2, put `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `.env.batch` so the container can authenticate to S3 and SQS. If you are using temporary credentials, also set `AWS_SESSION_TOKEN`.
+
+The standalone batch container joins an external Docker network, defaulting to `stratium_default`, so it can reach the main stack services such as PostgreSQL by hostname. Override this with `BATCH_DOCKER_NETWORK` if your main compose project uses a different network name.
 
 For EC2 auto-start behavior:
 
