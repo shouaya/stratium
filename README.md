@@ -68,8 +68,8 @@ make batch-refresh-hl-day COIN=BTC DATE=2026-04-08
 
 ## Main Docs
 
-- [PH1 Architecture](/d:/git/stratium/docs/ph1-architecture.md)
-- [Data Flow](/d:/git/stratium/docs/data-flow.md)
-- [Event Spec](/d:/git/stratium/docs/event-spec.md)
-- [Order Rules](/d:/git/stratium/docs/order-rules.md)
-- [Margin Rules](/d:/git/stratium/docs/margin-rules.md)
+- [PH1 Architecture](docs/ph1-architecture.md)
+- [Data Flow](docs/data-flow.md)
+- [Event Spec](docs/event-spec.md)
+- [Order Rules](docs/order-rules.md)
+- [Margin Rules](docs/margin-rules.md)
