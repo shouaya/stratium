@@ -32,7 +32,7 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
+    command: sh -lc "pnpm exec prisma generate && pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/stratium?schema=public}
       PORT: 4000

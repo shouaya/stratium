@@ -73,13 +73,13 @@ prisma-generate:
 	$(PNPM) prisma:generate
 
 db-migrate:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma migrate dev --name $(MIGRATION_NAME)"
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma migrate dev --name $(MIGRATION_NAME)"
 
 db-push:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma db push"
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma db push"
 
 db-seed:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma db seed"
+	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma db seed"
 
 db-bootstrap: db-push db-seed seed-symbol-configs
 

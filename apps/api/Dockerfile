@@ -19,4 +19,4 @@ RUN pnpm exec prisma generate
 
 EXPOSE 4000
 
-CMD ["sh", "-lc", "pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"]
+CMD ["sh", "-lc", "pnpm exec prisma generate && pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"]
