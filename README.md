@@ -31,11 +31,11 @@ Current PH1 focus:
 
 ```text
 apps/
-  api/               Fastify API + WebSocket
+  api/               Fastify API + WebSocket runtime
   batch/             Hyperliquid websocket collector + S3 uploader
   web/               Next.js UI
 packages/
-  shared/            shared types and event models
+  shared/            shared commands, events, market types, and view models
   trading-core/      deterministic simulation core
 docs/
   ph1-architecture.md
@@ -47,6 +47,67 @@ prisma/
   schema.prisma
 docker-compose.yml
 ```
+
+## Current Runtime Shape
+
+### `packages/trading-core`
+
+The trading core is no longer a single-file engine. It is split into deterministic domain modules:
+
+```text
+packages/trading-core/src/
+  domain/
+    state.ts
+  engine/
+    trading-engine.ts
+    handle-submit-order.ts
+    handle-cancel-order.ts
+    handle-market-tick.ts
+    handle-fill-order.ts
+    handle-post-fill.ts
+    handle-refresh-account.ts
+  replay/
+    apply-event.ts
+    replay-events.ts
+  rules/
+    order-validation.ts
+    pricing.ts
+    position-math.ts
+    account-math.ts
+```
+
+Current design rules:
+
+- `TradingEngine` is an orchestration shell, not a god object
+- command handlers generate domain events from current state
+- replay uses shared event application logic
+- pricing, position math, and account math are isolated in pure rule modules
+
+### `apps/api`
+
+The API runtime is also split by responsibility:
+
+```text
+apps/api/src/
+  index.ts              Fastify entrypoint
+  routes.ts             REST and websocket route registration
+  runtime.ts            coordinator / facade
+  trading-runtime.ts    trading engine host + event persistence
+  market-runtime.ts     live market state + simulator + history access
+  websocket-hub.ts      socket registration and broadcast
+  bootstrap.ts          persisted state loading
+  payloads.ts           API and websocket payload factories
+  repository.ts         PostgreSQL read/write adapter
+  hyperliquid-market.ts Hyperliquid websocket adapter
+```
+
+Current API boundary rules:
+
+- `runtime.ts` coordinates; it should not own detailed trading or market logic
+- `trading-runtime.ts` owns order flow, replay state, and event persistence
+- `market-runtime.ts` owns live market memory, simulator, and historical market reads
+- `websocket-hub.ts` pushes prepared payloads only; it does not read the database
+- `repository.ts` remains the persistence adapter
 
 ## Prerequisites
 
@@ -146,6 +207,13 @@ If you are connecting from outside the Docker network, try `localhost` instead o
 - rebuilds state from persisted events
 - exposes state and replay through the API
 - shows state, event tape, order entry, and tick entry in the Web UI
+
+Current implementation status notes:
+
+- `trading-core` and `apps/api` have been modularized and test-covered
+- replay and live execution now share more of the same state application path
+- market data can come from the local simulator or the Hyperliquid live adapter
+- liquidation calculations exist, but full liquidation execution flow is still not finished
 
 ## Main API Endpoints
 
@@ -429,13 +497,14 @@ Local ad hoc logs, if you create them manually, should go under `logs/`.
 - no advanced order types
 - no chain integration
 - no AI analysis
-- liquidation logic is not finished yet
+- liquidation execution flow is not finished yet
 - execution model is intentionally simple
 
 ## Key Docs
 
 - [chain-trading-platform-prd.md](/d:/git/stratium/chain-trading-platform-prd.md)
 - [docs/ph1-architecture.md](/d:/git/stratium/docs/ph1-architecture.md)
+- [docs/data-flow.md](/d:/git/stratium/docs/data-flow.md)
 - [docs/event-spec.md](/d:/git/stratium/docs/event-spec.md)
 - [docs/order-rules.md](/d:/git/stratium/docs/order-rules.md)
 - [docs/margin-rules.md](/d:/git/stratium/docs/margin-rules.md)

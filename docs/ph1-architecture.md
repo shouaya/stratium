@@ -10,9 +10,14 @@ The goal is not feature breadth. The goal is a deterministic, testable trading l
 2. accept orders
 3. simulate fills
 4. update position and account state
-5. trigger liquidation when required
+5. compute liquidation thresholds explicitly
 6. persist events
 7. replay the same event stream to the same final state
+
+Current implementation note:
+
+- liquidation calculation is present
+- full liquidation trigger and execution workflow is not finished yet
 
 ## Scope
 
@@ -25,7 +30,7 @@ The goal is not feature breadth. The goal is a deterministic, testable trading l
 - position tracking
 - realized and unrealized PnL
 - initial and maintenance margin
-- liquidation trigger and execution
+- liquidation threshold calculation
 - event persistence
 - replay API
 - basic Web page for order entry and state inspection
@@ -65,6 +70,37 @@ docker-compose.yml
 - no dependency on Next.js, Fastify, Prisma, or PostgreSQL
 - consumes commands and market ticks
 - emits domain events and derived state changes
+- is split into domain state, command handlers, replay reducers, and pure rule modules
+
+Current internal structure:
+
+```text
+packages/trading-core/src/
+  domain/
+    state.ts
+  engine/
+    trading-engine.ts
+    handle-submit-order.ts
+    handle-cancel-order.ts
+    handle-market-tick.ts
+    handle-fill-order.ts
+    handle-post-fill.ts
+    handle-refresh-account.ts
+  replay/
+    apply-event.ts
+    replay-events.ts
+  rules/
+    order-validation.ts
+    pricing.ts
+    position-math.ts
+    account-math.ts
+```
+
+The intended flow is:
+
+1. command handler derives events from current state
+2. event application updates canonical state
+3. replay uses the same event application path to rebuild state
 
 ### `apps/api`
 - validates requests
@@ -72,6 +108,40 @@ docker-compose.yml
 - persists events and read models
 - publishes WebSocket updates
 - exposes replay and query APIs
+- is split into coordinator, trading runtime, market runtime, websocket hub, bootstrap loader, and repository adapter
+
+Current internal structure:
+
+```text
+apps/api/src/
+  index.ts
+  routes.ts
+  runtime.ts
+  trading-runtime.ts
+  market-runtime.ts
+  websocket-hub.ts
+  bootstrap.ts
+  payloads.ts
+  repository.ts
+  hyperliquid-market.ts
+```
+
+Current API runtime responsibilities:
+
+- `runtime.ts`
+  facade that coordinates bootstrap, route-facing methods, and broadcast flow
+- `trading-runtime.ts`
+  owns `TradingEngine`, event store, replay state, and trading persistence
+- `market-runtime.ts`
+  owns live market memory, simulator state, Hyperliquid integration, and historical market reads
+- `websocket-hub.ts`
+  manages socket lifecycle and broadcasts prepared payloads
+- `bootstrap.ts`
+  loads persisted symbol config, events, and market snapshot
+- `payloads.ts`
+  centralizes HTTP and websocket payload shape assembly
+- `repository.ts`
+  owns PostgreSQL read/write details
 
 ### `apps/web`
 - renders market, orders, positions, account, and replay views
@@ -100,15 +170,16 @@ docker-compose.yml
 ### Margin Engine
 - computes initial margin, maintenance margin, available balance, risk ratio
 
-### Liquidation Engine
-- checks liquidation conditions
-- emits system liquidation events
+### Liquidation Logic
+- computes liquidation price and risk ratio
+- liquidation execution flow is reserved for a later PH1 follow-up
 
 ### Ledger Engine
 - records fee and balance changes
 
 ### Replay Engine
 - rebuilds state from persisted events
+- shares event application logic with the live engine path where possible
 
 ## Data Strategy
 
@@ -157,12 +228,9 @@ Query tables may be updated transactionally from domain events.
 - `GET /api/replay/:sessionId`
 
 ### WebSocket events
-- `market.tick`
-- `order.updated`
-- `fill.created`
-- `position.updated`
-- `account.updated`
-- `liquidation.triggered`
+- runtime currently broadcasts bootstrap and incremental state payloads over `/ws`
+- payloads include trading state, event tape, simulator state, market snapshot, and symbol config
+- client-side views derive order, fill, and market updates from that payload stream
 
 ## Local Runtime
 
@@ -183,5 +251,5 @@ The PH1 implementation is acceptable only if all of the following are true:
 1. a full order-to-close workflow can be executed from the Web UI
 2. order state transitions are consistent
 3. position and account state stay consistent
-4. liquidation logic is test-covered
+4. liquidation calculations are test-covered
 5. replay reproduces the original result
