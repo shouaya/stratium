@@ -1,4 +1,4 @@
-import type { EventEnvelope, FillPayload, OrderStatus } from "@stratium/shared";
+import type { AnyEventEnvelope, FillPayload, OrderStatus } from "@stratium/shared";
 import { round } from "../domain/state";
 import { applyExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing";
 import type { HandleFillOrderArgs } from "./handler-types";

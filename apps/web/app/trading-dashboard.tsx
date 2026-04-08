@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, HTMLAttributes } from "react";
-import type { AccountView, EventEnvelope, OrderView, PositionView } from "@stratium/shared";
+import type { AccountView, AnyEventEnvelope, OrderView, PositionView } from "@stratium/shared";
 import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
 import { CandlestickChart } from "./candlestick-chart";
 
@@ -20,7 +20,7 @@ type State = {
   orders: OrderView[];
   position: PositionView | null;
   latestTick: (TickPayload & { symbol?: string }) | null;
-  events: EventEnvelope<unknown>[];
+  events: AnyEventEnvelope[];
   simulator?: MarketSimulatorState;
   market?: MarketState;
   symbolConfig?: {
@@ -141,7 +141,7 @@ const coinFromSymbol = (symbol?: string | null) => {
   return symbol;
 };
 
-const mergeEvents = (currentEvents: EventEnvelope<unknown>[], nextEvents: EventEnvelope<unknown>[] = []) => {
+const mergeEvents = (currentEvents: AnyEventEnvelope[], nextEvents: AnyEventEnvelope[] = []) => {
   if (nextEvents.length === 0) {
     return currentEvents;
   }
@@ -155,7 +155,7 @@ const mergeEvents = (currentEvents: EventEnvelope<unknown>[], nextEvents: EventE
   return [...merged.values()].sort((left, right) => left.sequence - right.sequence);
 };
 
-const extractResponseMessage = (payload: { events?: EventEnvelope<unknown>[] }, successMessage: string): string => {
+const extractResponseMessage = (payload: { events?: AnyEventEnvelope[] }, successMessage: string): string => {
   const rejectedEvent = payload.events?.find((event) => event.eventType === "OrderRejected");
 
   if (rejectedEvent) {
@@ -672,7 +672,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
     void refresh();
     const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws`);
     ws.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: EventEnvelope<unknown>[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"] };
+      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"] };
       if (payload.state) {
         const nextState = payload.state;
         setState((cur) => ({
@@ -703,7 +703,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   const submitOrder = async () => {
     const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
-    const payload = await response.json().catch(() => ({}) as { events?: EventEnvelope<unknown>[] });
+    const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
     setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : "Failed to submit order.");
     if (response.ok) {
       await refresh();
@@ -739,7 +739,7 @@ export function TradingDashboard({ apiBaseUrl }: { apiBaseUrl: string }) {
       })
     });
 
-    const payload = await response.json().catch(() => ({}) as { events?: EventEnvelope<unknown>[] });
+    const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
     setMessage(response.ok ? extractResponseMessage(payload, "Position close order submitted.") : "Failed to close position.");
 
     if (response.ok) {

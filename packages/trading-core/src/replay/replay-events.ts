@@ -1,10 +1,10 @@
-import type { EventEnvelope, FillPayload } from "@stratium/shared";
+import type { AnyEventEnvelope, FillPayload } from "@stratium/shared";
 import { createInitialTradingState, type TradingEngineOptions, type TradingEngineState } from "../domain/state";
 import { applyEvent } from "./apply-event";
 
 export interface ReplayResult {
   readonly state: TradingEngineState;
-  readonly events: EventEnvelope<unknown>[];
+  readonly events: AnyEventEnvelope[];
 }
 
 const parseNumericSuffix = (value: string, prefix: string): number => {
@@ -18,7 +18,7 @@ const parseNumericSuffix = (value: string, prefix: string): number => {
 };
 
 export const replayEvents = (
-  events: EventEnvelope<unknown>[],
+  events: AnyEventEnvelope[],
   options: TradingEngineOptions = {}
 ): ReplayResult => {
   const sortedEvents = [...events].sort((left, right) => left.sequence - right.sequence);

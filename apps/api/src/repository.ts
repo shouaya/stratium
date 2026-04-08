@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { EventEnvelope, FillPayload, MarketTick, OrderView, PositionView, TradingSymbolConfig } from "@stratium/shared";
+import type { AnyEventEnvelope, FillPayload, MarketTick, OrderView, PositionView, TradingSymbolConfig } from "@stratium/shared";
 import type { TradingEngineState } from "@stratium/trading-core";
 import type {
   HyperliquidAssetContext,
@@ -25,7 +25,7 @@ export class TradingRepository {
     await prisma.$disconnect();
   }
 
-  async loadEvents(sessionId: string): Promise<EventEnvelope<unknown>[]> {
+  async loadEvents(sessionId: string): Promise<AnyEventEnvelope[]> {
     const events = await prisma.simulationEvent.findMany({
       where: {
         simulationSessionId: sessionId
@@ -37,15 +37,15 @@ export class TradingRepository {
 
     return events.map((event) => ({
       eventId: event.id,
-      eventType: event.eventType as EventEnvelope["eventType"],
+      eventType: event.eventType as AnyEventEnvelope["eventType"],
       occurredAt: event.occurredAt.toISOString(),
       sequence: event.sequence,
       simulationSessionId: event.simulationSessionId,
       accountId: event.accountId,
       symbol: event.symbol,
-      source: event.source as EventEnvelope["source"],
-      payload: event.payload as EventEnvelope["payload"]
-    }));
+      source: event.source as AnyEventEnvelope["source"],
+      payload: event.payload as AnyEventEnvelope["payload"]
+    }) as AnyEventEnvelope);
   }
 
   async loadSymbolConfig(symbol: string): Promise<TradingSymbolConfig | null> {
@@ -359,7 +359,7 @@ export class TradingRepository {
     }));
   }
 
-  async persistState(state: TradingEngineState, events: EventEnvelope<unknown>[]): Promise<void> {
+  async persistState(state: TradingEngineState, events: AnyEventEnvelope[]): Promise<void> {
     const operations: Promise<unknown>[] = [];
 
     for (const event of events) {

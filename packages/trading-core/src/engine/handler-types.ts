@@ -1,7 +1,10 @@
 import type {
   CancelOrderInput,
   CreateOrderInput,
-  EventEnvelope,
+  AnyEventEnvelope,
+  DomainEventEnvelope,
+  DomainEventPayload,
+  DomainEventType,
   MarketTick,
   OrderSide,
   PositionPayload,
@@ -15,24 +18,24 @@ export interface BaseHandlerContext {
   getState(): TradingEngineState;
   setState(state: TradingEngineState): void;
   getSymbolConfig(): TradingSymbolConfig;
-  emitAndApply<TPayload>(
-    events: EventEnvelope<unknown>[],
-    eventType: EventEnvelope<TPayload>["eventType"],
-    source: EventEnvelope<TPayload>["source"],
+  emitAndApply<TType extends DomainEventType>(
+    events: AnyEventEnvelope[],
+    eventType: TType,
+    source: AnyEventEnvelope["source"],
     symbol: string,
-    payload: TPayload,
+    payload: DomainEventPayload<TType>,
     occurredAt: string
-  ): EventEnvelope<TPayload>;
+  ): DomainEventEnvelope<TType>;
 }
 
 export interface MarketTickHandlerContext extends BaseHandlerContext {
-  refreshAccountSnapshot(events: EventEnvelope<unknown>[], occurredAt: string): void;
-  tryFillActiveOrders(events: EventEnvelope<unknown>[], occurredAt: string): void;
+  refreshAccountSnapshot(events: AnyEventEnvelope[], occurredAt: string): void;
+  tryFillActiveOrders(events: AnyEventEnvelope[], occurredAt: string): void;
 }
 
 export interface SubmitOrderHandlerContext extends BaseHandlerContext {
   now(): string;
-  tryFillOrder(orderId: string, events: EventEnvelope<unknown>[], occurredAt: string): void;
+  tryFillOrder(orderId: string, events: AnyEventEnvelope[], occurredAt: string): void;
 }
 
 export interface FillOrderHandlerContext extends BaseHandlerContext {
@@ -43,19 +46,19 @@ export interface FillOrderHandlerContext extends BaseHandlerContext {
     fillQuantity: number,
     fillPrice: number,
     fee: number,
-    events: EventEnvelope<unknown>[],
+    events: AnyEventEnvelope[],
     occurredAt: string
   ): void;
 }
 
 export interface CancelOrderHandlerContext extends BaseHandlerContext {
-  createEvent<TPayload>(
-    eventType: EventEnvelope<TPayload>["eventType"],
-    source: EventEnvelope<TPayload>["source"],
+  createEvent<TType extends DomainEventType>(
+    eventType: TType,
+    source: AnyEventEnvelope["source"],
     symbol: string,
-    payload: TPayload,
+    payload: DomainEventPayload<TType>,
     occurredAt: string
-  ): EventEnvelope<TPayload>;
+  ): DomainEventEnvelope<TType>;
   now(): string;
 }
 
@@ -77,7 +80,7 @@ export interface HandleCancelOrderArgs {
 export interface HandleFillOrderArgs {
   context: FillOrderHandlerContext;
   orderId: string;
-  events: EventEnvelope<unknown>[];
+  events: AnyEventEnvelope[];
   occurredAt: string;
 }
 
@@ -93,7 +96,7 @@ export interface PostFillHandlerContext extends BaseHandlerContext {
   };
   applyComputedPostFill(result: PositionComputationResult): void;
   buildPositionPayload(result: PositionComputationResult): PositionPayload;
-  refreshAccountSnapshot(events: EventEnvelope<unknown>[], occurredAt: string): void;
+  refreshAccountSnapshot(events: AnyEventEnvelope[], occurredAt: string): void;
   getCurrentFillId(): number;
 }
 
@@ -121,13 +124,13 @@ export interface HandlePostFillArgs {
   fillQuantity: number;
   fillPrice: number;
   fee: number;
-  events: EventEnvelope<unknown>[];
+  events: AnyEventEnvelope[];
   occurredAt: string;
 }
 
 export interface HandleRefreshAccountArgs {
   context: RefreshAccountHandlerContext;
-  events: EventEnvelope<unknown>[];
+  events: AnyEventEnvelope[];
   occurredAt: string;
 }
 

@@ -1,11 +1,11 @@
-import type { EventEnvelope } from "@stratium/shared";
+import type { AnyEventEnvelope } from "@stratium/shared";
 import type { TradingCommandHandler, HandleMarketTickArgs } from "./handler-types";
 
 export const handleMarketTick: TradingCommandHandler<HandleMarketTickArgs> = ({
   context,
   tick
 }) => {
-  const events: EventEnvelope<unknown>[] = [];
+  const events: AnyEventEnvelope[] = [];
   const occurredAt = tick.tickTime;
 
   context.emitAndApply(events, "MarketTickReceived", "market", tick.symbol, {

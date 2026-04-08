@@ -1,5 +1,5 @@
 import type {
-  EventEnvelope,
+  AnyEventEnvelope,
   OrderAcceptedPayload,
   OrderRejectedPayload,
   OrderRequestedPayload
@@ -11,12 +11,12 @@ export const handleSubmitOrder: TradingCommandHandler<HandleSubmitOrderArgs> = (
   context,
   input
 }) => {
-  const events: EventEnvelope<unknown>[] = [];
+  const events: AnyEventEnvelope[] = [];
   const submittedAt = input.submittedAt ?? context.now();
   const currentState = context.getState();
   const orderId = `ord_${currentState.nextOrderId}`;
 
-  context.emitAndApply<OrderRequestedPayload>(events, "OrderRequested", "user", input.symbol, {
+  context.emitAndApply(events, "OrderRequested", "user", input.symbol, {
     orderId,
     side: input.side,
     orderType: input.orderType,
@@ -32,7 +32,7 @@ export const handleSubmitOrder: TradingCommandHandler<HandleSubmitOrderArgs> = (
   });
 
   if (validation) {
-    context.emitAndApply<OrderRejectedPayload>(events, "OrderRejected", "system", input.symbol, {
+    context.emitAndApply(events, "OrderRejected", "system", input.symbol, {
       orderId,
       rejectedAt: submittedAt,
       reasonCode: validation.code,
@@ -45,7 +45,7 @@ export const handleSubmitOrder: TradingCommandHandler<HandleSubmitOrderArgs> = (
     };
   }
 
-  context.emitAndApply<OrderAcceptedPayload>(events, "OrderAccepted", "system", input.symbol, {
+  context.emitAndApply(events, "OrderAccepted", "system", input.symbol, {
     orderId,
     acceptedAt: submittedAt
   }, submittedAt);

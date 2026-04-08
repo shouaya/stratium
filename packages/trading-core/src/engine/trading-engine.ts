@@ -1,6 +1,9 @@
 import type {
   AccountBalancePayload,
-  EventEnvelope,
+  AnyEventEnvelope,
+  DomainEventEnvelope,
+  DomainEventPayload,
+  DomainEventType,
   MarginPayload,
   OrderRejectedPayload,
   OrderSide,
@@ -30,7 +33,7 @@ import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/s
 
 export interface TradingEngineResult {
   readonly state: TradingEngineState;
-  readonly events: EventEnvelope<unknown>[];
+  readonly events: AnyEventEnvelope[];
 }
 
 export class TradingEngine {
@@ -85,7 +88,7 @@ export class TradingEngine {
     });
   }
 
-  private tryFillActiveOrders(events: EventEnvelope<unknown>[], occurredAt: string): void {
+  private tryFillActiveOrders(events: AnyEventEnvelope[], occurredAt: string): void {
     const activeOrders = this.state.orders
       .filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED")
       .map((order) => order.id);
@@ -95,7 +98,7 @@ export class TradingEngine {
     }
   }
 
-  private tryFillOrder(orderId: string, events: EventEnvelope<unknown>[], occurredAt: string): void {
+  private tryFillOrder(orderId: string, events: AnyEventEnvelope[], occurredAt: string): void {
     handleFillOrder({
       context: this.createFillOrderHandlerContext(),
       orderId,
@@ -110,7 +113,7 @@ export class TradingEngine {
     fillQuantity: number,
     fillPrice: number,
     fee: number,
-    events: EventEnvelope<unknown>[],
+    events: AnyEventEnvelope[],
     occurredAt: string
   ): void {
     handlePostFill({
@@ -125,7 +128,7 @@ export class TradingEngine {
     });
   }
 
-  private refreshAccountSnapshot(events: EventEnvelope<unknown>[], occurredAt: string): void {
+  private refreshAccountSnapshot(events: AnyEventEnvelope[], occurredAt: string): void {
     handleRefreshAccount({
       context: this.createRefreshAccountHandlerContext(),
       events,
@@ -149,12 +152,26 @@ export class TradingEngine {
   }
 
   private createEvent<TPayload>(
-    eventType: EventEnvelope<TPayload>["eventType"],
-    source: EventEnvelope<TPayload>["source"],
+    eventType: DomainEventType,
+    source: AnyEventEnvelope["source"],
     symbol: string,
     payload: TPayload,
     occurredAt: string
-  ): EventEnvelope<TPayload> {
+  ): AnyEventEnvelope;
+  private createEvent<TType extends DomainEventType>(
+    eventType: TType,
+    source: AnyEventEnvelope["source"],
+    symbol: string,
+    payload: DomainEventPayload<TType>,
+    occurredAt: string
+  ): DomainEventEnvelope<TType>;
+  private createEvent<TPayload>(
+    eventType: DomainEventType,
+    source: AnyEventEnvelope["source"],
+    symbol: string,
+    payload: TPayload,
+    occurredAt: string
+  ): AnyEventEnvelope {
     const event = {
       eventId: `evt_${this.state.nextSequence}`,
       eventType,
@@ -172,17 +189,33 @@ export class TradingEngine {
       nextSequence: this.state.nextSequence + 1
     };
 
-    return event;
+    return event as AnyEventEnvelope;
   }
 
   private emitAndApply<TPayload>(
-    events: EventEnvelope<unknown>[],
-    eventType: EventEnvelope<TPayload>["eventType"],
-    source: EventEnvelope<TPayload>["source"],
+    events: AnyEventEnvelope[],
+    eventType: DomainEventType,
+    source: AnyEventEnvelope["source"],
     symbol: string,
     payload: TPayload,
     occurredAt: string
-  ): EventEnvelope<TPayload> {
+  ): AnyEventEnvelope;
+  private emitAndApply<TType extends DomainEventType>(
+    events: AnyEventEnvelope[],
+    eventType: TType,
+    source: AnyEventEnvelope["source"],
+    symbol: string,
+    payload: DomainEventPayload<TType>,
+    occurredAt: string
+  ): DomainEventEnvelope<TType>;
+  private emitAndApply<TPayload>(
+    events: AnyEventEnvelope[],
+    eventType: DomainEventType,
+    source: AnyEventEnvelope["source"],
+    symbol: string,
+    payload: TPayload,
+    occurredAt: string
+  ): AnyEventEnvelope {
     const event = this.createEvent(eventType, source, symbol, payload, occurredAt);
     this.state = applyEvent(this.state, event);
     events.push(event);
@@ -284,7 +317,8 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as MarketTickHandlerContext["emitAndApply"],
       refreshAccountSnapshot: (events, occurredAt) => this.refreshAccountSnapshot(events, occurredAt),
       tryFillActiveOrders: (events, occurredAt) => this.tryFillActiveOrders(events, occurredAt)
     };
@@ -295,7 +329,8 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as SubmitOrderHandlerContext["emitAndApply"],
       now: () => this.now(),
       tryFillOrder: (orderId, events, occurredAt) => this.tryFillOrder(orderId, events, occurredAt)
     };
@@ -306,7 +341,8 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as FillOrderHandlerContext["emitAndApply"],
       incrementNextFillId: () => this.incrementNextFillId(),
       applyPostFill: (orderId, orderSide, fillQuantity, fillPrice, fee, events, occurredAt) =>
         this.applyPostFill(orderId, orderSide, fillQuantity, fillPrice, fee, events, occurredAt)
@@ -318,7 +354,8 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as PostFillHandlerContext["emitAndApply"],
       computePostFillResult: (orderSide, fillQuantity, fillPrice, fee) =>
         this.computePostFillResult(orderSide, fillQuantity, fillPrice, fee),
       applyComputedPostFill: (result) => this.applyComputedPostFill(result),
@@ -333,7 +370,8 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as RefreshAccountHandlerContext["emitAndApply"],
       refreshAccountState: () => this.refreshAccountState(),
       buildAccountBalancePayload: () => this.buildAccountBalancePayload(),
       buildMarginPayload: () => this.buildMarginPayload()
@@ -345,8 +383,10 @@ export class TradingEngine {
       getState: () => this.state,
       setState: (state) => this.setState(state),
       getSymbolConfig: () => this.symbolConfig,
-      emitAndApply: (...args) => this.emitAndApply(...args),
-      createEvent: (...args) => this.createEvent(...args),
+      emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
+        this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as CancelOrderHandlerContext["emitAndApply"],
+      createEvent: ((eventType, source, symbol, payload, occurredAt) =>
+        this.createEvent(eventType, source, symbol, payload, occurredAt)) as CancelOrderHandlerContext["createEvent"],
       now: () => this.now()
     };
   }

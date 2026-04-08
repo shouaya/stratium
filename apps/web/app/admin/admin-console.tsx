@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { EventEnvelope } from "@stratium/shared";
+import type { AnyEventEnvelope } from "@stratium/shared";
 
 type TickPayload = {
   bid: number;
@@ -28,7 +28,7 @@ type MarketSimulatorState = {
 type AdminState = {
   latestTick?: TickPayload & { symbol?: string };
   simulator?: MarketSimulatorState;
-  events: EventEnvelope<unknown>[];
+  events: AnyEventEnvelope[];
 };
 
 const fmt = (n?: number | null, d = 2) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -47,7 +47,7 @@ export function AdminConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     ws.addEventListener("message", (event) => {
       const payload = JSON.parse(event.data) as {
         state?: Partial<AdminState>;
-        events?: EventEnvelope<unknown>[];
+        events?: AnyEventEnvelope[];
         simulator?: MarketSimulatorState;
       };
 

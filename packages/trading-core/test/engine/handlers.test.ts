@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EventEnvelope, MarketTick, OrderSide } from "@stratium/shared";
+import type { AnyEventEnvelope, DomainEventType, MarketTick, OrderSide } from "@stratium/shared";
 import { createInitialTradingState, DEFAULT_SYMBOL_CONFIG, type TradingEngineState } from "../../src/domain/state";
 import { handleCancelOrder } from "../../src/engine/handle-cancel-order";
 import { handleFillOrder } from "../../src/engine/handle-fill-order";
@@ -32,15 +32,15 @@ const createMutableState = (state: TradingEngineState = createInitialTradingStat
 
 const emitAndApply = (
   stateRef: ReturnType<typeof createMutableState>,
-  events: EventEnvelope<unknown>[],
-  eventType: EventEnvelope<unknown>["eventType"],
-  source: EventEnvelope<unknown>["source"],
+  events: AnyEventEnvelope[],
+  eventType: DomainEventType,
+  source: AnyEventEnvelope["source"],
   symbol: string,
   payload: unknown,
   occurredAt: string
 ) => {
   const state = stateRef.getState();
-  const event: EventEnvelope<unknown> = {
+  const event: AnyEventEnvelope = {
     eventId: `evt_${state.nextSequence}`,
     eventType,
     occurredAt,
@@ -170,7 +170,7 @@ describe("engine handlers", () => {
     });
     let nextFillId = 1;
     const applyPostFill = vi.fn();
-    const events: EventEnvelope<unknown>[] = [];
+    const events: AnyEventEnvelope[] = [];
 
     handleFillOrder({
       context: {
@@ -215,7 +215,7 @@ describe("engine handlers", () => {
       )
     });
 
-    const events: EventEnvelope<unknown>[] = [];
+    const events: AnyEventEnvelope[] = [];
 
     handlePostFill({
       context: {
@@ -269,7 +269,7 @@ describe("engine handlers", () => {
       }
     });
     const refreshAccountState = vi.fn();
-    const events: EventEnvelope<unknown>[] = [];
+    const events: AnyEventEnvelope[] = [];
 
     handleRefreshAccount({
       context: {

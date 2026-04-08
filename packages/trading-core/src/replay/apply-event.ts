@@ -1,6 +1,6 @@
 import type {
   AccountBalancePayload,
-  EventEnvelope,
+  AnyEventEnvelope,
   FillPayload,
   MarginPayload,
   MarketTick,
@@ -22,7 +22,7 @@ const derivePositionSide = (quantity: number, side: PositionPayload["side"]): Po
 
 export const applyEvent = (
   currentState: TradingEngineState,
-  event: EventEnvelope<unknown>
+  event: AnyEventEnvelope
 ): TradingEngineState => {
   switch (event.eventType) {
     case "MarketTickReceived": {
