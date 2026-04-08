@@ -4,7 +4,10 @@ COMPOSE_BATCH ?= $(COMPOSE) --env-file .env.batch -f docker-compose.batch.yml
 
 .PHONY: help install dev lint test build check prisma-generate db-push seed-symbol-configs \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
-	config batch-dev batch-build batch-start batch-import batch-compose-up batch-compose-down
+	config batch-dev batch-build batch-start batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline batch-compose-up batch-compose-down
+
+COIN ?= BTC
+DATE ?=
 
 help:
 	@echo Stratium make targets
@@ -40,6 +43,9 @@ help:
 	@echo   make batch-build          Build the batch app
 	@echo   make batch-start          Start the built batch app
 	@echo   make batch-import         Import batch data from S3
+	@echo   make batch-import-hl-day  Download and import today's Hyperliquid 1m candles, pass ARGS="..."
+	@echo   make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles into DB and restart api
+	@echo   make batch-clear-kline    Clear persisted K-line history, pass ARGS="..."
 	@echo   make batch-compose-up     Start standalone batch compose stack
 	@echo   make batch-compose-down   Stop standalone batch compose stack
 
@@ -113,6 +119,18 @@ batch-start:
 
 batch-import:
 	$(PNPM) --filter @stratium/batch import:s3
+
+batch-import-hl-day:
+	$(PNPM) batch:import:hyperliquid-day -- $(ARGS)
+
+batch-refresh-hl-day:
+	$(COMPOSE) stop api
+	$(PNPM) batch:clear:kline -- --coin $(COIN) --interval 1m --source hyperliquid
+	$(PNPM) batch:import:hyperliquid-day -- --coin $(COIN) $(if $(DATE),--date $(DATE),)
+	$(COMPOSE) up -d api
+
+batch-clear-kline:
+	$(PNPM) batch:clear:kline -- $(ARGS)
 
 batch-compose-up:
 	$(COMPOSE_BATCH) up --build -d

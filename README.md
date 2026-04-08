@@ -269,6 +269,66 @@ Run the import as a one-off Docker command without starting the long-running web
 
 ```powershell
 docker-compose --env-file .env -f docker-compose.batch.yml run --rm batch pnpm import:s3
+
+Clear persisted historical K-line data from PostgreSQL:
+
+```bash
+pnpm --filter @stratium/batch clear:kline -- --coin BTC --interval 1m
+```
+
+Equivalent make command:
+
+```bash
+make batch-clear-kline ARGS="--coin BTC --interval 1m"
+```
+
+Clear all persisted K-line data:
+
+```bash
+pnpm batch:clear:kline -- --all
+```
+
+Equivalent make command:
+
+```bash
+make batch-clear-kline ARGS="--all"
+```
+
+Download and import today's Hyperliquid 1-minute candles:
+
+```bash
+pnpm batch:import:hyperliquid-day -- --coin BTC
+```
+
+Equivalent make command:
+
+```bash
+make batch-import-hl-day ARGS="--coin BTC"
+```
+
+Import a specific date instead of today:
+
+```bash
+pnpm batch:import:hyperliquid-day -- --coin BTC --date 2026-04-08
+```
+
+Run the full refresh flow in one command:
+
+```bash
+make batch-refresh-hl-day COIN=BTC
+```
+
+What it does:
+- stops the `api` container
+- clears persisted `BTC` `1m` Hyperliquid candles and volume records
+- imports today's `BTC` `1m` candles from Hyperliquid
+- starts the `api` container again so in-memory market data reloads from PostgreSQL
+
+Import a specific date instead of today:
+
+```bash
+make batch-refresh-hl-day COIN=BTC DATE=2026-04-08
+```
 ```
 
 The import command requires `DATABASE_URL` in the env file because it writes directly into PostgreSQL.

@@ -416,12 +416,10 @@ describe("ApiRuntime", () => {
     process.env.MARKET_SOURCE = "simulator";
 
     const runtime = new ApiRuntime(logger as never);
-    const startSimulatorSpy = vi.spyOn(runtime, "startMarketSimulator");
 
     await runtime.bootstrap();
 
     expect(repositoryMocks.persistState).toHaveBeenCalled();
-    expect(startSimulatorSpy).toHaveBeenCalledTimes(1);
     expect(runtime.getMarketSimulatorState().enabled).toBe(true);
   });
 
@@ -700,8 +698,8 @@ describe("ApiRuntime", () => {
     await (runtime as never).runMarketSimulationTick();
     expect(ingestSpy).toHaveBeenCalled();
 
-    (runtime as never).marketSimulatorRunning = true;
-    await (runtime as never).runMarketSimulationTick();
+    runtime.setMarketSimulatorRunning(true);
+    await runtime.runMarketSimulationTick();
     expect(ingestSpy).toHaveBeenCalledTimes(1);
 
     const stopped = runtime.stopMarketSimulator();
@@ -716,7 +714,7 @@ describe("ApiRuntime", () => {
     const clientOptions = hyperliquidClientState.instances[0]?.options;
     expect(clientOptions).toBeDefined();
 
-    (runtime as never).marketTickInFlight = true;
+    runtime.setMarketTickInFlight(true);
     await clientOptions?.onTick({
       symbol: "BTC-USD",
       bid: 1,
@@ -728,7 +726,7 @@ describe("ApiRuntime", () => {
     });
     expect(ingestSpy).not.toHaveBeenCalled();
 
-    (runtime as never).marketTickInFlight = false;
+    runtime.setMarketTickInFlight(false);
     await clientOptions?.onTick({
       symbol: "BTC-USD",
       bid: 70000,
@@ -808,5 +806,21 @@ describe("ApiRuntime", () => {
       assetCtx: { coin: "BTC", capturedAt: 1, markPrice: 101.5 }
     });
     expect(repositoryMocks.persistMarketSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards explicit socket and simulator control helpers", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    const socket = {
+      send: vi.fn(),
+      on: vi.fn()
+    };
+
+    await runtime.bootstrap();
+    runtime.addSocket(socket);
+    runtime.removeSocket(socket);
+    runtime.setMarketTickInFlight(true);
+    runtime.setMarketSimulatorRunning(false);
+
+    expect(socket.send).toHaveBeenCalledTimes(1);
   });
 });

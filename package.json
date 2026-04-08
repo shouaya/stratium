@@ -4,6 +4,8 @@
   "packageManager": "pnpm@10.6.2",
   "scripts": {
     "batch:build": "pnpm --filter @stratium/batch build",
+    "batch:clear:kline": "pnpm --filter @stratium/batch clear:kline",
+    "batch:import:hyperliquid-day": "pnpm --filter @stratium/batch import:hyperliquid-day",
     "batch:start": "pnpm --filter @stratium/batch start",
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @stratium/api --filter @stratium/web dev",
