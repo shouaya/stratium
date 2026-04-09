@@ -17,8 +17,9 @@ import {
   type PlatformSettings
 } from "../auth-client";
 import { getUiText } from "../i18n";
+import { buildApiUrl, resolveApiBaseUrl } from "../api-base-url";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const apiBaseUrl = resolveApiBaseUrl();
 
 export type AdminSection = "dashboard" | "users" | "platform" | "market" | "batch";
 
@@ -45,7 +46,7 @@ export function AdminProtectedPage({ section }: { section: AdminSection }) {
 
   const loadSession = async (candidateToken: string, nextLocale = locale) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/auth/me"), {
         headers: authHeaders(candidateToken, nextLocale),
         cache: "no-store"
       });
@@ -85,7 +86,7 @@ export function AdminProtectedPage({ section }: { section: AdminSection }) {
       return;
     }
 
-    await fetch(`${apiBaseUrl}/api/auth/logout`, {
+    await fetch(buildApiUrl(apiBaseUrl, "/api/auth/logout"), {
       method: "POST",
       headers: authHeaders(currentToken, locale)
     }).catch(() => undefined);
@@ -138,7 +139,7 @@ export function AdminLoginPage() {
 
   const loadSession = async (candidateToken: string, nextLocale = locale) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/auth/me"), {
         headers: authHeaders(candidateToken, nextLocale),
         cache: "no-store"
       });
@@ -170,7 +171,7 @@ export function AdminLoginPage() {
     setError("");
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/auth/login"), {
         method: "POST",
         headers: publicHeaders(locale, { "Content-Type": "application/json" }),
         body: JSON.stringify(credentials)

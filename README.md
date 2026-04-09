@@ -89,9 +89,18 @@ Production validation:
 - API should run from compiled `dist` output, not `tsx watch`
 - the Next.js dev `N` indicator should not appear in the UI
 
+Production API routing:
+
+- if Web and API are served behind the same domain / reverse proxy, leave `NEXT_PUBLIC_API_BASE_URL` empty
+- if API is served on a separate public domain, set `NEXT_PUBLIC_API_BASE_URL` explicitly, for example `https://api.example.com`
+- production public ports can be overridden with `WEB_PORT` and `API_PORT` in `.env`
+
 ## Demo Accounts
 
 Run `make db-seed` or `make db-bootstrap` before first login. Database setup commands run inside the batch container.
+
+Online demo:
+- https://stratium.weget.jp
 
 ```text
 Frontend login

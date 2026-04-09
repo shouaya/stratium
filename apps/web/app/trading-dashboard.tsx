@@ -10,6 +10,7 @@ import { APP_LOCALES, getUiText, LOCALE_LABELS } from "./i18n";
 import { filterCandlesToRecent24Hours } from "./market-window";
 import { formatTokyoDateTime, formatTokyoTime } from "./time";
 import { CandlestickChart } from "./candlestick-chart";
+import { buildApiUrl, buildWebSocketUrl } from "./api-base-url";
 
 type TickPayload = {
   bid: number;
@@ -710,7 +711,7 @@ export function TradingDashboard({
         return;
       }
 
-      socket = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
+      socket = new WebSocket(buildWebSocketUrl(apiBaseUrl, authToken));
       socket.addEventListener("message", (event) => {
         const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"]; platform?: PlatformSettings };
         if (!payload.state) {
@@ -768,8 +769,8 @@ export function TradingDashboard({
   const refresh = async () => {
     try {
       const [stateResponse, fillHistoryResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken, locale) }),
-        fetch(`${apiBaseUrl}/api/fill-history`, { cache: "no-store", headers: authHeaders(authToken, locale) })
+        fetch(buildApiUrl(apiBaseUrl, "/api/state"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
+        fetch(buildApiUrl(apiBaseUrl, "/api/fill-history"), { cache: "no-store", headers: authHeaders(authToken, locale) })
       ]);
 
       if (stateResponse.status === 401 || fillHistoryResponse.status === 401) {
@@ -789,7 +790,7 @@ export function TradingDashboard({
   };
 
   const submitOrder = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
+    const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders"), { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
     const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
     setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : ui.trader.orderRejected);
     if (response.ok) {
@@ -799,7 +800,7 @@ export function TradingDashboard({
   };
 
   const cancelOrder = async (orderId: string) => {
-    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, orderId }) });
+    const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders/cancel"), { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, orderId }) });
     setMessage(response.ok ? `Order ${orderId} canceled.` : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
@@ -814,7 +815,7 @@ export function TradingDashboard({
     }
 
     const closingSide = state.position.side === "long" ? "sell" : "buy";
-    const response = await fetch(`${apiBaseUrl}/api/orders`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders"), {
       method: "POST",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -836,7 +837,7 @@ export function TradingDashboard({
   };
 
   const updateLeverage = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/leverage`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/leverage"), {
       method: "POST",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({

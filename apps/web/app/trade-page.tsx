@@ -14,8 +14,9 @@ import {
 } from "./auth-client";
 import { getUiText } from "./i18n";
 import { TradingDashboard } from "./trading-dashboard";
+import { buildApiUrl, resolveApiBaseUrl } from "./api-base-url";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const apiBaseUrl = resolveApiBaseUrl();
 
 export function TradePage() {
   const router = useRouter();
@@ -40,7 +41,7 @@ export function TradePage() {
 
   const loadSession = async (candidateToken: string, nextLocale = locale) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/auth/me"), {
         headers: authHeaders(candidateToken, nextLocale),
         cache: "no-store"
       });
@@ -80,7 +81,7 @@ export function TradePage() {
       return;
     }
 
-    await fetch(`${apiBaseUrl}/api/auth/logout`, {
+    await fetch(buildApiUrl(apiBaseUrl, "/api/auth/logout"), {
       method: "POST",
       headers: authHeaders(currentToken, locale)
     }).catch(() => undefined);

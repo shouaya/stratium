@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } from "../auth-client";
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "../i18n";
 import { formatTokyoDateTime } from "../time";
+import { buildApiUrl, buildWebSocketUrl } from "../api-base-url";
 
 type TickPayload = {
   bid: number;
@@ -198,7 +199,7 @@ export function AdminConsole({
         return;
       }
 
-      socket = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
+      socket = new WebSocket(buildWebSocketUrl(apiBaseUrl, authToken));
       socket.addEventListener("open", () => {
         if (hasConnected) {
           void refreshCurrentSection();
@@ -245,7 +246,7 @@ export function AdminConsole({
   }, [state.latestTick?.tickTime]);
 
   const fetchJson = async <T,>(path: string): Promise<T | null> => {
-    const response = await fetch(`${apiBaseUrl}${path}`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, path), {
       headers: authHeaders(authToken, locale),
       cache: "no-store"
     });
@@ -344,7 +345,7 @@ export function AdminConsole({
     setBusy(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/market-simulator/${action}`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, `/api/market-simulator/${action}`), {
         method: "POST",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: action === "start" ? JSON.stringify({
@@ -375,7 +376,7 @@ export function AdminConsole({
     setBusy(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/market-ticks`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/market-ticks"), {
         method: "POST",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -400,7 +401,7 @@ export function AdminConsole({
     setBusy(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/users`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/admin/users"), {
         method: "POST",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: JSON.stringify(newUserForm)
@@ -437,7 +438,7 @@ export function AdminConsole({
     setBusy(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/users/${editingUserId}`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, `/api/admin/users/${editingUserId}`), {
         method: "PUT",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -465,7 +466,7 @@ export function AdminConsole({
     setBusy(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/platform-settings`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/admin/platform-settings"), {
         method: "PUT",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: JSON.stringify(settingsForm)
@@ -495,7 +496,7 @@ export function AdminConsole({
           interval: batchForm.interval
         }
         : batchForm;
-      const response = await fetch(`${apiBaseUrl}/api/admin/batch-jobs/${jobId}/run`, {
+      const response = await fetch(buildApiUrl(apiBaseUrl, `/api/admin/batch-jobs/${jobId}/run`), {
         method: "POST",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
         body: JSON.stringify(requestBody)
