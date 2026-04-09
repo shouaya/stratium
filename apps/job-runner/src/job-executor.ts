@@ -208,10 +208,10 @@ const combineResults = (steps: JobRunResult[]): JobRunResult => {
 };
 
 const runBatchShell = (script: string) =>
-  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
+  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--build", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
 
 const runBatchNode = (args: string[]) =>
-  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
+  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--build", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
 
 const runMainCompose = (args: string[]) =>
   runCommand(composeCommand, [...composeCommandArgs, "-f", mainComposeFile, ...args]);

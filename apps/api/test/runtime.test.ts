@@ -639,6 +639,8 @@ describe("ApiRuntime", () => {
   });
 
   it("merges live market data with persisted history and delegates volume queries", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:00:00.000Z"));
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
 
@@ -661,8 +663,8 @@ describe("ApiRuntime", () => {
           id: "candle-1",
           coin: "BTC",
           interval: "1m",
-          openTime: 1,
-          closeTime: 2,
+          openTime: Date.parse("2026-04-09T11:58:00.000Z"),
+          closeTime: Date.parse("2026-04-09T11:59:00.000Z"),
           open: 10,
           high: 11,
           low: 9,
@@ -693,8 +695,8 @@ describe("ApiRuntime", () => {
           id: "candle-2",
           coin: "BTC",
           interval: "1m",
-          openTime: 3,
-          closeTime: 4,
+          openTime: Date.parse("2026-04-09T11:59:00.000Z"),
+          closeTime: Date.parse("2026-04-09T12:00:00.000Z"),
           open: 11,
           high: 12,
           low: 10,

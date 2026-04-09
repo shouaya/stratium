@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } from "../auth-client";
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "../i18n";
+import { formatTokyoDateTime } from "../time";
 
 type TickPayload = {
   bid: number;
@@ -76,7 +77,7 @@ type AdminState = {
 };
 
 const fmt = (n?: number | null, d = 2) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const stamp = (value?: string) => value ? new Date(value).toLocaleString("en-US", { hour12: false }) : "--";
+const stamp = (value?: string) => formatTokyoDateTime(value);
 
 const MENU_ITEMS: Array<{ id: AdminMenu; label: string; hint: string }> = [
   { id: "dashboard", label: "Dashboard", hint: "Overview and quick actions" },
@@ -141,6 +142,7 @@ export function AdminConsole({
   const ui = getUiText(locale);
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
+  const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
 
   useEffect(() => {
     let active = true;
@@ -487,10 +489,16 @@ export function AdminConsole({
     setJobResult(null);
 
     try {
+      const requestBody = jobId === refreshJobId
+        ? {
+          coin: batchForm.coin,
+          interval: batchForm.interval
+        }
+        : batchForm;
       const response = await fetch(`${apiBaseUrl}/api/admin/batch-jobs/${jobId}/run`, {
         method: "POST",
         headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
-        body: JSON.stringify(batchForm)
+        body: JSON.stringify(requestBody)
       });
       const payload = await response.json().catch(() => ({})) as BatchJobRunResult;
       setJobResult(payload);
@@ -677,8 +685,11 @@ export function AdminConsole({
         <div style={panelTitle}>{ui.admin.batchInputs}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(180px, 240px))", gap: 12 }}>
           <Field label="Coin" value={batchForm.coin} onChange={(value) => setBatchForm((current) => ({ ...current, coin: value.toUpperCase() }))} />
-          <Field label="Date" value={batchForm.date} onChange={(value) => setBatchForm((current) => ({ ...current, date: value }))} />
+          <Field label="Refresh Window" value="Latest 24h" onChange={() => undefined} readOnly />
           <Field label="Interval" value={batchForm.interval} onChange={(value) => setBatchForm((current) => ({ ...current, interval: value }))} />
+        </div>
+        <div style={{ marginTop: 10, color: "#7e97a5", fontSize: 12 }}>
+          {jobs.some((job) => job.id === refreshJobId) ? "Refresh Hyperliquid Day always uses the latest 24 hours." : ""}
         </div>
       </section>
 
@@ -803,12 +814,14 @@ function Field({
   label,
   value,
   onChange,
-  type
+  type,
+  readOnly
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  readOnly?: boolean;
 }) {
   return (
     <label style={{ display: "grid", gap: 6 }}>
@@ -816,8 +829,9 @@ function Field({
       <input
         type={type ?? "text"}
         value={value}
+        readOnly={readOnly}
         onChange={(event) => onChange(event.target.value)}
-        style={{ borderRadius: 10, border: "1px solid #22343d", background: "#101b22", color: "#f8fafc", padding: "11px 12px" }}
+        style={{ borderRadius: 10, border: "1px solid #22343d", background: readOnly ? "#0d171d" : "#101b22", color: "#f8fafc", padding: "11px 12px" }}
       />
     </label>
   );

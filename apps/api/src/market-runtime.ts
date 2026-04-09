@@ -53,7 +53,11 @@ const DEFAULT_MARKET_SIMULATOR_STATE: MarketSimulatorState = {
 
 const DEFAULT_MARKET_FLUSH_INTERVAL_MS = Number(process.env.MARKET_PERSIST_INTERVAL_MS ?? 60_000);
 const DEFAULT_LIVE_TRADE_LIMIT = Number(process.env.MARKET_LIVE_TRADE_LIMIT ?? 200);
-const DEFAULT_LIVE_CANDLE_LIMIT = Number(process.env.MARKET_LIVE_CANDLE_LIMIT ?? 180);
+const MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_LIVE_CANDLE_LIMIT = Number(process.env.MARKET_LIVE_CANDLE_LIMIT ?? 1_440);
+
+export const filterRecentCandles = <T extends { openTime: number }>(candles: T[], now = Date.now()): T[] =>
+  candles.filter((candle) => candle.openTime >= now - MARKET_WINDOW_MS);
 
 const resolveBootstrapAnchorPrice = (symbol: string, latestPrice: number | undefined): number => {
   if (latestPrice && latestPrice > 0) {
@@ -170,8 +174,12 @@ export class MarketRuntime {
 
   setBootstrapState(symbol: string, latestPrice: number | undefined, marketData: HyperliquidMarketSnapshot | null) {
     if (marketData) {
-      this.marketData = marketData;
-      this.lastFlushedClosedCandleOpenTime = marketData.candles
+      const filteredMarketData = {
+        ...marketData,
+        candles: filterRecentCandles(marketData.candles)
+      };
+      this.marketData = filteredMarketData;
+      this.lastFlushedClosedCandleOpenTime = filteredMarketData.candles
         .filter((candle) => candle.interval === this.options.hyperliquidCandleInterval && candle.closeTime <= Date.now())
         .reduce((maxOpenTime, candle) => Math.max(maxOpenTime, candle.openTime), 0);
     }
@@ -211,6 +219,7 @@ export class MarketRuntime {
       this.options.hyperliquidCoin,
       this.options.hyperliquidCandleInterval
     );
+    const now = Date.now();
     const sourceMarket = persistedMarketSnapshot
       ? {
         ...persistedMarketSnapshot,
@@ -226,10 +235,10 @@ export class MarketRuntime {
           [...this.marketData.trades, ...persistedMarketSnapshot.trades],
           (trade) => trade.id
         ).sort((left, right) => right.time - left.time),
-        candles: mergeByKey(
+        candles: filterRecentCandles(mergeByKey(
           [...persistedMarketSnapshot.candles, ...this.marketData.candles],
           (candle) => candle.id
-        ).sort((left, right) => left.openTime - right.openTime)
+        ).sort((left, right) => left.openTime - right.openTime), now)
       }
       : this.marketData;
     const candles = sourceMarket.candles.slice(-Math.max(10, Math.min(limit, 500)));
@@ -327,17 +336,18 @@ export class MarketRuntime {
 
   private handleMarketSnapshot(snapshot: HyperliquidMarketSnapshot): void {
     if (snapshot.source === "hyperliquid") {
+      const now = Date.now();
       const mergedTrades = mergeByKey(
         [...snapshot.trades, ...this.marketData.trades],
         (trade) => trade.id
       )
         .sort((left, right) => right.time - left.time)
         .slice(0, DEFAULT_LIVE_TRADE_LIMIT);
-      const mergedCandles = mergeByKey(
+      const mergedCandles = filterRecentCandles(mergeByKey(
         [...this.marketData.candles, ...snapshot.candles],
         (candle) => candle.id
       )
-        .sort((left, right) => left.openTime - right.openTime)
+        .sort((left, right) => left.openTime - right.openTime), now)
         .slice(-DEFAULT_LIVE_CANDLE_LIMIT);
 
       this.marketData = {

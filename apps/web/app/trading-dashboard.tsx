@@ -7,6 +7,8 @@ import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-c
 import type { AppLocale, AuthUser, PlatformSettings } from "./auth-client";
 import { authHeaders } from "./auth-client";
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "./i18n";
+import { filterCandlesToRecent24Hours } from "./market-window";
+import { formatTokyoDateTime, formatTokyoTime } from "./time";
 import { CandlestickChart } from "./candlestick-chart";
 
 type TickPayload = {
@@ -116,18 +118,9 @@ const TIMEFRAMES: Array<{ id: TimeframeId; label: string; hint: string; bucketMs
   { id: "15m", label: "15m", hint: "15 minutes", bucketMs: 900_000 },
   { id: "1h", label: "1h", hint: "1 hour", bucketMs: 3_600_000 }
 ];
-
 const fmt = (n?: number | null, d = 4) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const clock = (s?: string) => s ? new Date(s).toLocaleTimeString("en-US", { hour12: false }) : "--:--:--";
-const dateTime = (s?: string) => s ? new Date(s).toLocaleString("en-US", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false
-}) : "--";
+const clock = (s?: string) => formatTokyoTime(s);
+const dateTime = (s?: string) => formatTokyoDateTime(s);
 const priceDigitsForSymbol = (symbol?: string | null) => symbol?.startsWith("BTC-") ? 0 : 4;
 const coinFromSymbol = (symbol?: string | null) => {
   if (!symbol) {
@@ -249,11 +242,18 @@ export function TradingDashboard({
 
     return acceptedTicks;
   }, [state.events]);
+  const recentMarketCandles = useMemo(() => {
+    if (!state.market) {
+      return [];
+    }
+
+    return filterCandlesToRecent24Hours(state.market.candles);
+  }, [state.market]);
   const candles = useMemo(() => {
-    if (state.market && state.market.candles.length > 0) {
+    if (recentMarketCandles.length > 0) {
       const map = new Map<number, CandlestickData<UTCTimestamp>>();
 
-      for (const candle of state.market.candles) {
+      for (const candle of recentMarketCandles) {
         const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
         const existing = map.get(bucket);
 
@@ -289,12 +289,12 @@ export function TradingDashboard({
       else map.set(bucket, { ...cur, high: Math.max(cur.high, t.last), low: Math.min(cur.low, t.last), close: t.last });
     }
     return [...map.values()].sort((a, b) => Number(a.time) - Number(b.time));
-  }, [selectedTimeframe.bucketMs, ticks]);
+  }, [recentMarketCandles, selectedTimeframe.bucketMs, ticks]);
   const volume = useMemo(() => {
-    if (state.market && state.market.candles.length > 0) {
+    if (recentMarketCandles.length > 0) {
       const map = new Map<number, HistogramData<UTCTimestamp>>();
 
-      for (const candle of state.market.candles) {
+      for (const candle of recentMarketCandles) {
         const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
         const existing = map.get(bucket);
         const value = Number((((existing?.value as number | undefined) ?? 0) + candle.volume).toFixed(4));
@@ -318,14 +318,14 @@ export function TradingDashboard({
       map.set(bucket, { time: bucket, value: next, color: t.aggressorSide === "buy" ? "#2dd4bf88" : "#f8717188" });
     }
     return [...map.values()].sort((a, b) => Number(a.time) - Number(b.time));
-  }, [selectedTimeframe.bucketMs, ticks]);
+  }, [recentMarketCandles, selectedTimeframe.bucketMs, ticks]);
   const stats = useMemo(() => {
     if (state.market?.assetCtx) {
-      const reference = state.market.assetCtx.prevDayPrice ?? state.market.candles[0]?.open;
+      const reference = state.market.assetCtx.prevDayPrice ?? recentMarketCandles[0]?.open;
       const last = state.market.assetCtx.markPrice ?? state.market.markPrice ?? state.latestTick?.last;
       const change = last && reference ? ((last - reference) / reference) * 100 : undefined;
-      const candleHigh = state.market.candles.length > 0 ? Math.max(...state.market.candles.map((candle) => candle.high)) : undefined;
-      const candleLow = state.market.candles.length > 0 ? Math.min(...state.market.candles.map((candle) => candle.low)) : undefined;
+      const candleHigh = recentMarketCandles.length > 0 ? Math.max(...recentMarketCandles.map((candle) => candle.high)) : undefined;
+      const candleLow = recentMarketCandles.length > 0 ? Math.min(...recentMarketCandles.map((candle) => candle.low)) : undefined;
 
       return {
         last,
@@ -340,7 +340,7 @@ export function TradingDashboard({
     const first = prices[0] ?? 0;
     const last = prices[prices.length - 1];
     return { last, change: first ? ((last - first) / first) * 100 : 0, low: Math.min(...prices), high: Math.max(...prices) };
-  }, [ticks]);
+  }, [recentMarketCandles, state.latestTick?.last, state.market?.assetCtx, state.market?.markPrice, ticks]);
   const syntheticBook = useMemo(() => {
     const mid = state.latestTick?.last ?? 100;
     const step = Math.max((state.latestTick?.spread ?? 1) / 2, 0.001);
