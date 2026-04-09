@@ -4,7 +4,7 @@ import type {
   OrderCancelRequestedPayload,
   OrderRejectedPayload
 } from "@stratium/shared";
-import type { TradingCommandHandler, HandleCancelOrderArgs } from "./handler-types";
+import type { TradingCommandHandler, HandleCancelOrderArgs } from "./handler-types.js";
 
 export const handleCancelOrder: TradingCommandHandler<HandleCancelOrderArgs> = ({
   context,

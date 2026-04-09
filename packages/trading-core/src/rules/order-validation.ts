@@ -1,8 +1,8 @@
 import type { CreateOrderInput, RejectionCode, TradingSymbolConfig } from "@stratium/shared";
-import type { TradingEngineState } from "../domain/state";
-import { round } from "../domain/state";
-import { getMarketReferencePrice } from "./pricing";
-import { toSignedQuantity } from "./position-math";
+import type { TradingEngineState } from "../domain/state.js";
+import { round } from "../domain/state.js";
+import { getMarketReferencePrice } from "./pricing.js";
+import { toSignedQuantity } from "./position-math.js";
 
 export const getIncrementalExposureQuantity = (
   currentState: TradingEngineState,

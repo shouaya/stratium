@@ -1,8 +1,8 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
-import { registerRoutes } from "./routes";
-import { ApiRuntime } from "./runtime";
+import { registerRoutes } from "./routes.js";
+import { ApiRuntime } from "./runtime.js";
 
 const app = Fastify({
   logger: true

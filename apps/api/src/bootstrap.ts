@@ -1,7 +1,7 @@
 import type { TradingSymbolConfig } from "@stratium/shared";
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
-import type { SymbolConfigState } from "./market-runtime";
-import { TradingRepository } from "./repository";
+import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
+import type { SymbolConfigState } from "./market-runtime.js";
+import { TradingRepository } from "./repository.js";
 
 export interface ApiBootstrapConfig {
   configuredTradingSymbol: string;

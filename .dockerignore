@@ -1,10 +1,17 @@
 node_modules/
 **/node_modules/
+.pnpm-store/
+**/.pnpm-store/
 .next/
 **/.next/
+.next-dev/
+**/.next-dev/
 dist/
 **/dist/
 logs/
+.env
+.env.*
+.DS_Store
 .git/
 .idea/
 .vscode/

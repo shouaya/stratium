@@ -1,5 +1,5 @@
 import { createClient, type RedisClientType } from "@redis/client";
-import type { BatchJobExecution } from "./batch-job-runner";
+import type { BatchJobExecution } from "./batch-job-runner.js";
 
 const redisUrl = process.env.REDIS_URL?.trim() || "redis://redis:6379";
 const RUNNING_SET_KEY = "stratium:batch:running";

@@ -1,4 +1,4 @@
-import type { HandleRefreshAccountArgs } from "./handler-types";
+import type { HandleRefreshAccountArgs } from "./handler-types.js";
 
 export const handleRefreshAccount = ({
   context,

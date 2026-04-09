@@ -1,4 +1,4 @@
-import type { HandlePostFillArgs } from "./handler-types";
+import type { HandlePostFillArgs } from "./handler-types.js";
 
 export const handlePostFill = ({
   context,

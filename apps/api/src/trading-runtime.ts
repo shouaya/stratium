@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick, TradingSymbolConfig } from "@stratium/shared";
 import { TradingEngine, createInitialTradingState, replayEvents } from "@stratium/trading-core";
-import type { SymbolConfigState } from "./market-runtime";
-import { TradingRepository } from "./repository";
+import type { SymbolConfigState } from "./market-runtime.js";
+import { TradingRepository } from "./repository.js";
 
 const validateManualTick = (
   tick: MarketTick,
@@ -65,6 +65,7 @@ const createSessionId = (accountId: string): string => `session-${accountId}`;
 
 export class TradingRuntime {
   private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
+  private static readonly DEFAULT_RECENT_TICK_LIMIT = 240;
 
   private readonly accountRuntimes = new Map<string, AccountRuntimeSlot>();
 
@@ -94,6 +95,12 @@ export class TradingRuntime {
     return this.getRequiredRuntime(accountId).eventStore;
   }
 
+  getFillHistoryEvents(accountId?: string) {
+    return this.getRequiredRuntime(accountId).eventStore.filter(
+      (event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled"
+    );
+  }
+
   getRecentEventStore(accountId?: string, limit = TradingRuntime.DEFAULT_RECENT_EVENT_LIMIT) {
     const eventStore = this.getRequiredRuntime(accountId).eventStore;
 
@@ -101,7 +108,17 @@ export class TradingRuntime {
       return eventStore;
     }
 
-    return eventStore.slice(-limit);
+    const marketTicks = eventStore
+      .filter((event) => event.eventType === "MarketTickReceived")
+      .slice(-Math.min(limit, TradingRuntime.DEFAULT_RECENT_TICK_LIMIT));
+    const nonMarketEvents = eventStore.filter((event) => event.eventType !== "MarketTickReceived");
+    const merged = [...nonMarketEvents, ...marketTicks].sort((left, right) => left.sequence - right.sequence);
+
+    if (merged.length <= limit) {
+      return merged;
+    }
+
+    return merged.slice(-limit);
   }
 
   getReplayState(accountId: string) {

@@ -1,20 +1,20 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
-import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth";
-import { BatchJobStateFeed } from "./batch-job-state";
-import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner";
-import { loadApiBootstrapState } from "./bootstrap";
-import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime";
+import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth.js";
+import { BatchJobStateFeed } from "./batch-job-state.js";
+import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner.js";
+import { loadApiBootstrapState } from "./bootstrap.js";
+import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime.js";
 import {
   createReplayPayload,
   createSocketBootstrapPayload,
   createSocketEventsPayload,
   createStatePayload
-} from "./payloads";
-import { TradingRepository } from "./repository";
-import { TradingRuntime } from "./trading-runtime";
-import { WebSocketHub } from "./websocket-hub";
-export type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime";
+} from "./payloads.js";
+import { TradingRepository } from "./repository.js";
+import { TradingRuntime } from "./trading-runtime.js";
+import { WebSocketHub } from "./websocket-hub.js";
+export type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime.js";
 
 export class ApiRuntime {
   private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
@@ -94,6 +94,10 @@ export class ApiRuntime {
 
   getEventStore(accountId?: string) {
     return this.tradingRuntime.getEventStore(accountId);
+  }
+
+  getFillHistoryEvents(accountId?: string) {
+    return this.tradingRuntime.getFillHistoryEvents(accountId);
   }
 
   getMarketData() {

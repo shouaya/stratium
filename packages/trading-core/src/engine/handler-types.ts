@@ -10,9 +10,9 @@ import type {
   PositionPayload,
   TradingSymbolConfig
 } from "@stratium/shared";
-import type { TradingEngineResult } from "./trading-engine";
-import type { TradingEngineState } from "../domain/state";
-import type { PositionComputationResult } from "../rules/position-math";
+import type { TradingEngineResult } from "./trading-engine.js";
+import type { TradingEngineState } from "../domain/state.js";
+import type { PositionComputationResult } from "../rules/position-math.js";
 
 export interface BaseHandlerContext {
   getState(): TradingEngineState;

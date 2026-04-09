@@ -39,6 +39,11 @@ type State = {
   platform?: PlatformSettings;
 };
 
+type FillHistoryResponse = {
+  sessionId: string;
+  events: AnyEventEnvelope[];
+};
+
 type MarketSimulatorState = {
   enabled: boolean;
   symbol: string;
@@ -182,6 +187,7 @@ export function TradingDashboard({
   const t = ui.trader;
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
   const [message, setMessage] = useState("");
+  const [fillHistoryEvents, setFillHistoryEvents] = useState<AnyEventEnvelope[]>([]);
   const [tab, setTab] = useState<"market" | "limit">("market");
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
   const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("balances");
@@ -596,10 +602,10 @@ export function TradingDashboard({
     let runningAverageEntryPrice = 0;
     const fills: PersonalFill[] = [];
 
-    state.events
-      .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
-      .sort((left, right) => left.sequence - right.sequence)
-      .map((event) => {
+      fillHistoryEvents
+        .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
+        .sort((left, right) => left.sequence - right.sequence)
+        .map((event) => {
         const payload = event.payload as {
           orderId: string;
           fillId: string;
@@ -676,8 +682,8 @@ export function TradingDashboard({
       })
       .slice();
 
-    return fills.sort((left, right) => new Date(right.filledAt).getTime() - new Date(left.filledAt).getTime());
-  }, [state.events, state.orders]);
+      return fills.sort((left, right) => new Date(right.filledAt).getTime() - new Date(left.filledAt).getTime());
+    }, [fillHistoryEvents, state.orders]);
 
   useEffect(() => {
     if (state.symbolConfig?.leverage) {
@@ -723,6 +729,13 @@ export function TradingDashboard({
           symbolConfig: payload.symbolConfig ?? cur.symbolConfig,
           platform: payload.platform ?? cur.platform
         }));
+        if (payload.events?.length) {
+          const fillEvents = payload.events.filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
+          setFillHistoryEvents((current) => mergeEvents(
+            current,
+            fillEvents
+          ));
+        }
       });
 
       const scheduleReconnect = () => {
@@ -754,16 +767,21 @@ export function TradingDashboard({
 
   const refresh = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken, locale) });
+      const [stateResponse, fillHistoryResponse] = await Promise.all([
+        fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken, locale) }),
+        fetch(`${apiBaseUrl}/api/fill-history`, { cache: "no-store", headers: authHeaders(authToken, locale) })
+      ]);
 
-      if (response.status === 401) {
+      if (stateResponse.status === 401 || fillHistoryResponse.status === 401) {
         setMessage(ui.trader.sessionExpired);
         onLogout();
         return;
       }
 
-      const payload = await response.json() as State;
+      const payload = await stateResponse.json() as State;
+      const fillHistoryPayload = await fillHistoryResponse.json() as FillHistoryResponse;
       setState(payload);
+      setFillHistoryEvents(fillHistoryPayload.events ?? []);
       setMessage("");
     } catch {
       setMessage(ui.trader.failedLoad);
@@ -910,7 +928,7 @@ export function TradingDashboard({
                     </div>
                   </div>
                 </div>
-                <CandlestickChart data={candles} volumeData={volume} dark priceDigits={priceDigits} />
+                <CandlestickChart data={candles} volumeData={volume} dark priceDigits={priceDigits} position={state.position} />
               </div>
             </div>
 
@@ -945,26 +963,27 @@ export function TradingDashboard({
                     </tbody>
                   </table>
                 ) : accountTab === "positions" ? (
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                        <th style={th}>{t.symbol}</th><th style={th}>{t.side}</th><th style={th}>{t.contracts}</th><th style={th}>{t.entry}</th><th style={th}>{t.mark}</th><th style={th}>{t.unrealizedPnl}</th><th style={th}>{t.action}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {!state.position || state.position.side === "flat" ? (
-                        <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noPosition}</td></tr>
-                      ) : (
-                        <tr style={{ borderTop: "1px solid #13212a" }}>
-                          <td style={td}>{state.position.symbol}</td>
-                          <td style={{ ...td, color: state.position.side === "long" ? "#2dd4bf" : "#f87171" }}>{state.position.side}</td>
-                          <td style={td}>{fmt(state.position.quantity, 4)}</td>
-                          <td style={td}>{fmt(state.position.averageEntryPrice, priceDigits)}</td>
-                          <td style={td}>{fmt(state.position.markPrice, priceDigits)}</td>
-                          <td style={td}>{fmt(state.position.unrealizedPnl, 4)} USDC</td>
-                          <td style={td}><button onClick={() => void closePosition()} style={btnInline}>{t.closePosition}</button></td>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ color: "#7e97a5", textAlign: "left" }}>
+                          <th style={th}>{t.symbol}</th><th style={th}>{t.side}</th><th style={th}>{t.contracts}</th><th style={th}>{t.entry}</th><th style={th}>{t.mark}</th><th style={th}>{t.estimatedLiquidation}</th><th style={th}>{t.unrealizedPnl}</th><th style={th}>{t.action}</th>
                         </tr>
-                      )}
+                      </thead>
+                      <tbody>
+                        {!state.position || state.position.side === "flat" ? (
+                          <tr><td colSpan={8} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noPosition}</td></tr>
+                        ) : (
+                          <tr style={{ borderTop: "1px solid #13212a" }}>
+                            <td style={td}>{state.position.symbol}</td>
+                            <td style={{ ...td, color: state.position.side === "long" ? "#2dd4bf" : "#f87171" }}>{state.position.side}</td>
+                            <td style={td}>{fmt(state.position.quantity, 4)}</td>
+                            <td style={td}>{fmt(state.position.averageEntryPrice, priceDigits)}</td>
+                            <td style={td}>{fmt(state.position.markPrice, priceDigits)}</td>
+                            <td style={td}>{state.position.liquidationPrice > 0 ? fmt(state.position.liquidationPrice, priceDigits) : "-"}</td>
+                            <td style={{ ...td, color: state.position.unrealizedPnl > 0 ? "#2dd4bf" : state.position.unrealizedPnl < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(state.position.unrealizedPnl, 4)} USDC</td>
+                            <td style={td}><button onClick={() => void closePosition()} style={btnInline}>{t.closePosition}</button></td>
+                          </tr>
+                        )}
                     </tbody>
                   </table>
                 ) : accountTab === "openOrders" ? (

@@ -1,8 +1,8 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
-import type { PlatformSettingsView } from "./auth";
-import type { BatchJobExecution } from "./batch-job-runner";
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
-import type { MarketSimulatorState, SymbolConfigState } from "./market-runtime";
+import type { PlatformSettingsView } from "./auth.js";
+import type { BatchJobExecution } from "./batch-job-runner.js";
+import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
+import type { MarketSimulatorState, SymbolConfigState } from "./market-runtime.js";
 
 export interface TradingStateLike {
   simulationSessionId: string;

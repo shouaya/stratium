@@ -1,14 +1,15 @@
 PNPM ?= corepack pnpm
 COMPOSE ?= docker-compose
+COMPOSE_PROD ?= $(COMPOSE) -f docker-compose.prod.yml
 COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
 DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
 JOB_RUNNER_CLIENT ?= node scripts/job-runner-request.mjs
 MIGRATION_NAME ?= schema-update
 
-.PHONY: help install dev lint test build check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
+.PHONY: help install dev lint test build check prod-esm-check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
-	logs-job-runner config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
+	logs-job-runner config prod-up prod-up-build prod-down prod-logs prod-config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
 DATE ?=
@@ -33,6 +34,7 @@ help:
 	@echo   make lint                 Run TypeScript lint checks across workspace
 	@echo   make test                 Run workspace tests
 	@echo   make build                Build all workspace packages/apps
+	@echo   make prod-esm-check       Build and validate production ESM entrypoints/imports
 	@echo   make check                Run lint, test, build, and compose config
 	@echo.
 	@echo Docker compose
@@ -48,6 +50,13 @@ help:
 	@echo   make logs-db              Tail db logs
 	@echo   make logs-adminer         Tail adminer logs
 	@echo   make logs-job-runner      Tail job-runner logs
+	@echo.
+	@echo Production
+	@echo   make prod-up              Start production stack
+	@echo   make prod-up-build        Rebuild and start production stack
+	@echo   make prod-down            Stop production stack
+	@echo   make prod-logs            Tail production logs
+	@echo   make prod-config          Validate docker-compose.prod.yml
 	@echo.
 	@echo Batch
 	@echo   make batch-build          Build the batch job image
@@ -77,6 +86,9 @@ test:
 
 build:
 	$(PNPM) build
+
+prod-esm-check: build
+	node scripts/check-prod-esm.mjs
 
 check: lint test build config
 
@@ -132,6 +144,21 @@ logs-job-runner:
 
 config:
 	$(COMPOSE) config
+
+prod-up:
+	$(COMPOSE_PROD) up -d
+
+prod-up-build:
+	$(COMPOSE_PROD) up -d --build
+
+prod-down:
+	$(COMPOSE_PROD) down
+
+prod-logs:
+	$(COMPOSE_PROD) logs -f
+
+prod-config:
+	$(COMPOSE_PROD) config
 
 batch-build:
 	$(COMPOSE_BATCH) build batch

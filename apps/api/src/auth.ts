@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { TradingRepository } from "./repository";
+import { TradingRepository } from "./repository.js";
 
 export type AuthRole = "frontend" | "admin";
 

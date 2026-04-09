@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { createClient } from "@redis/client";
-import { JobExecutor, type JobRunInput, type JobRunResult, type JobRunnerJobId } from "./job-executor";
+import { JobExecutor, type JobRunInput, type JobRunResult, type JobRunnerJobId } from "./job-executor.js";
 
 const port = Number(process.env.JOB_RUNNER_PORT ?? 4300);
 const host = process.env.JOB_RUNNER_HOST ?? "127.0.0.1";

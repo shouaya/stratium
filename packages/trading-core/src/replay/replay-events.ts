@@ -1,6 +1,6 @@
 import type { AnyEventEnvelope, FillPayload } from "@stratium/shared";
-import { createInitialTradingState, type TradingEngineOptions, type TradingEngineState } from "../domain/state";
-import { applyEvent } from "./apply-event";
+import { createInitialTradingState, type TradingEngineOptions, type TradingEngineState } from "../domain/state.js";
+import { applyEvent } from "./apply-event.js";
 
 export interface ReplayResult {
   readonly state: TradingEngineState;

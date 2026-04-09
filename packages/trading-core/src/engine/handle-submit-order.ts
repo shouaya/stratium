@@ -4,8 +4,8 @@ import type {
   OrderRejectedPayload,
   OrderRequestedPayload
 } from "@stratium/shared";
-import { validateOrder } from "../rules/order-validation";
-import type { TradingCommandHandler, HandleSubmitOrderArgs } from "./handler-types";
+import { validateOrder } from "../rules/order-validation.js";
+import type { TradingCommandHandler, HandleSubmitOrderArgs } from "./handler-types.js";
 
 export const handleSubmitOrder: TradingCommandHandler<HandleSubmitOrderArgs> = ({
   context,

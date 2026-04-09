@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { MarketTick } from "@stratium/shared";
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
-import { HyperliquidMarketClient } from "./hyperliquid-market";
-import { TradingRepository } from "./repository";
+import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
+import { HyperliquidMarketClient } from "./hyperliquid-market.js";
+import { TradingRepository } from "./repository.js";
 
 export interface MarketSimulatorState {
   enabled: boolean;

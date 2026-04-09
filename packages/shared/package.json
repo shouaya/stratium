@@ -5,8 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "pnpm exec tsc -p tsconfig.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && pnpm exec tsc -p tsconfig.json",
     "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
     "test": "pnpm exec vitest run --passWithNoTests"
   }

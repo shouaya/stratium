@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
-import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale";
-import type { ApiRuntime, MarketSimulatorState } from "./runtime";
+import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js";
+import type { ApiRuntime, MarketSimulatorState } from "./runtime.js";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
   const getToken = (request: { headers: { authorization?: string | string[] | undefined }; query?: unknown }): string | undefined => {
@@ -162,6 +162,17 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return {
       sessionId: runtime.getEngineState(session.user.tradingAccountId as string).simulationSessionId,
       events: runtime.getEventStore(session.user.tradingAccountId as string)
+    };
+  });
+  app.get("/api/fill-history", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    return {
+      sessionId: runtime.getEngineState(session.user.tradingAccountId as string).simulationSessionId,
+      events: runtime.getFillHistoryEvents(session.user.tradingAccountId as string)
     };
   });
   app.get("/api/replay/:sessionId", async (request, reply) => {

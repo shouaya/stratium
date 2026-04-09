@@ -1,6 +1,6 @@
 import type { AccountView, PositionView, TradingSymbolConfig } from "@stratium/shared";
-import { round } from "../domain/state";
-import { computeLiquidationPrice, computeUnrealizedPnl } from "./position-math";
+import { round } from "../domain/state.js";
+import { computeLiquidationPrice, computeUnrealizedPnl } from "./position-math.js";
 
 export const refreshAccountState = (
   account: AccountView,

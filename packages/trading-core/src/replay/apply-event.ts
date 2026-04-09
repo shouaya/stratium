@@ -10,7 +10,7 @@ import type {
   OrderRequestedPayload,
   PositionPayload
 } from "@stratium/shared";
-import type { TradingEngineState } from "../domain/state";
+import type { TradingEngineState } from "../domain/state.js";
 
 const derivePositionSide = (quantity: number, side: PositionPayload["side"]): PositionPayload["side"] => {
   if (quantity === 0) {

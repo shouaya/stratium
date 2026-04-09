@@ -8,12 +8,14 @@ import {
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type MouseEventParams,
   type Time,
   TickMarkType,
   type UTCTimestamp
 } from "lightweight-charts";
+import type { PositionView } from "@stratium/shared";
 
 const TOKYO_TIMEZONE = "Asia/Tokyo";
 
@@ -30,18 +32,21 @@ export function CandlestickChart({
   data,
   volumeData = [],
   dark = false,
-  priceDigits = 4
+  priceDigits = 4,
+  position
 }: {
   data: CandlestickData<UTCTimestamp>[];
   volumeData?: HistogramData<UTCTimestamp>[];
   dark?: boolean;
   priceDigits?: number;
+  position?: PositionView | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
   const hasFitInitialContentRef = useRef(false);
 
   useEffect(() => {
@@ -210,6 +215,51 @@ export function CandlestickChart({
       hasFitInitialContentRef.current = true;
     }
   }, [data, volumeData]);
+
+  useEffect(() => {
+    const candles = candleRef.current;
+
+    if (!candles) {
+      return;
+    }
+
+    for (const line of priceLinesRef.current) {
+      candles.removePriceLine(line);
+    }
+    priceLinesRef.current = [];
+
+    if (!position || position.side === "flat" || position.quantity <= 0) {
+      return;
+    }
+
+    const sideColor = position.side === "long" ? "#2dd4bf" : "#f87171";
+    const liqColor = dark ? "#fbbf24" : "#d97706";
+    const lineOptions = [
+      {
+        price: position.averageEntryPrice,
+        color: sideColor,
+        title: position.side === "long" ? "Long Entry" : "Short Entry",
+        lineStyle: 0 as const
+      },
+      ...(position.liquidationPrice > 0 ? [{
+        price: position.liquidationPrice,
+        color: liqColor,
+        title: "Est. Liq.",
+        lineStyle: 3 as const
+      }] : [])
+    ];
+
+    for (const line of lineOptions) {
+      priceLinesRef.current.push(candles.createPriceLine({
+        price: line.price,
+        color: line.color,
+        lineWidth: 1,
+        lineStyle: line.lineStyle,
+        axisLabelVisible: true,
+        title: line.title
+      }));
+    }
+  }, [dark, position]);
 
   return (
     <div style={{ position: "relative" }}>

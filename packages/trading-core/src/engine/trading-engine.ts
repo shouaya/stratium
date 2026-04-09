@@ -10,17 +10,17 @@ import type {
   PositionPayload,
   TradingSymbolConfig
 } from "@stratium/shared";
-import type { TradingEngineOptions, TradingEngineState } from "../domain/state";
-import { createInitialTradingState, DEFAULT_SYMBOL_CONFIG, round } from "../domain/state";
-import { refreshAccountState } from "../rules/account-math";
-import { computeNextPosition, type PositionComputationResult } from "../rules/position-math";
-import { applyEvent } from "../replay/apply-event";
-import { handleCancelOrder } from "./handle-cancel-order";
-import { handleFillOrder } from "./handle-fill-order";
-import { handleMarketTick } from "./handle-market-tick";
-import { handlePostFill } from "./handle-post-fill";
-import { handleRefreshAccount } from "./handle-refresh-account";
-import { handleSubmitOrder } from "./handle-submit-order";
+import type { TradingEngineOptions, TradingEngineState } from "../domain/state.js";
+import { createInitialTradingState, DEFAULT_SYMBOL_CONFIG, round } from "../domain/state.js";
+import { refreshAccountState } from "../rules/account-math.js";
+import { computeNextPosition, type PositionComputationResult } from "../rules/position-math.js";
+import { applyEvent } from "../replay/apply-event.js";
+import { handleCancelOrder } from "./handle-cancel-order.js";
+import { handleFillOrder } from "./handle-fill-order.js";
+import { handleMarketTick } from "./handle-market-tick.js";
+import { handlePostFill } from "./handle-post-fill.js";
+import { handleRefreshAccount } from "./handle-refresh-account.js";
+import { handleSubmitOrder } from "./handle-submit-order.js";
 import type {
   CancelOrderHandlerContext,
   FillOrderHandlerContext,
@@ -28,7 +28,7 @@ import type {
   RefreshAccountHandlerContext,
   MarketTickHandlerContext,
   SubmitOrderHandlerContext
-} from "./handler-types";
+} from "./handler-types.js";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 
 export interface TradingEngineResult {

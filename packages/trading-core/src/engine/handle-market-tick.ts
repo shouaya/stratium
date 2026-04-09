@@ -1,5 +1,5 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
-import type { TradingCommandHandler, HandleMarketTickArgs } from "./handler-types";
+import type { TradingCommandHandler, HandleMarketTickArgs } from "./handler-types.js";
 
 export const handleMarketTick: TradingCommandHandler<HandleMarketTickArgs> = ({
   context,

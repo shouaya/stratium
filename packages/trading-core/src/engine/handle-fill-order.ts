@@ -1,7 +1,7 @@
 import type { AnyEventEnvelope, FillPayload, OrderStatus } from "@stratium/shared";
-import { round } from "../domain/state";
-import { applyExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing";
-import type { HandleFillOrderArgs } from "./handler-types";
+import { round } from "../domain/state.js";
+import { applyExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing.js";
+import type { HandleFillOrderArgs } from "./handler-types.js";
 
 export const handleFillOrder = ({
   context,

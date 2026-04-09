@@ -1,13 +1,13 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import type { AnyEventEnvelope, FillPayload, MarketTick, OrderView, PositionView, TradingSymbolConfig } from "@stratium/shared";
 import type { TradingEngineState } from "@stratium/trading-core";
-import type { PlatformSettingsView } from "./auth";
+import type { PlatformSettingsView } from "./auth.js";
 import type {
   HyperliquidAssetContext,
   HyperliquidCandle,
   HyperliquidMarketSnapshot,
   HyperliquidTrade
-} from "./hyperliquid-market";
+} from "./hyperliquid-market.js";
 
 const prisma = new PrismaClient();
 const RECENT_MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;

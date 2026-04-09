@@ -60,6 +60,35 @@ make logs
 make check
 ```
 
+## Production Deployment
+
+Use the production compose stack instead of the dev stack.
+
+```bash
+make prod-esm-check
+make prod-up-build
+```
+
+If this is the first production boot on a new database, run:
+
+```bash
+make db-push
+make db-bootstrap
+```
+
+Useful production commands:
+
+```bash
+make prod-logs
+make prod-down
+```
+
+Production validation:
+
+- Web should run with `next start`, not `next dev`
+- API should run from compiled `dist` output, not `tsx watch`
+- the Next.js dev `N` indicator should not appear in the UI
+
 ## Demo Accounts
 
 Run `make db-seed` or `make db-bootstrap` before first login. Database setup commands run inside the batch container.

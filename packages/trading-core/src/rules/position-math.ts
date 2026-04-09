@@ -1,5 +1,5 @@
 import type { OrderSide, PositionSide, PositionView, TradingSymbolConfig } from "@stratium/shared";
-import { round } from "../domain/state";
+import { round } from "../domain/state.js";
 
 export interface PositionComputationResult {
   position: PositionView;

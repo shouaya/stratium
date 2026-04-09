@@ -938,4 +938,35 @@ describe("ApiRuntime", () => {
 
     expect(socket.send).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps trading events in recent event payloads even when market ticks exceed the window", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    await runtime.bootstrap();
+
+    for (let index = 0; index < 600; index += 1) {
+      await runtime.ingestManualTick({
+        symbol: "BTC-USD",
+        bid: 70000 + index,
+        ask: 70002 + index,
+        last: 70001 + index,
+        spread: 2,
+        tickTime: new Date(Date.parse("2026-04-09T00:00:00.000Z") + (index * 1_000)).toISOString(),
+        volatilityTag: "normal"
+      });
+    }
+
+    const orderResult = await runtime.submitOrder({
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "market",
+      quantity: 1
+    });
+
+    const recentEvents = runtime.getStatePayload("paper-account-1").events;
+
+    expect(recentEvents.some((event) => event.eventType === "OrderAccepted")).toBe(true);
+    expect(orderResult.events.some((event) => event.eventType === "OrderAccepted")).toBe(true);
+    expect(recentEvents.filter((event) => event.eventType === "MarketTickReceived").length).toBeLessThanOrEqual(240);
+  });
 });

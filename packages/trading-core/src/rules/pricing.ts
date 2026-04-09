@@ -1,5 +1,5 @@
 import type { LiquidityRole, MarketTick, OrderSide, OrderView } from "@stratium/shared";
-import { round } from "../domain/state";
+import { round } from "../domain/state.js";
 
 export const getMarketReferencePrice = (
   latestTick: MarketTick | undefined,

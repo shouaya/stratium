@@ -4,6 +4,6 @@ export {
   round,
   type TradingEngineOptions,
   type TradingEngineState
-} from "./domain/state";
-export { TradingEngine, type TradingEngineResult } from "./engine/trading-engine";
-export { replayEvents, type ReplayResult } from "./replay/replay-events";
+} from "./domain/state.js";
+export { TradingEngine, type TradingEngineResult } from "./engine/trading-engine.js";
+export { replayEvents, type ReplayResult } from "./replay/replay-events.js";

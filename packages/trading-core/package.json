@@ -3,10 +3,16 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/trading-core/src/index.js",
+  "types": "dist/trading-core/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/trading-core/src/index.d.ts",
+      "import": "./dist/trading-core/src/index.js"
+    }
+  },
   "scripts": {
-    "build": "pnpm exec tsc -p tsconfig.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && pnpm exec tsc -p tsconfig.json",
     "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
     "test": "pnpm exec vitest run --passWithNoTests",
     "test:coverage": "pnpm exec vitest run --coverage"
