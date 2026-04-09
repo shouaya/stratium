@@ -1,5 +1,6 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
 import type { PlatformSettingsView } from "./auth";
+import type { BatchJobExecution } from "./batch-job-runner";
 import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
 import type { MarketSimulatorState, SymbolConfigState } from "./market-runtime";
 
@@ -11,6 +12,11 @@ export interface TradingStateLike {
   latestTick?: unknown;
 }
 
+export interface BatchJobPayload {
+  runningJobs: BatchJobExecution[];
+  lastExecution: BatchJobExecution | null;
+}
+
 interface RuntimePayloadInput {
   state: TradingStateLike;
   events: AnyEventEnvelope[];
@@ -18,6 +24,7 @@ interface RuntimePayloadInput {
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
+  batch: BatchJobPayload;
 }
 
 export interface StatePayload {
@@ -31,6 +38,7 @@ export interface StatePayload {
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
+  batch: BatchJobPayload;
 }
 
 export interface ReplayPayload {
@@ -40,6 +48,7 @@ export interface ReplayPayload {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   platform: PlatformSettingsView;
+  batch: BatchJobPayload;
 }
 
 export interface SocketBootstrapPayload {
@@ -49,6 +58,7 @@ export interface SocketBootstrapPayload {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   platform: PlatformSettingsView;
+  batch: BatchJobPayload;
 }
 
 export interface SocketEventsPayload {
@@ -59,6 +69,7 @@ export interface SocketEventsPayload {
   market: HyperliquidMarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
+  batch: BatchJobPayload;
 }
 
 export const createStatePayload = (input: RuntimePayloadInput): StatePayload => ({
@@ -71,7 +82,8 @@ export const createStatePayload = (input: RuntimePayloadInput): StatePayload => 
   simulator: input.simulator,
   market: input.market,
   symbolConfig: input.symbolConfig,
-  platform: input.platform
+  platform: input.platform,
+  batch: input.batch
 });
 
 export const createReplayPayload = (
@@ -80,14 +92,16 @@ export const createReplayPayload = (
   events: AnyEventEnvelope[],
   simulator: MarketSimulatorState,
   market: HyperliquidMarketSnapshot,
-  platform: PlatformSettingsView
+  platform: PlatformSettingsView,
+  batch: BatchJobPayload
 ): ReplayPayload => ({
   sessionId,
   events,
   state,
   simulator,
   market,
-  platform
+  platform,
+  batch
 });
 
 export const createSocketBootstrapPayload = (
@@ -95,14 +109,16 @@ export const createSocketBootstrapPayload = (
   events: AnyEventEnvelope[],
   simulator: MarketSimulatorState,
   market: HyperliquidMarketSnapshot,
-  platform: PlatformSettingsView
+  platform: PlatformSettingsView,
+  batch: BatchJobPayload
 ): SocketBootstrapPayload => ({
   type: "bootstrap" as const,
   state,
   events,
   simulator,
   market,
-  platform
+  platform,
+  batch
 });
 
 export const createSocketEventsPayload = (
@@ -111,7 +127,8 @@ export const createSocketEventsPayload = (
   simulator: MarketSimulatorState,
   market: HyperliquidMarketSnapshot,
   symbolConfig: SymbolConfigState,
-  platform: PlatformSettingsView
+  platform: PlatformSettingsView,
+  batch: BatchJobPayload
 ): SocketEventsPayload => ({
   type: "events" as const,
   events,
@@ -119,5 +136,6 @@ export const createSocketEventsPayload = (
   simulator,
   market,
   symbolConfig,
-  platform
+  platform,
+  batch
 });

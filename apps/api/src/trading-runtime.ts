@@ -55,6 +55,8 @@ interface TradingRuntimeOptions {
 }
 
 export class TradingRuntime {
+  private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
+
   private engine = new TradingEngine(createInitialTradingState());
 
   private readonly eventStore: AnyEventEnvelope[] = [];
@@ -75,6 +77,14 @@ export class TradingRuntime {
 
   getEventStore() {
     return this.eventStore;
+  }
+
+  getRecentEventStore(limit = TradingRuntime.DEFAULT_RECENT_EVENT_LIMIT) {
+    if (limit <= 0 || this.eventStore.length <= limit) {
+      return this.eventStore;
+    }
+
+    return this.eventStore.slice(-limit);
   }
 
   getReplayState(sessionId: string) {

@@ -49,7 +49,6 @@ Stratium is a PH1 trading simulation platform focused on a deterministic trading
 ```bash
 make help
 make install
-make job-runner-start
 make db-migrate MIGRATION_NAME=add-auth-access
 make db-seed
 make db-bootstrap
@@ -87,10 +86,10 @@ make batch-refresh-hl-day COIN=BTC DATE=2026-04-08
 
 Batch is docker-job only:
 
-- it is not part of the main `api/web/db` compose stack
+- `job-runner` is part of the main compose stack and stays resident
+- `batch` itself is not part of the main `api/web/db/job-runner` stack
 - it does not auto-start
 - run every batch task through the host-side `job-runner`
-- start the runner with `make job-runner-start`
 - `admin -> api -> job-runner -> docker-compose batch`
 - `make -> job-runner -> docker-compose batch`
 

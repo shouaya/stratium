@@ -43,11 +43,16 @@ const DEFAULT_COIN = process.env.HYPERLIQUID_COIN ?? "BTC";
 const DEFAULT_INTERVAL = process.env.HYPERLIQUID_CANDLE_INTERVAL ?? "1m";
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const composeCommand = process.env.JOB_RUNNER_COMPOSE_COMMAND?.trim() || "docker-compose";
+const composeCommandArgs = (process.env.JOB_RUNNER_COMPOSE_ARGS ?? "")
+  .split(/\s+/)
+  .map((value) => value.trim())
+  .filter(Boolean);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const workdir = process.env.JOB_RUNNER_WORKDIR?.trim() || path.resolve(moduleDir, "../../..");
 const batchEnvFile = process.env.JOB_RUNNER_BATCH_ENV_FILE?.trim() || ".env";
 const batchComposeFile = process.env.JOB_RUNNER_BATCH_COMPOSE_FILE?.trim() || "docker-compose.batch.yml";
 const mainComposeFile = process.env.JOB_RUNNER_MAIN_COMPOSE_FILE?.trim() || "docker-compose.yml";
+const apiContainerName = process.env.JOB_RUNNER_API_CONTAINER?.trim() || "stratium-api";
 
 const definitions: JobDefinition[] = [
   {
@@ -203,13 +208,16 @@ const combineResults = (steps: JobRunResult[]): JobRunResult => {
 };
 
 const runBatchShell = (script: string) =>
-  runCommand(composeCommand, [...batchComposeBaseArgs, "run", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
+  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
 
 const runBatchNode = (args: string[]) =>
-  runCommand(composeCommand, [...batchComposeBaseArgs, "run", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
+  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
 
 const runMainCompose = (args: string[]) =>
-  runCommand(composeCommand, ["-f", mainComposeFile, ...args]);
+  runCommand(composeCommand, [...composeCommandArgs, "-f", mainComposeFile, ...args]);
+
+const runDocker = (args: string[]) =>
+  runCommand("docker", args);
 
 export class JobExecutor {
   listJobs(): JobDefinition[] {
@@ -264,10 +272,10 @@ export class JobExecutor {
         const date = ensureSafeDate(input.date);
 
         return combineResults([
-          await runMainCompose(["stop", "api"]),
+          await runDocker(["stop", apiContainerName]),
           await this.run("batch-clear-kline", { coin, interval: "1m" }),
           await this.run("batch-import-hl-day", { coin, date }),
-          await runMainCompose(["up", "-d", "api"])
+          await runDocker(["start", apiContainerName])
         ]);
       }
       default:

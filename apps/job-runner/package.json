@@ -10,6 +10,7 @@
     "test": "pnpm exec vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@redis/client": "^1.6.1",
     "fastify": "^5.2.1"
   },
   "devDependencies": {

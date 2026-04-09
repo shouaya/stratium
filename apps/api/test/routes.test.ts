@@ -104,12 +104,14 @@ describe("registerRoutes", () => {
       }
     ]);
     runtime.runBatchJob.mockResolvedValue({
-      ok: true,
-      command: "make",
-      args: ["batch-refresh-hl-day", "COIN=BTC"],
-      stdout: "done",
-      stderr: "",
-      code: 0
+      executionId: "exec-1",
+      jobId: "batch-refresh-hl-day",
+      status: "running",
+      startedAt: "2026-04-09T00:00:00.000Z",
+      command: "",
+      args: [],
+      stdout: "",
+      stderr: ""
     });
     runtime.listFrontendUsers.mockResolvedValue([frontendSession.user]);
     runtime.createFrontendUser.mockResolvedValue(frontendSession.user);

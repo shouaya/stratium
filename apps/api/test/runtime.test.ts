@@ -13,7 +13,8 @@ const repositoryMocks = vi.hoisted(() => ({
   persistState: vi.fn(),
   updateSymbolLeverage: vi.fn(),
   loadRecentVolumeRecords: vi.fn(),
-  persistMarketSnapshot: vi.fn()
+  persistMarketSnapshot: vi.fn(),
+  persistClosedMinuteCandles: vi.fn()
 }));
 
 const hyperliquidClientState = vi.hoisted(() => ({
@@ -83,6 +84,7 @@ vi.mock("../src/repository", () => ({
     updateSymbolLeverage = repositoryMocks.updateSymbolLeverage;
     loadRecentVolumeRecords = repositoryMocks.loadRecentVolumeRecords;
     persistMarketSnapshot = repositoryMocks.persistMarketSnapshot;
+    persistClosedMinuteCandles = repositoryMocks.persistClosedMinuteCandles;
   }
 }));
 
@@ -103,6 +105,14 @@ vi.mock("../src/hyperliquid-market", () => ({
       hyperliquidClientState.instances.push(this);
     }
   }
+}));
+
+const batchJobStateMocks = vi.hoisted(() => ({
+  connect: vi.fn(),
+  refreshState: vi.fn(),
+  shutdown: vi.fn(),
+  getRunningJobs: vi.fn(() => []),
+  getLastExecution: vi.fn(() => null)
 }));
 
 vi.mock("@stratium/trading-core", () => {
@@ -311,6 +321,16 @@ vi.mock("@stratium/trading-core", () => {
   };
 });
 
+vi.mock("../src/batch-job-state", () => ({
+  BatchJobStateFeed: class {
+    connect = batchJobStateMocks.connect;
+    refreshState = batchJobStateMocks.refreshState;
+    shutdown = batchJobStateMocks.shutdown;
+    getRunningJobs = batchJobStateMocks.getRunningJobs;
+    getLastExecution = batchJobStateMocks.getLastExecution;
+  }
+}));
+
 const { ApiRuntime } = await import("../src/runtime");
 
 describe("ApiRuntime", () => {
@@ -343,6 +363,12 @@ describe("ApiRuntime", () => {
     repositoryMocks.updateSymbolLeverage.mockResolvedValue(undefined);
     repositoryMocks.loadRecentVolumeRecords.mockResolvedValue([{ id: "vol-1" }]);
     repositoryMocks.persistMarketSnapshot.mockResolvedValue(undefined);
+    repositoryMocks.persistClosedMinuteCandles.mockResolvedValue(undefined);
+    batchJobStateMocks.connect.mockResolvedValue(undefined);
+    batchJobStateMocks.refreshState.mockResolvedValue(undefined);
+    batchJobStateMocks.shutdown.mockResolvedValue(undefined);
+    batchJobStateMocks.getRunningJobs.mockReturnValue([]);
+    batchJobStateMocks.getLastExecution.mockReturnValue(null);
     process.env.MARKET_SOURCE = "hyperliquid";
     process.env.ENABLE_MARKET_SIMULATOR = "true";
     process.env.HYPERLIQUID_COIN = "BTC";
@@ -784,11 +810,13 @@ describe("ApiRuntime", () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it("persists changed hyperliquid snapshots and logs persistence failures", async () => {
+  it("persists closed hyperliquid minute candles on a timer and logs persistence failures", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:01:05.000Z"));
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
 
-    repositoryMocks.persistMarketSnapshot.mockRejectedValueOnce(new Error("market snapshot failed"));
+    repositoryMocks.persistClosedMinuteCandles.mockRejectedValueOnce(new Error("market snapshot failed"));
     hyperliquidClientState.instances[0]?.options.onSnapshot({
       source: "hyperliquid",
       coin: "BTC",
@@ -798,13 +826,25 @@ describe("ApiRuntime", () => {
       markPrice: 101.5,
       book: { bids: [{ price: 101, size: 1, orders: 1 }], asks: [{ price: 102, size: 1, orders: 1 }], updatedAt: 1 },
       trades: [{ id: "trade-1", coin: "BTC", side: "buy", price: 101.5, size: 1, time: 1 }],
-      candles: [],
+      candles: [{
+        id: "candle-1",
+        coin: "BTC",
+        interval: "1m",
+        openTime: Date.parse("2026-04-09T12:00:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:01:00.000Z"),
+        open: 100,
+        high: 102,
+        low: 99,
+        close: 101.5,
+        volume: 12,
+        tradeCount: 3
+      }],
       assetCtx: { coin: "BTC", capturedAt: 1, markPrice: 101.5 }
     });
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(logger.error).toHaveBeenCalled();
 
-    repositoryMocks.persistMarketSnapshot.mockResolvedValue(undefined);
+    repositoryMocks.persistClosedMinuteCandles.mockResolvedValue(undefined);
     hyperliquidClientState.instances[0]?.options.onSnapshot({
       source: "hyperliquid",
       coin: "BTC",
@@ -814,10 +854,24 @@ describe("ApiRuntime", () => {
       markPrice: 101.5,
       book: { bids: [], asks: [], updatedAt: 1 },
       trades: [{ id: "trade-2", coin: "BTC", side: "buy", price: 101.5, size: 1, time: 2 }],
-      candles: [],
+      candles: [{
+        id: "candle-2",
+        coin: "BTC",
+        interval: "1m",
+        openTime: Date.parse("2026-04-09T12:01:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:02:00.000Z"),
+        open: 101.5,
+        high: 103,
+        low: 101,
+        close: 102.5,
+        volume: 8,
+        tradeCount: 2
+      }],
       assetCtx: { coin: "BTC", capturedAt: 1, markPrice: 101.5 }
     });
-    expect(repositoryMocks.persistMarketSnapshot).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(new Date("2026-04-09T12:02:05.000Z"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(repositoryMocks.persistClosedMinuteCandles).toHaveBeenCalledTimes(2);
   });
 
   it("forwards explicit socket and simulator control helpers", async () => {

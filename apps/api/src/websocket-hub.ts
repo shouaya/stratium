@@ -1,4 +1,5 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
+import type { BatchJobPayload } from "./payloads";
 import type { HyperliquidMarketSnapshot } from "./hyperliquid-market";
 import type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime";
 
@@ -9,6 +10,7 @@ interface BroadcastPayload {
   simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   symbolConfig?: SymbolConfigState;
+  batch?: BatchJobPayload;
 }
 
 export class WebSocketHub {

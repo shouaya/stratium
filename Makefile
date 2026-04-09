@@ -8,7 +8,7 @@ MIGRATION_NAME ?= schema-update
 
 .PHONY: help install dev lint test build check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
-	config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
+	logs-job-runner config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
 DATE ?=
@@ -47,6 +47,7 @@ help:
 	@echo   make logs-web             Tail web logs
 	@echo   make logs-db              Tail db logs
 	@echo   make logs-adminer         Tail adminer logs
+	@echo   make logs-job-runner      Tail job-runner logs
 	@echo.
 	@echo Batch
 	@echo   make batch-build          Build the batch job image
@@ -60,10 +61,10 @@ install:
 	$(PNPM) install
 
 job-runner-start:
-	$(PNPM) job-runner:dev
+	$(COMPOSE) up -d job-runner
 
 job-runner-build:
-	$(PNPM) --filter @stratium/job-runner build
+	$(COMPOSE) build job-runner
 
 dev:
 	$(PNPM) dev
@@ -125,6 +126,9 @@ logs-db:
 
 logs-adminer:
 	$(COMPOSE) logs -f adminer
+
+logs-job-runner:
+	$(COMPOSE) logs -f job-runner
 
 config:
 	$(COMPOSE) config

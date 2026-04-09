@@ -264,6 +264,41 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     };
   });
 
+  app.get("/api/admin/batch-job-executions/running", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const messages = getMessages(resolveLocale(request));
+
+    try {
+      const jobs = await runtime.listRunningBatchJobs();
+      return reply.send({ jobs });
+    } catch (error) {
+      return reply.code(500).send({
+        message: error instanceof Error ? error.message : messages.admin.batchJobRequestFailed
+      });
+    }
+  });
+
+  app.get("/api/admin/batch-job-executions/:executionId", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const messages = getMessages(resolveLocale(request));
+    const params = request.params as { executionId: string };
+
+    try {
+      const execution = await runtime.getBatchJobExecution(params.executionId);
+      return reply.send(execution);
+    } catch (error) {
+      return reply.code(500).send({
+        message: error instanceof Error ? error.message : messages.admin.batchJobRequestFailed
+      });
+    }
+  });
+
   app.put("/api/admin/platform-settings", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;
@@ -302,7 +337,13 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
 
     try {
       const result = await runtime.runBatchJob(params.jobId, payload ?? {});
-      return reply.code(result.ok ? 202 : 500).send(result);
+      const statusCode = result.status === "running"
+        ? 202
+        : result.ok === false
+          ? 500
+          : 200;
+
+      return reply.code(statusCode).send(result);
     } catch (error) {
       return reply.code(400).send({
         ok: false,

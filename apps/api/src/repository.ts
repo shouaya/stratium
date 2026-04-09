@@ -333,93 +333,21 @@ export class TradingRepository {
     });
   }
 
-  async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {
-    if (snapshot.source !== "hyperliquid") {
+  async persistClosedMinuteCandles(
+    candles: HyperliquidCandle[],
+    source = "hyperliquid"
+  ): Promise<void> {
+    if (source !== "hyperliquid" || candles.length === 0) {
       return;
     }
 
-    const capturedAt = new Date(snapshot.book.updatedAt ?? snapshot.assetCtx?.capturedAt ?? Date.now());
-    const snapshotId = `${snapshot.coin}-${capturedAt.getTime()}`;
     const operations: Prisma.PrismaPromise<unknown>[] = [];
 
-    if (snapshot.book.bids.length > 0 || snapshot.book.asks.length > 0) {
-      operations.push(
-        prisma.marketBookSnapshot.upsert({
-          where: { id: snapshotId },
-          update: {
-            source: snapshot.source,
-            coin: snapshot.coin,
-            symbol: `${snapshot.coin}-USD`,
-            bestBid: snapshot.bestBid ?? null,
-            bestAsk: snapshot.bestAsk ?? null,
-            spread: snapshot.bestBid != null && snapshot.bestAsk != null ? snapshot.bestAsk - snapshot.bestBid : null,
-            capturedAt
-          },
-          create: {
-            id: snapshotId,
-            source: snapshot.source,
-            coin: snapshot.coin,
-            symbol: `${snapshot.coin}-USD`,
-            bestBid: snapshot.bestBid ?? null,
-            bestAsk: snapshot.bestAsk ?? null,
-            spread: snapshot.bestBid != null && snapshot.bestAsk != null ? snapshot.bestAsk - snapshot.bestBid : null,
-            capturedAt
-          }
-        })
-      );
-
-      const levels = [
-        ...snapshot.book.bids.map((level, index) => ({ ...level, side: "bid" as const, index })),
-        ...snapshot.book.asks.map((level, index) => ({ ...level, side: "ask" as const, index }))
-      ];
-
-      for (const level of levels) {
-        operations.push(
-          prisma.marketBookLevel.upsert({
-            where: {
-              id: `${snapshotId}-${level.side}-${level.index}`
-            },
-            update: {
-              source: snapshot.source,
-              coin: snapshot.coin,
-              side: level.side,
-              levelIndex: level.index,
-              price: level.price,
-              size: level.size,
-              orders: level.orders,
-              capturedAt
-            },
-            create: {
-              id: `${snapshotId}-${level.side}-${level.index}`,
-              snapshotId,
-              source: snapshot.source,
-              coin: snapshot.coin,
-              side: level.side,
-              levelIndex: level.index,
-              price: level.price,
-              size: level.size,
-              orders: level.orders,
-              capturedAt
-            }
-          })
-        );
+    for (const candle of candles) {
+      if (candle.interval !== "1m") {
+        continue;
       }
-    }
 
-    for (const trade of snapshot.trades.slice(0, 12)) {
-      operations.push(
-        prisma.marketTrade.upsert({
-          where: { id: trade.id },
-          update: this.mapMarketTrade(trade, snapshot.source),
-          create: {
-            id: trade.id,
-            ...this.mapMarketTrade(trade, snapshot.source)
-          }
-        })
-      );
-    }
-
-    for (const candle of snapshot.candles.slice(-8)) {
       operations.push(
         prisma.marketCandle.upsert({
           where: {
@@ -429,10 +357,10 @@ export class TradingRepository {
               openTime: new Date(candle.openTime)
             }
           },
-          update: this.mapMarketCandle(candle, snapshot.source),
+          update: this.mapMarketCandle(candle, source),
           create: {
             id: candle.id,
-            ...this.mapMarketCandle(candle, snapshot.source)
+            ...this.mapMarketCandle(candle, source)
           }
         })
       );
@@ -446,21 +374,10 @@ export class TradingRepository {
               bucketStart: new Date(candle.openTime)
             }
           },
-          update: this.mapMarketVolumeRecord(candle, snapshot.source),
+          update: this.mapMarketVolumeRecord(candle, source),
           create: {
             id: `vol-${candle.coin}-${candle.interval}-${candle.openTime}`,
-            ...this.mapMarketVolumeRecord(candle, snapshot.source)
-          }
-        })
-      );
-    }
-
-    if (snapshot.assetCtx) {
-      operations.push(
-        prisma.marketAssetContext.create({
-          data: {
-            id: crypto.randomUUID(),
-            ...this.mapAssetContext(snapshot.assetCtx, snapshot.source)
+            ...this.mapMarketVolumeRecord(candle, source)
           }
         })
       );
@@ -469,6 +386,14 @@ export class TradingRepository {
     if (operations.length > 0) {
       await Promise.allSettled(operations);
     }
+  }
+
+  async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {
+    if (snapshot.source !== "hyperliquid") {
+      return;
+    }
+
+    await this.persistClosedMinuteCandles(snapshot.candles, snapshot.source);
   }
 
   async loadRecentMarketSnapshot(coin: string, interval = "1m"): Promise<HyperliquidMarketSnapshot | null> {

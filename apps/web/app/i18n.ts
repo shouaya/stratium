@@ -84,6 +84,9 @@ export const UI_TEXT = {
       batchJobs: "批处理任务",
       runJob: "执行任务",
       lastBatchResult: "最近一次任务结果",
+      runningJobs: "当前运行中任务",
+      noRunningJobs: "当前没有运行中的批处理任务。",
+      running: "运行中",
       noBatchRun: "当前会话还没有执行过批处理任务。",
       success: "成功",
       failed: "失败",
@@ -105,7 +108,8 @@ export const UI_TEXT = {
       platformUpdated: "平台设置已更新。",
       failedPlatformUpdated: "更新平台设置失败。",
       batchCompleted: "批处理任务已完成。",
-      batchFailed: "批处理任务失败。"
+      batchFailed: "批处理任务失败。",
+      batchStarted: "批处理任务已开始。"
     },
     trader: {
       signOut: "退出登录",
@@ -270,6 +274,9 @@ export const UI_TEXT = {
       batchJobs: "バッチジョブ",
       runJob: "ジョブ実行",
       lastBatchResult: "直近のジョブ結果",
+      runningJobs: "現在実行中のジョブ",
+      noRunningJobs: "現在実行中のバッチジョブはありません。",
+      running: "実行中",
       noBatchRun: "このセッションではまだバッチジョブを実行していません。",
       success: "成功",
       failed: "失敗",
@@ -291,7 +298,8 @@ export const UI_TEXT = {
       platformUpdated: "プラットフォーム設定を更新しました。",
       failedPlatformUpdated: "プラットフォーム設定の更新に失敗しました。",
       batchCompleted: "バッチジョブが完了しました。",
-      batchFailed: "バッチジョブが失敗しました。"
+      batchFailed: "バッチジョブが失敗しました。",
+      batchStarted: "バッチジョブを開始しました。"
     },
     trader: {
       signOut: "ログアウト",
@@ -455,6 +463,9 @@ export const UI_TEXT = {
       batchJobs: "Batch Jobs",
       runJob: "Run Job",
       lastBatchResult: "Last Batch Result",
+      runningJobs: "Running Jobs",
+      noRunningJobs: "No batch jobs are currently running.",
+      running: "Running",
       noBatchRun: "No batch job has been run in this session.",
       success: "Success",
       failed: "Failed",
@@ -476,7 +487,8 @@ export const UI_TEXT = {
       platformUpdated: "Platform settings updated.",
       failedPlatformUpdated: "Failed to update platform settings.",
       batchCompleted: "Batch job completed.",
-      batchFailed: "Batch job failed."
+      batchFailed: "Batch job failed.",
+      batchStarted: "Batch job started."
     },
     trader: {
       signOut: "Logout",

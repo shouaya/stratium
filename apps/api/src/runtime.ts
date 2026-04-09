@@ -1,7 +1,8 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth";
-import { BatchJobRunner, type BatchJobDefinition, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner";
+import { BatchJobStateFeed } from "./batch-job-state";
+import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner";
 import { loadApiBootstrapState } from "./bootstrap";
 import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime";
 import {
@@ -16,6 +17,8 @@ import { WebSocketHub } from "./websocket-hub";
 export type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime";
 
 export class ApiRuntime {
+  private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
+
   private readonly repository = new TradingRepository();
 
   private readonly webSocketHub = new WebSocketHub();
@@ -42,6 +45,9 @@ export class ApiRuntime {
   private readonly tradingRuntime: TradingRuntime;
   private readonly authRuntime: AuthRuntime;
   private readonly batchJobRunner = new BatchJobRunner();
+  private readonly batchJobStateFeed: BatchJobStateFeed;
+  private runningBatchJobs: BatchJobExecution[] = [];
+  private lastBatchJobExecution: BatchJobExecution | null = null;
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.symbolConfigState = {
@@ -75,6 +81,11 @@ export class ApiRuntime {
     });
 
     this.authRuntime = new AuthRuntime(this.repository);
+    this.batchJobStateFeed = new BatchJobStateFeed(() => {
+      this.runningBatchJobs = this.batchJobStateFeed.getRunningJobs();
+      this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
+      this.broadcast();
+    });
   }
 
   getEngineState() {
@@ -112,11 +123,15 @@ export class ApiRuntime {
   getStatePayload() {
     return createStatePayload({
       state: this.tradingRuntime.getEngineState(),
-      events: this.tradingRuntime.getEventStore(),
+      events: this.tradingRuntime.getRecentEventStore(ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
       simulator: this.marketRuntime.getMarketSimulatorState(),
       market: this.marketRuntime.getMarketData(),
       symbolConfig: this.symbolConfigState,
-      platform: this.platformSettings
+      platform: this.platformSettings,
+      batch: {
+        runningJobs: this.runningBatchJobs,
+        lastExecution: this.lastBatchJobExecution
+      }
     });
   }
 
@@ -124,8 +139,9 @@ export class ApiRuntime {
     return {
       latestTick: this.tradingRuntime.getEngineState().latestTick,
       simulator: this.marketRuntime.getMarketSimulatorState(),
-      events: this.tradingRuntime.getEventStore(),
-      platform: this.platformSettings
+      platform: this.platformSettings,
+      runningBatchJobs: this.runningBatchJobs,
+      lastBatchJobExecution: this.lastBatchJobExecution
     };
   }
 
@@ -136,13 +152,20 @@ export class ApiRuntime {
       this.tradingRuntime.getEventStore(),
       this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
-      this.platformSettings
+      this.platformSettings,
+      {
+        runningJobs: this.runningBatchJobs,
+        lastExecution: this.lastBatchJobExecution
+      }
     );
   }
 
   async bootstrap(): Promise<void> {
     await this.repository.connect();
     this.platformSettings = await this.authRuntime.bootstrap();
+    await this.batchJobStateFeed.connect();
+    this.runningBatchJobs = this.batchJobStateFeed.getRunningJobs();
+    this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
     const bootstrapState = await loadApiBootstrapState(this.repository, {
       sessionId: "session-1",
       configuredTradingSymbol: this.configuredTradingSymbol,
@@ -178,6 +201,7 @@ export class ApiRuntime {
   async shutdown(): Promise<void> {
     this.tradingRuntime.setBootstrapReady(false);
     await this.marketRuntime.shutdown();
+    await this.batchJobStateFeed.shutdown();
     await this.tradingRuntime.flushPersistence();
     await this.repository.close();
   }
@@ -187,10 +211,14 @@ export class ApiRuntime {
       socket,
       createSocketBootstrapPayload(
         this.tradingRuntime.getEngineState(),
-        this.tradingRuntime.getEventStore(),
+        this.tradingRuntime.getRecentEventStore(ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
         this.marketRuntime.getMarketSimulatorState(),
         this.marketRuntime.getMarketData(),
-        this.platformSettings
+        this.platformSettings,
+        {
+          runningJobs: this.runningBatchJobs,
+          lastExecution: this.lastBatchJobExecution
+        }
       )
     );
   }
@@ -241,6 +269,14 @@ export class ApiRuntime {
 
   async runBatchJob(jobId: BatchJobId, input: BatchJobRunInput = {}) {
     return this.batchJobRunner.run(jobId, input);
+  }
+
+  async listRunningBatchJobs(): Promise<BatchJobExecution[]> {
+    return this.batchJobRunner.listRunningJobs();
+  }
+
+  async getBatchJobExecution(executionId: string): Promise<BatchJobExecution> {
+    return this.batchJobRunner.getExecution(executionId);
   }
 
   removeSocket(socket: SocketLike): void {
@@ -309,7 +345,11 @@ export class ApiRuntime {
       this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
       this.symbolConfigState,
-      this.platformSettings
+      this.platformSettings,
+      {
+        runningJobs: this.runningBatchJobs,
+        lastExecution: this.lastBatchJobExecution
+      }
     );
   }
 

@@ -17,12 +17,32 @@ export interface BatchJobRunInput {
 }
 
 export interface BatchJobRunResult {
-  ok: boolean;
+  executionId?: string;
+  jobId?: BatchJobId;
+  status?: "running" | "success" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  ok?: boolean;
   command: string;
   args: string[];
   stdout: string;
   stderr: string;
   code: number;
+  message?: string;
+}
+
+export interface BatchJobExecution {
+  executionId: string;
+  jobId: BatchJobId;
+  status: "running" | "success" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  code?: number;
+  ok?: boolean;
   message?: string;
 }
 
@@ -79,8 +99,52 @@ export class BatchJobRunner {
 
     const payload = await response.json().catch(() => null) as BatchJobRunResult | { message?: string } | null;
 
-    if (!payload || !("ok" in payload)) {
+    if (!payload || (!("ok" in payload) && !("executionId" in payload))) {
       throw new Error(`Job runner returned an invalid response with HTTP ${response.status}.`);
+    }
+
+    return payload;
+  }
+
+  async listRunningJobs(): Promise<BatchJobExecution[]> {
+    if (!runnerEnabled) {
+      throw new Error("Batch job runner is disabled.");
+    }
+
+    const response = await fetch(`${runnerBaseUrl}/jobs/running`, {
+      headers: {
+        Authorization: `Bearer ${runnerToken}`
+      }
+    }).catch((error) => {
+      throw new Error(`Failed to reach job runner at ${runnerBaseUrl}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
+    const payload = await response.json().catch(() => null) as { jobs?: BatchJobExecution[] } | null;
+
+    if (!payload?.jobs) {
+      throw new Error(`Job runner returned an invalid running jobs response with HTTP ${response.status}.`);
+    }
+
+    return payload.jobs;
+  }
+
+  async getExecution(executionId: string): Promise<BatchJobExecution> {
+    if (!runnerEnabled) {
+      throw new Error("Batch job runner is disabled.");
+    }
+
+    const response = await fetch(`${runnerBaseUrl}/jobs/${encodeURIComponent(executionId)}`, {
+      headers: {
+        Authorization: `Bearer ${runnerToken}`
+      }
+    }).catch((error) => {
+      throw new Error(`Failed to reach job runner at ${runnerBaseUrl}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
+    const payload = await response.json().catch(() => null) as BatchJobExecution | null;
+
+    if (!payload?.executionId) {
+      throw new Error(`Job runner returned an invalid execution response with HTTP ${response.status}.`);
     }
 
     return payload;

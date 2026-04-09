@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } from "../auth-client";
@@ -38,7 +38,12 @@ type BatchJobDefinition = {
 };
 
 type BatchJobRunResult = {
-  ok: boolean;
+  executionId?: string;
+  jobId?: BatchJobDefinition["id"];
+  status?: "running" | "success" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  ok?: boolean;
   command?: string;
   args?: string[];
   stdout?: string;
@@ -47,10 +52,27 @@ type BatchJobRunResult = {
   message?: string;
 };
 
+type RunningBatchJob = {
+  executionId: string;
+  jobId: BatchJobDefinition["id"];
+  status: "running" | "success" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  command?: string;
+  args?: string[];
+  stdout?: string;
+  stderr?: string;
+  code?: number;
+  ok?: boolean;
+  message?: string;
+};
+
 type AdminState = {
   latestTick?: TickPayload;
   simulator?: MarketSimulatorState;
   platform?: PlatformSettings;
+  runningBatchJobs?: RunningBatchJob[];
+  lastBatchJobExecution?: BatchJobRunResult | null;
 };
 
 const fmt = (n?: number | null, d = 2) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -96,6 +118,7 @@ export function AdminConsole({
   const [users, setUsers] = useState<FrontendUser[]>([]);
   const [jobs, setJobs] = useState<BatchJobDefinition[]>([]);
   const [jobResult, setJobResult] = useState<BatchJobRunResult | null>(null);
+  const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
   const [simForm, setSimForm] = useState({ intervalMs: "1200", volatilityBps: "22", driftBps: "0", anchorPrice: "69830" });
   const [tickForm, setTickForm] = useState({ symbol: "BTC-USD", bid: "", ask: "", last: "", spread: "" });
   const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "", tradingAccountId: "paper-account-1" });
@@ -113,19 +136,22 @@ export function AdminConsole({
     date: new Date().toISOString().slice(0, 10),
     interval: "1m"
   });
+  const sectionLoadTokenRef = useRef(0);
   const ui = getUiText(locale);
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
 
   useEffect(() => {
-    void refresh();
-
     const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
     ws.addEventListener("message", (event) => {
       const payload = JSON.parse(event.data) as {
         state?: { latestTick?: TickPayload };
         simulator?: MarketSimulatorState;
         platform?: PlatformSettings;
+        batch?: {
+          runningJobs?: RunningBatchJob[];
+          lastExecution?: BatchJobRunResult | null;
+        };
       };
 
       if (!payload.state) {
@@ -141,10 +167,19 @@ export function AdminConsole({
       if (payload.platform) {
         setSettingsForm(payload.platform);
       }
+
+      if (payload.batch) {
+        setRunningJobs(payload.batch.runningJobs ?? []);
+        setJobResult(payload.batch.lastExecution ?? null);
+      }
     });
 
     return () => ws.close();
   }, [apiBaseUrl, authToken]);
+
+  useEffect(() => {
+    void refreshCurrentSection();
+  }, [currentSection, locale, authToken, apiBaseUrl]);
 
   useEffect(() => {
     if (!state.latestTick) {
@@ -160,30 +195,96 @@ export function AdminConsole({
     }));
   }, [state.latestTick?.tickTime]);
 
-  const refresh = async () => {
-    try {
-      const [stateResponse, usersResponse, settingsResponse, jobsResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/admin/state`, { headers: authHeaders(authToken, locale), cache: "no-store" }),
-        fetch(`${apiBaseUrl}/api/admin/users`, { headers: authHeaders(authToken, locale), cache: "no-store" }),
-        fetch(`${apiBaseUrl}/api/admin/platform-settings`, { headers: authHeaders(authToken, locale), cache: "no-store" }),
-        fetch(`${apiBaseUrl}/api/admin/batch-jobs`, { headers: authHeaders(authToken, locale), cache: "no-store" })
-      ]);
+  const fetchJson = async <T,>(path: string): Promise<T | null> => {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      headers: authHeaders(authToken, locale),
+      cache: "no-store"
+    });
 
-      if ([stateResponse, usersResponse, settingsResponse, jobsResponse].some((response) => response.status === 401)) {
-        setMessage(ui.admin.sessionExpired);
-        onLogout();
+    if (response.status === 401) {
+      setMessage(ui.admin.sessionExpired);
+      onLogout();
+      return null;
+    }
+
+    return response.json() as Promise<T>;
+  };
+
+  const loadAdminState = async () => {
+    const payload = await fetchJson<AdminState>("/api/admin/state");
+
+    if (!payload) {
+      return false;
+    }
+
+    setState(payload);
+    setRunningJobs(payload.runningBatchJobs ?? []);
+    setJobResult(payload.lastBatchJobExecution ?? null);
+    return true;
+  };
+
+  const loadUsers = async () => {
+    const payload = await fetchJson<{ users: FrontendUser[] }>("/api/admin/users");
+
+    if (!payload) {
+      return false;
+    }
+
+    setUsers(payload.users);
+    return true;
+  };
+
+  const loadPlatformSettings = async () => {
+    const payload = await fetchJson<PlatformSettings>("/api/admin/platform-settings");
+
+    if (!payload) {
+      return false;
+    }
+
+    setSettingsForm(payload);
+    return true;
+  };
+
+  const loadBatchJobs = async () => {
+    const payload = await fetchJson<{ jobs: BatchJobDefinition[] }>("/api/admin/batch-jobs");
+
+    if (!payload) {
+      return false;
+    }
+
+    setJobs(payload.jobs);
+    return true;
+  };
+
+  const refreshCurrentSection = async () => {
+    const loadToken = ++sectionLoadTokenRef.current;
+
+    try {
+      switch (currentSection) {
+        case "dashboard":
+          await Promise.all([loadAdminState(), loadUsers(), loadPlatformSettings()]);
+          break;
+        case "users":
+          await loadUsers();
+          break;
+        case "platform":
+          await loadPlatformSettings();
+          break;
+        case "market":
+          await loadAdminState();
+          break;
+        case "batch":
+          await Promise.all([loadAdminState(), loadBatchJobs()]);
+          break;
+        default:
+          await loadAdminState();
+          break;
+      }
+
+      if (sectionLoadTokenRef.current !== loadToken) {
         return;
       }
 
-      const statePayload = await stateResponse.json() as AdminState;
-      const usersPayload = await usersResponse.json() as { users: FrontendUser[] };
-      const settingsPayload = await settingsResponse.json() as PlatformSettings;
-      const jobsPayload = await jobsResponse.json() as { jobs: BatchJobDefinition[] };
-
-      setState(statePayload);
-      setUsers(usersPayload.users);
-      setSettingsForm(settingsPayload);
-      setJobs(jobsPayload.jobs);
       setMessage("");
     } catch {
       setMessage(ui.admin.failedLoadAdminData);
@@ -264,7 +365,7 @@ export function AdminConsole({
 
       setNewUserForm({ username: "", displayName: "", password: "", tradingAccountId: "paper-account-1" });
       setMessage(ui.admin.userCreated);
-      await refresh();
+      await loadUsers();
     } finally {
       setBusy(false);
     }
@@ -307,7 +408,7 @@ export function AdminConsole({
 
       setEditingUserId(null);
       setMessage(ui.admin.userUpdated);
-      await refresh();
+      await loadUsers();
     } finally {
       setBusy(false);
     }
@@ -348,7 +449,33 @@ export function AdminConsole({
       });
       const payload = await response.json().catch(() => ({})) as BatchJobRunResult;
       setJobResult(payload);
-      setMessage(response.ok && payload.ok ? ui.admin.batchCompleted : payload.message ?? ui.admin.batchFailed);
+
+      if (response.ok && payload.status === "running" && payload.executionId) {
+        const executionId = payload.executionId;
+
+        setRunningJobs((current) => [
+          ...current.filter((entry) => entry.executionId !== executionId),
+          {
+            executionId,
+            jobId: payload.jobId ?? jobId,
+            status: "running",
+            startedAt: payload.startedAt ?? new Date().toISOString(),
+            finishedAt: payload.finishedAt,
+            command: payload.command,
+            args: payload.args,
+            stdout: payload.stdout,
+            stderr: payload.stderr,
+            code: payload.code,
+            ok: payload.ok,
+            message: payload.message
+          }
+        ]);
+        setMessage(ui.admin.batchStarted);
+      } else if (response.ok) {
+        setMessage(payload.ok === false ? payload.message ?? ui.admin.batchFailed : ui.admin.batchCompleted);
+      } else {
+        setMessage(payload.message ?? ui.admin.batchFailed);
+      }
     } finally {
       setBusy(false);
     }
@@ -528,10 +655,32 @@ export function AdminConsole({
       </section>
 
       <section style={panel}>
+        <div style={panelTitle}>{ui.admin.runningJobs}</div>
+        {runningJobs.length === 0 ? (
+          <div style={{ color: "#7e97a5" }}>{ui.admin.noRunningJobs}</div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {runningJobs.map((job) => (
+              <div key={job.executionId} style={jobCard}>
+                <div>
+                  <strong>{jobs.find((entry) => entry.id === job.jobId)?.label ?? job.jobId}</strong>
+                  <div style={{ marginTop: 6, color: "#8ba1ad", fontSize: 13 }}>{job.executionId}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ color: "#facc15", fontWeight: 700 }}>{ui.admin.running}</div>
+                  <div style={{ marginTop: 6, color: "#8ba1ad", fontSize: 12 }}>{stamp(job.startedAt)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section style={panel}>
         <div style={panelTitle}>{ui.admin.lastBatchResult}</div>
         {jobResult ? (
           <div style={{ display: "grid", gap: 10 }}>
-            <StatusRow label={ui.admin.status} value={jobResult.ok ? ui.admin.success : ui.admin.failed} />
+            <StatusRow label={ui.admin.status} value={jobResult.status === "running" ? ui.admin.running : jobResult.ok ? ui.admin.success : ui.admin.failed} />
             <StatusRow label={ui.admin.command} value={jobResult.command ?? "-"} />
             <StatusRow label={ui.admin.args} value={jobResult.args?.join(" ") ?? "-"} />
             <pre style={consoleBlock}>{jobResult.stdout || ui.admin.noStdout}</pre>
@@ -576,7 +725,7 @@ export function AdminConsole({
                 {APP_LOCALES.map((entry) => <option key={entry} value={entry}>{LOCALE_LABELS[entry]}</option>)}
               </select>
             </label>
-            <button onClick={() => void refresh()} style={ghostButton}>{ui.common.refresh}</button>
+            <button onClick={() => void refreshCurrentSection()} style={ghostButton}>{ui.common.refresh}</button>
             <button onClick={onLogout} style={ghostButton}>{ui.common.logout}</button>
           </div>
         </div>

@@ -1,4 +1,15 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: stratium-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "6379:6379"
+
   db:
     image: postgres:16-alpine
     container_name: stratium-db
@@ -32,11 +43,12 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "pnpm exec prisma generate && pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
+    command: sh -lc "pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/stratium?schema=public}
-      JOB_RUNNER_BASE_URL: ${JOB_RUNNER_BASE_URL:-http://host.docker.internal:4300}
+      JOB_RUNNER_BASE_URL: ${JOB_RUNNER_BASE_URL:-http://job-runner:4300}
       JOB_RUNNER_TOKEN: ${JOB_RUNNER_TOKEN:-stratium-local-runner}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       PORT: 4000
     ports:
       - "4000:4000"
@@ -49,6 +61,46 @@ services:
       - trading-core-node_modules:/workspace/packages/trading-core/node_modules
     depends_on:
       - db
+      - job-runner
+      - redis
+
+  job-runner:
+    build:
+      context: .
+      dockerfile: apps/job-runner/Dockerfile
+    container_name: stratium-job-runner
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    working_dir: /workspace
+    command: sh -lc "pnpm install --frozen-lockfile && pnpm --filter @stratium/job-runner dev"
+    environment:
+      JOB_RUNNER_PORT: 4300
+      JOB_RUNNER_HOST: 0.0.0.0
+      JOB_RUNNER_TOKEN: ${JOB_RUNNER_TOKEN:-stratium-local-runner}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JOB_RUNNER_COMPOSE_COMMAND: docker
+      JOB_RUNNER_COMPOSE_ARGS: compose
+      JOB_RUNNER_WORKDIR: /workspace
+      JOB_RUNNER_BATCH_ENV_FILE: .env
+      JOB_RUNNER_BATCH_COMPOSE_FILE: docker-compose.batch.yml
+      JOB_RUNNER_MAIN_COMPOSE_FILE: docker-compose.yml
+    ports:
+      - "4300:4300"
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+      - api-node_modules:/workspace/node_modules
+      - api-app-node_modules:/workspace/apps/api/node_modules
+      - web-app-node_modules:/workspace/apps/web/node_modules
+      - shared-node_modules:/workspace/packages/shared/node_modules
+      - trading-core-node_modules:/workspace/packages/trading-core/node_modules
+      - batch-app-node_modules:/workspace/apps/batch/node_modules
+      - job-runner-app-node_modules:/workspace/apps/job-runner/node_modules
+    depends_on:
+      - redis
 
   web:
     build:
@@ -61,7 +113,7 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "rm -rf apps/web/.next-dev && pnpm --filter @stratium/web dev"
+    command: sh -lc "pnpm install --frozen-lockfile && rm -rf apps/web/.next-dev && pnpm --filter @stratium/web dev"
     environment:
       NEXT_DIST_DIR: .next-dev
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
@@ -96,5 +148,7 @@ volumes:
   web-node_modules:
   api-app-node_modules:
   web-app-node_modules:
+  batch-app-node_modules:
+  job-runner-app-node_modules:
   shared-node_modules:
   trading-core-node_modules:

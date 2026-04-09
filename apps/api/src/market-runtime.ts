@@ -51,6 +51,10 @@ const DEFAULT_MARKET_SIMULATOR_STATE: MarketSimulatorState = {
   tickCount: 0
 };
 
+const DEFAULT_MARKET_FLUSH_INTERVAL_MS = Number(process.env.MARKET_PERSIST_INTERVAL_MS ?? 60_000);
+const DEFAULT_LIVE_TRADE_LIMIT = Number(process.env.MARKET_LIVE_TRADE_LIMIT ?? 200);
+const DEFAULT_LIVE_CANDLE_LIMIT = Number(process.env.MARKET_LIVE_CANDLE_LIMIT ?? 180);
+
 const resolveBootstrapAnchorPrice = (symbol: string, latestPrice: number | undefined): number => {
   if (latestPrice && latestPrice > 0) {
     if (symbol === "BTC-USD" && latestPrice < 1000) {
@@ -95,6 +99,8 @@ export class MarketRuntime {
 
   private marketSimulatorTimer: NodeJS.Timeout | undefined;
 
+  private marketFlushTimer: NodeJS.Timeout | undefined;
+
   private marketSimulatorRunning = false;
 
   private marketData: HyperliquidMarketSnapshot = {
@@ -111,7 +117,7 @@ export class MarketRuntime {
 
   private marketTickInFlight = false;
 
-  private lastPersistedMarketSignature = "";
+  private lastFlushedClosedCandleOpenTime = 0;
 
   private readonly hyperliquidClient: HyperliquidMarketClient;
 
@@ -165,6 +171,9 @@ export class MarketRuntime {
   setBootstrapState(symbol: string, latestPrice: number | undefined, marketData: HyperliquidMarketSnapshot | null) {
     if (marketData) {
       this.marketData = marketData;
+      this.lastFlushedClosedCandleOpenTime = marketData.candles
+        .filter((candle) => candle.interval === this.options.hyperliquidCandleInterval && candle.closeTime <= Date.now())
+        .reduce((maxOpenTime, candle) => Math.max(maxOpenTime, candle.openTime), 0);
     }
 
     const bootPrice = resolveBootstrapAnchorPrice(symbol, latestPrice);
@@ -183,6 +192,7 @@ export class MarketRuntime {
     }
 
     if (this.options.marketSource === "hyperliquid") {
+      this.startMarketFlushTimer();
       this.hyperliquidClient.connect();
     } else {
       this.startMarketSimulator();
@@ -191,6 +201,8 @@ export class MarketRuntime {
 
   async shutdown(): Promise<void> {
     this.stopMarketSimulator();
+    this.stopMarketFlushTimer();
+    await this.flushClosedMinuteCandles();
     this.hyperliquidClient.close();
   }
 
@@ -320,13 +332,13 @@ export class MarketRuntime {
         (trade) => trade.id
       )
         .sort((left, right) => right.time - left.time)
-        .slice(0, 200);
+        .slice(0, DEFAULT_LIVE_TRADE_LIMIT);
       const mergedCandles = mergeByKey(
         [...this.marketData.candles, ...snapshot.candles],
         (candle) => candle.id
       )
         .sort((left, right) => left.openTime - right.openTime)
-        .slice(-500);
+        .slice(-DEFAULT_LIVE_CANDLE_LIMIT);
 
       this.marketData = {
         source: "hyperliquid",
@@ -346,23 +358,52 @@ export class MarketRuntime {
       this.marketData = snapshot;
     }
 
-    const marketSignature = JSON.stringify({
-      bestBid: this.marketData.bestBid,
-      bestAsk: this.marketData.bestAsk,
-      bookUpdatedAt: this.marketData.book.updatedAt,
-      topTradeId: this.marketData.trades[0]?.id,
-      latestCandleId: this.marketData.candles[this.marketData.candles.length - 1]?.id,
-      assetCtxAt: this.marketData.assetCtx?.capturedAt
-    });
+    this.options.onBroadcast();
+  }
 
-    if (this.marketData.source === "hyperliquid" && marketSignature !== this.lastPersistedMarketSignature) {
-      this.lastPersistedMarketSignature = marketSignature;
-      void this.options.repository.persistMarketSnapshot(this.marketData).catch((error: unknown) => {
-        this.options.logger.error({ error }, "Failed to persist Hyperliquid market snapshot");
-      });
+  private startMarketFlushTimer(): void {
+    if (this.marketFlushTimer) {
+      clearInterval(this.marketFlushTimer);
     }
 
-    this.options.onBroadcast();
+    this.marketFlushTimer = setInterval(() => {
+      void this.flushClosedMinuteCandles();
+    }, DEFAULT_MARKET_FLUSH_INTERVAL_MS);
+  }
+
+  private stopMarketFlushTimer(): void {
+    if (this.marketFlushTimer) {
+      clearInterval(this.marketFlushTimer);
+      this.marketFlushTimer = undefined;
+    }
+  }
+
+  private async flushClosedMinuteCandles(): Promise<void> {
+    if (this.marketData.source !== "hyperliquid") {
+      return;
+    }
+
+    const now = Date.now();
+    const candlesToPersist = this.marketData.candles.filter((candle) =>
+      candle.interval === this.options.hyperliquidCandleInterval
+      && candle.closeTime <= now
+      && candle.openTime > this.lastFlushedClosedCandleOpenTime
+    );
+
+    if (candlesToPersist.length === 0) {
+      return;
+    }
+
+    await this.options.repository.persistClosedMinuteCandles(candlesToPersist, this.marketData.source)
+      .then(() => {
+        this.lastFlushedClosedCandleOpenTime = candlesToPersist.reduce(
+          (maxOpenTime, candle) => Math.max(maxOpenTime, candle.openTime),
+          this.lastFlushedClosedCandleOpenTime
+        );
+      })
+      .catch((error: unknown) => {
+        this.options.logger.error({ error }, "Failed to persist closed Hyperliquid candles");
+      });
   }
 
   private buildSyntheticTick(latestTick?: MarketTick): MarketTick {

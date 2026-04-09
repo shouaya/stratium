@@ -159,7 +159,7 @@ describe("TradingRepository", () => {
     expect(await repository.loadSymbolConfigMeta("ETH-USD")).toBeNull();
   });
 
-  it("updates leverage and persists hyperliquid snapshots", async () => {
+  it("updates leverage and persists closed 1m candles only", async () => {
     await repository.updateSymbolLeverage("BTC-USD", 4);
     expect(prismaMock.symbolConfig.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { symbol: "BTC-USD" }
@@ -174,6 +174,42 @@ describe("TradingRepository", () => {
       candles: []
     });
     expect(prismaMock.marketBookSnapshot.upsert).not.toHaveBeenCalled();
+
+    await repository.persistClosedMinuteCandles([
+      {
+        id: "candle-1",
+        coin: "BTC",
+        interval: "1m",
+        openTime: 1000,
+        closeTime: 2000,
+        open: 1,
+        high: 2,
+        low: 0.5,
+        close: 1.5,
+        volume: 100,
+        tradeCount: 3
+      },
+      {
+        id: "candle-2",
+        coin: "BTC",
+        interval: "5m",
+        openTime: 1000,
+        closeTime: 2000,
+        open: 1,
+        high: 2,
+        low: 0.5,
+        close: 1.5,
+        volume: 100,
+        tradeCount: 3
+      }
+    ]);
+
+    expect(prismaMock.marketCandle.upsert).toHaveBeenCalledTimes(1);
+    expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalledTimes(1);
+    expect(prismaMock.marketBookSnapshot.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.marketBookLevel.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.marketTrade.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.marketAssetContext.create).not.toHaveBeenCalled();
 
     await repository.persistMarketSnapshot({
       source: "hyperliquid",
@@ -211,13 +247,8 @@ describe("TradingRepository", () => {
         capturedAt: 1000
       }
     });
-
-    expect(prismaMock.marketBookSnapshot.upsert).toHaveBeenCalled();
-    expect(prismaMock.marketBookLevel.upsert).toHaveBeenCalledTimes(2);
-    expect(prismaMock.marketTrade.upsert).toHaveBeenCalled();
-    expect(prismaMock.marketCandle.upsert).toHaveBeenCalled();
-    expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalled();
-    expect(prismaMock.marketAssetContext.create).toHaveBeenCalled();
+    expect(prismaMock.marketCandle.upsert).toHaveBeenCalledTimes(2);
+    expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalledTimes(2);
   });
 
   it("loads recent market snapshots and volume records", async () => {
