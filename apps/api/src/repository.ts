@@ -10,6 +10,8 @@ import type {
 } from "./hyperliquid-market";
 
 const prisma = new PrismaClient();
+const RECENT_MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;
+const RECENT_MARKET_CANDLE_LIMIT = 1_440;
 
 const toNumber = (value: { toString(): string } | number): number => Number(value.toString());
 const toJson = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
@@ -403,6 +405,7 @@ export class TradingRepository {
   }
 
   async loadRecentMarketSnapshot(coin: string, interval = "1m"): Promise<HyperliquidMarketSnapshot | null> {
+    const candleWindowStart = new Date(Date.now() - RECENT_MARKET_WINDOW_MS);
     const [bookSnapshot, trades, candles, assetCtx] = await Promise.all([
       prisma.marketBookSnapshot.findFirst({
         where: { coin, source: "hyperliquid" },
@@ -414,9 +417,16 @@ export class TradingRepository {
         take: 80
       }),
       prisma.marketCandle.findMany({
-        where: { coin, interval, source: "hyperliquid" },
+        where: {
+          coin,
+          interval,
+          source: "hyperliquid",
+          openTime: {
+            gte: candleWindowStart
+          }
+        },
         orderBy: { openTime: "asc" },
-        take: 500
+        take: RECENT_MARKET_CANDLE_LIMIT
       }),
       prisma.marketAssetContext.findFirst({
         where: { coin, source: "hyperliquid" },

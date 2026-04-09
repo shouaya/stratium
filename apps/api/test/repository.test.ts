@@ -255,6 +255,8 @@ describe("TradingRepository", () => {
   });
 
   it("loads recent market snapshots and volume records", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:00:00.000Z"));
     prismaMock.marketBookSnapshot.findFirst.mockResolvedValue({
       id: "snapshot-1",
       bestBid: 70000,
@@ -355,6 +357,14 @@ describe("TradingRepository", () => {
       volume: 100,
       tradeCount: 3
     }]);
+    expect(prismaMock.marketCandle.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        openTime: {
+          gte: new Date("2026-04-08T12:00:00.000Z")
+        }
+      }),
+      take: 1440
+    }));
   });
 
   it("maps optional market snapshot fields to undefined and clamps volume query limits", async () => {
