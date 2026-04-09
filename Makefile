@@ -4,7 +4,10 @@ COMPOSE_PROD ?= $(COMPOSE) -f docker-compose.prod.yml
 COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
 DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
-JOB_RUNNER_CLIENT ?= node scripts/job-runner-request.mjs
+JOB_RUNNER_CONTAINER ?= stratium-job-runner
+JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
+JOB_RUNNER_TOKEN ?= stratium-local-runner
+JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
 MIGRATION_NAME ?= schema-update
 
 .PHONY: help install dev lint test build check prod-esm-check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
