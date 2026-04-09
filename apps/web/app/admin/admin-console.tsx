@@ -531,10 +531,10 @@ export function AdminConsole({
         <div style={panelTitle}>{ui.admin.lastBatchResult}</div>
         {jobResult ? (
           <div style={{ display: "grid", gap: 10 }}>
-            <StatusRow label={ui.admin.status} value={jobResult.ok ? ui.common.active : ui.common.disabled} />
+            <StatusRow label={ui.admin.status} value={jobResult.ok ? ui.admin.success : ui.admin.failed} />
             <StatusRow label={ui.admin.command} value={jobResult.command ?? "-"} />
             <StatusRow label={ui.admin.args} value={jobResult.args?.join(" ") ?? "-"} />
-            <pre style={consoleBlock}>{jobResult.stdout || "(no stdout)"}</pre>
+            <pre style={consoleBlock}>{jobResult.stdout || ui.admin.noStdout}</pre>
             {jobResult.stderr ? <pre style={consoleBlockError}>{jobResult.stderr}</pre> : null}
           </div>
         ) : (

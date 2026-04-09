@@ -1,0 +1,277 @@
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export type JobRunnerJobId =
+  | "db-migrate"
+  | "db-push"
+  | "db-seed"
+  | "db-bootstrap"
+  | "seed-symbol-configs"
+  | "batch-clear-kline"
+  | "batch-import-hl-day"
+  | "batch-refresh-hl-day";
+
+export interface JobRunInput {
+  coin?: string;
+  date?: string;
+  interval?: string;
+  migrationName?: string;
+}
+
+export interface JobRunResult {
+  ok: boolean;
+  command: string;
+  args: string[];
+  stdout: string;
+  stderr: string;
+  code: number;
+  message?: string;
+}
+
+export interface JobDefinition {
+  id: JobRunnerJobId;
+  label: string;
+  description: string;
+  adminVisible: boolean;
+}
+
+const DEFAULT_COIN = process.env.HYPERLIQUID_COIN ?? "BTC";
+const DEFAULT_INTERVAL = process.env.HYPERLIQUID_CANDLE_INTERVAL ?? "1m";
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const composeCommand = process.env.JOB_RUNNER_COMPOSE_COMMAND?.trim() || "docker-compose";
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const workdir = process.env.JOB_RUNNER_WORKDIR?.trim() || path.resolve(moduleDir, "../../..");
+const batchEnvFile = process.env.JOB_RUNNER_BATCH_ENV_FILE?.trim() || ".env";
+const batchComposeFile = process.env.JOB_RUNNER_BATCH_COMPOSE_FILE?.trim() || "docker-compose.batch.yml";
+const mainComposeFile = process.env.JOB_RUNNER_MAIN_COMPOSE_FILE?.trim() || "docker-compose.yml";
+
+const definitions: JobDefinition[] = [
+  {
+    id: "db-bootstrap",
+    label: "DB Bootstrap",
+    description: "Run Prisma push, seed default access, and seed symbol configs.",
+    adminVisible: true
+  },
+  {
+    id: "batch-clear-kline",
+    label: "Clear K-Line",
+    description: "Clear persisted Hyperliquid K-line history for one coin and interval.",
+    adminVisible: true
+  },
+  {
+    id: "batch-import-hl-day",
+    label: "Import Hyperliquid Day",
+    description: "Import one day of Hyperliquid 1-minute candles into PostgreSQL.",
+    adminVisible: true
+  },
+  {
+    id: "batch-refresh-hl-day",
+    label: "Refresh Hyperliquid Day",
+    description: "Stop API, clear one day of Hyperliquid candles, import the day again, then restart API.",
+    adminVisible: true
+  },
+  {
+    id: "db-push",
+    label: "DB Push",
+    description: "Push Prisma schema inside the batch container.",
+    adminVisible: false
+  },
+  {
+    id: "db-seed",
+    label: "DB Seed",
+    description: "Seed default app accounts and platform settings inside the batch container.",
+    adminVisible: false
+  },
+  {
+    id: "seed-symbol-configs",
+    label: "Seed Symbol Configs",
+    description: "Seed default symbol configs inside the batch container.",
+    adminVisible: false
+  },
+  {
+    id: "db-migrate",
+    label: "DB Migrate",
+    description: "Run Prisma migrate dev inside the batch container.",
+    adminVisible: false
+  }
+];
+
+const ensureSafeCoin = (value: string | undefined): string => {
+  const candidate = (value ?? DEFAULT_COIN).trim().toUpperCase();
+
+  if (!/^[A-Z0-9_-]{2,20}$/.test(candidate)) {
+    throw new Error("Batch coin must be an uppercase symbol like BTC.");
+  }
+
+  return candidate;
+};
+
+const ensureSafeInterval = (value: string | undefined): string => {
+  const candidate = (value ?? DEFAULT_INTERVAL).trim();
+
+  if (!/^[0-9]+[mhdw]$/.test(candidate)) {
+    throw new Error("Batch interval must look like 1m, 5m, 1h, or 1d.");
+  }
+
+  return candidate;
+};
+
+const ensureSafeDate = (value: string | undefined): string | undefined => {
+  const candidate = value?.trim();
+
+  if (!candidate) {
+    return undefined;
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+    throw new Error("Batch date must use YYYY-MM-DD.");
+  }
+
+  return candidate;
+};
+
+const ensureMigrationName = (value: string | undefined): string => {
+  const candidate = (value ?? "schema-update").trim();
+
+  if (!/^[a-zA-Z0-9_-]{2,64}$/.test(candidate)) {
+    throw new Error("Migration name must be 2-64 chars using letters, digits, dash, or underscore.");
+  }
+
+  return candidate;
+};
+
+const batchComposeBaseArgs = ["--env-file", batchEnvFile, "-f", batchComposeFile];
+
+const runCommand = async (command: string, args: string[]): Promise<JobRunResult> => {
+  try {
+    const result = await execFileAsync(command, args, {
+      cwd: workdir,
+      timeout: DEFAULT_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024 * 10
+    });
+
+    return {
+      ok: true,
+      command,
+      args,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
+      code: 0
+    };
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & {
+      stdout?: string;
+      stderr?: string;
+      code?: number | string;
+    };
+
+    return {
+      ok: false,
+      command,
+      args,
+      stdout: String(failure.stdout ?? "").trim(),
+      stderr: String(failure.stderr ?? failure.message ?? "").trim(),
+      code: typeof failure.code === "number" ? failure.code : 1,
+      message: failure.message
+    };
+  }
+};
+
+const combineResults = (steps: JobRunResult[]): JobRunResult => {
+  const firstFailure = steps.find((step) => !step.ok);
+  const lastStep = steps[steps.length - 1];
+
+  return {
+    ok: !firstFailure,
+    command: composeCommand,
+    args: [],
+    stdout: steps
+      .map((step, index) => step.stdout ? `# Step ${index + 1}: ${step.command} ${step.args.join(" ")}\n${step.stdout}` : "")
+      .filter(Boolean)
+      .join("\n\n"),
+    stderr: steps
+      .map((step, index) => step.stderr ? `# Step ${index + 1}: ${step.command} ${step.args.join(" ")}\n${step.stderr}` : "")
+      .filter(Boolean)
+      .join("\n\n"),
+    code: firstFailure?.code ?? lastStep?.code ?? 0,
+    message: firstFailure?.message
+  };
+};
+
+const runBatchShell = (script: string) =>
+  runCommand(composeCommand, [...batchComposeBaseArgs, "run", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
+
+const runBatchNode = (args: string[]) =>
+  runCommand(composeCommand, [...batchComposeBaseArgs, "run", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
+
+const runMainCompose = (args: string[]) =>
+  runCommand(composeCommand, ["-f", mainComposeFile, ...args]);
+
+export class JobExecutor {
+  listJobs(): JobDefinition[] {
+    return definitions.filter((job) => job.adminVisible);
+  }
+
+  async run(jobId: JobRunnerJobId, input: JobRunInput = {}): Promise<JobRunResult> {
+    switch (jobId) {
+      case "db-migrate": {
+        const migrationName = ensureMigrationName(input.migrationName);
+        return runBatchShell(`pnpm exec prisma generate && pnpm exec prisma migrate dev --name ${migrationName}`);
+      }
+      case "db-push":
+        return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db push");
+      case "db-seed":
+        return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db seed");
+      case "seed-symbol-configs":
+        return runBatchShell("node prisma/seed-symbol-configs.mjs");
+      case "db-bootstrap":
+        return combineResults([
+          await this.run("db-push"),
+          await this.run("db-seed"),
+          await this.run("seed-symbol-configs")
+        ]);
+      case "batch-clear-kline": {
+        const coin = ensureSafeCoin(input.coin);
+        const interval = ensureSafeInterval(input.interval);
+
+        return runBatchNode([
+          "dist/jobs/clear-market-history.js",
+          "--coin",
+          coin,
+          "--interval",
+          interval,
+          "--source",
+          "hyperliquid"
+        ]);
+      }
+      case "batch-import-hl-day": {
+        const coin = ensureSafeCoin(input.coin);
+        const date = ensureSafeDate(input.date);
+
+        return runBatchNode([
+          "dist/jobs/import-hyperliquid-day.js",
+          "--coin",
+          coin,
+          ...(date ? ["--date", date] : [])
+        ]);
+      }
+      case "batch-refresh-hl-day": {
+        const coin = ensureSafeCoin(input.coin);
+        const date = ensureSafeDate(input.date);
+
+        return combineResults([
+          await runMainCompose(["stop", "api"]),
+          await this.run("batch-clear-kline", { coin, interval: "1m" }),
+          await this.run("batch-import-hl-day", { coin, date }),
+          await runMainCompose(["up", "-d", "api"])
+        ]);
+      }
+      default:
+        throw new Error(`Unsupported job: ${String(jobId)}`);
+    }
+  }
+}

@@ -3,26 +3,30 @@ COMPOSE ?= docker-compose
 COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
 DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
+JOB_RUNNER_CLIENT ?= node scripts/job-runner-request.mjs
 MIGRATION_NAME ?= schema-update
 
-.PHONY: help install dev lint test build check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs \
+.PHONY: help install dev lint test build check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
 	config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
 DATE ?=
+INTERVAL ?= 1m
 
 help:
 	@echo Stratium make targets
 	@echo.
 	@echo Setup
 	@echo   make install              Install workspace dependencies
+	@echo   make job-runner-start     Start the host-side job runner service
+	@echo   make job-runner-build     Build the host-side job runner app
 	@echo   make prisma-generate      Run Prisma client generation
-	@echo   make db-migrate           Run Prisma migrate dev inside the batch container, pass MIGRATION_NAME="..."
-	@echo   make db-push              Push Prisma schema inside the batch container
-	@echo   make db-seed              Seed default app accounts and platform settings inside the batch container
-	@echo   make db-bootstrap         Run db push, db seed, and symbol config seed inside the batch container
-	@echo   make seed-symbol-configs  Seed default symbol configs inside the batch container
+	@echo   make db-migrate           Run Prisma migrate dev via the job runner, pass MIGRATION_NAME="..."
+	@echo   make db-push              Push Prisma schema via the job runner
+	@echo   make db-seed              Seed default app accounts and platform settings via the job runner
+	@echo   make db-bootstrap         Run db push, db seed, and symbol config seed via the job runner
+	@echo   make seed-symbol-configs  Seed default symbol configs via the job runner
 	@echo.
 	@echo Local development
 	@echo   make dev                  Run api + web in local dev mode
@@ -48,12 +52,18 @@ help:
 	@echo   make batch-build          Build the batch job image
 	@echo   make batch-run-collector  Run the collector as an explicit Docker job
 	@echo   make batch-import         Import batch data from S3
-	@echo   make batch-import-hl-day  Download and import today's Hyperliquid 1m candles, pass ARGS="..."
-	@echo   make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles into DB and restart api
-	@echo   make batch-clear-kline    Clear persisted K-line history, pass ARGS="..."
+	@echo   make batch-import-hl-day  Download and import one Hyperliquid day via the job runner
+	@echo   make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles via the job runner
+	@echo   make batch-clear-kline    Clear persisted K-line history via the job runner
 
 install:
 	$(PNPM) install
+
+job-runner-start:
+	$(PNPM) job-runner:dev
+
+job-runner-build:
+	$(PNPM) --filter @stratium/job-runner build
 
 dev:
 	$(PNPM) dev
@@ -73,18 +83,18 @@ prisma-generate:
 	$(PNPM) prisma:generate
 
 db-migrate:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma migrate dev --name $(MIGRATION_NAME)"
+	$(JOB_RUNNER_CLIENT) db-migrate migrationName=$(MIGRATION_NAME)
 
 db-push:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma db push"
+	$(JOB_RUNNER_CLIENT) db-push
 
 db-seed:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "pnpm exec prisma generate && pnpm exec prisma db seed"
+	$(JOB_RUNNER_CLIENT) db-seed
 
 db-bootstrap: db-push db-seed seed-symbol-configs
 
 seed-symbol-configs:
-	$(DOCKER_BATCH_ROOT_RUN) sh -lc "node prisma/seed-symbol-configs.mjs"
+	$(JOB_RUNNER_CLIENT) seed-symbol-configs
 
 up:
 	$(COMPOSE) up
@@ -123,19 +133,17 @@ batch-build:
 	$(COMPOSE_BATCH) build batch
 
 batch-import:
-	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/jobs/import-from-s3.js $(ARGS)
+	@echo batch-import is not yet exposed through the job runner.
+	@exit 1
 
 batch-import-hl-day:
-	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/jobs/import-hyperliquid-day.js $(ARGS)
+	$(JOB_RUNNER_CLIENT) batch-import-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)
 
 batch-refresh-hl-day:
-	$(COMPOSE) stop api
-	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/jobs/clear-market-history.js --coin $(COIN) --interval 1m --source hyperliquid
-	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/jobs/import-hyperliquid-day.js --coin $(COIN) $(if $(DATE),--date $(DATE),)
-	$(COMPOSE) up -d api
+	$(JOB_RUNNER_CLIENT) batch-refresh-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)
 
 batch-clear-kline:
-	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/jobs/clear-market-history.js $(ARGS)
+	$(JOB_RUNNER_CLIENT) batch-clear-kline coin=$(COIN) interval=$(INTERVAL)
 
 batch-run-collector:
 	$(DOCKER_BATCH_RUN) node --experimental-specifier-resolution=node dist/collector/run-collector.js

@@ -1,8 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
-
 export type BatchJobId =
   | "db-bootstrap"
   | "batch-clear-kline"
@@ -28,6 +23,7 @@ export interface BatchJobRunResult {
   stdout: string;
   stderr: string;
   code: number;
+  message?: string;
 }
 
 const JOB_DEFINITIONS: BatchJobDefinition[] = [
@@ -53,76 +49,9 @@ const JOB_DEFINITIONS: BatchJobDefinition[] = [
   }
 ];
 
-const DEFAULT_COIN = process.env.HYPERLIQUID_COIN ?? "BTC";
-const DEFAULT_INTERVAL = process.env.HYPERLIQUID_CANDLE_INTERVAL ?? "1m";
-const runnerCommand = process.env.BATCH_JOB_RUNNER_COMMAND?.trim() || "make";
-const runnerWorkdir = process.env.BATCH_JOB_RUNNER_WORKDIR?.trim() || process.cwd();
+const runnerBaseUrl = process.env.JOB_RUNNER_BASE_URL?.trim() || "http://host.docker.internal:4300";
+const runnerToken = process.env.JOB_RUNNER_TOKEN?.trim() || "stratium-local-runner";
 const runnerEnabled = (process.env.BATCH_JOB_RUNNER_ENABLED ?? "true").toLowerCase() !== "false";
-
-const ensureSafeCoin = (value: string | undefined): string => {
-  const candidate = (value ?? DEFAULT_COIN).trim().toUpperCase();
-
-  if (!/^[A-Z0-9_-]{2,20}$/.test(candidate)) {
-    throw new Error("Batch coin must be an uppercase symbol like BTC.");
-  }
-
-  return candidate;
-};
-
-const ensureSafeInterval = (value: string | undefined): string => {
-  const candidate = (value ?? DEFAULT_INTERVAL).trim();
-
-  if (!/^[0-9]+[mhdw]$/.test(candidate)) {
-    throw new Error("Batch interval must look like 1m, 5m, 1h, or 1d.");
-  }
-
-  return candidate;
-};
-
-const ensureSafeDate = (value: string | undefined): string | undefined => {
-  const candidate = value?.trim();
-
-  if (!candidate) {
-    return undefined;
-  }
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
-    throw new Error("Batch date must use YYYY-MM-DD.");
-  }
-
-  return candidate;
-};
-
-const buildCommand = (jobId: BatchJobId, input: BatchJobRunInput): { command: string; args: string[] } => {
-  const coin = ensureSafeCoin(input.coin);
-  const date = ensureSafeDate(input.date);
-  const interval = ensureSafeInterval(input.interval);
-
-  switch (jobId) {
-    case "db-bootstrap":
-      return {
-        command: runnerCommand,
-        args: ["db-bootstrap"]
-      };
-    case "batch-clear-kline":
-      return {
-        command: runnerCommand,
-        args: ["batch-clear-kline", `ARGS=--coin ${coin} --interval ${interval} --source hyperliquid`]
-      };
-    case "batch-import-hl-day":
-      return {
-        command: runnerCommand,
-        args: ["batch-import-hl-day", `ARGS=--coin ${coin}${date ? ` --date ${date}` : ""}`]
-      };
-    case "batch-refresh-hl-day":
-      return {
-        command: runnerCommand,
-        args: ["batch-refresh-hl-day", `COIN=${coin}`, ...(date ? [`DATE=${date}`] : [])]
-      };
-    default:
-      throw new Error(`Unsupported batch job: ${String(jobId)}`);
-  }
-};
 
 export class BatchJobRunner {
   listJobs(): BatchJobDefinition[] {
@@ -134,38 +63,26 @@ export class BatchJobRunner {
       throw new Error("Batch job runner is disabled.");
     }
 
-    const { command, args } = buildCommand(jobId, input);
+    const response = await fetch(`${runnerBaseUrl}/jobs/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${runnerToken}`
+      },
+      body: JSON.stringify({
+        jobId,
+        ...input
+      })
+    }).catch((error) => {
+      throw new Error(`Failed to reach job runner at ${runnerBaseUrl}: ${error instanceof Error ? error.message : String(error)}`);
+    });
 
-    try {
-      const result = await execFileAsync(command, args, {
-        cwd: runnerWorkdir,
-        timeout: 10 * 60 * 1000,
-        maxBuffer: 1024 * 1024
-      });
+    const payload = await response.json().catch(() => null) as BatchJobRunResult | { message?: string } | null;
 
-      return {
-        ok: true,
-        command,
-        args,
-        stdout: result.stdout.trim(),
-        stderr: result.stderr.trim(),
-        code: 0
-      };
-    } catch (error) {
-      const failure = error as NodeJS.ErrnoException & {
-        stdout?: string;
-        stderr?: string;
-        code?: number | string;
-      };
-
-      return {
-        ok: false,
-        command,
-        args,
-        stdout: String(failure.stdout ?? "").trim(),
-        stderr: String(failure.stderr ?? failure.message ?? "").trim(),
-        code: typeof failure.code === "number" ? failure.code : 1
-      };
+    if (!payload || !("ok" in payload)) {
+      throw new Error(`Job runner returned an invalid response with HTTP ${response.status}.`);
     }
+
+    return payload;
   }
 }

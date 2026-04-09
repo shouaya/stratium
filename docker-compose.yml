@@ -35,6 +35,8 @@ services:
     command: sh -lc "pnpm exec prisma generate && pnpm exec prisma db push --skip-generate && pnpm --filter @stratium/api dev"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/stratium?schema=public}
+      JOB_RUNNER_BASE_URL: ${JOB_RUNNER_BASE_URL:-http://host.docker.internal:4300}
+      JOB_RUNNER_TOKEN: ${JOB_RUNNER_TOKEN:-stratium-local-runner}
       PORT: 4000
     ports:
       - "4000:4000"

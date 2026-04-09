@@ -5,6 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @stratium/api --filter @stratium/web dev",
+    "job-runner:dev": "pnpm --filter @stratium/job-runner dev",
     "lint": "pnpm -r lint",
     "postinstall": "pnpm exec prisma generate",
     "prisma:generate": "pnpm exec prisma generate",
