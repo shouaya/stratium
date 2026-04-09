@@ -65,7 +65,7 @@ const JOB_DEFINITIONS: BatchJobDefinition[] = [
   {
     id: "batch-refresh-hl-day",
     label: "Refresh Hyperliquid Day",
-    description: "Stop API, clear one day of Hyperliquid candles, import the day again, then restart API."
+    description: "Stop API, refresh the latest 24 hours of Hyperliquid 1-minute candles, then restart API."
   }
 ];
 

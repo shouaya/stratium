@@ -76,7 +76,7 @@ const definitions: JobDefinition[] = [
   {
     id: "batch-refresh-hl-day",
     label: "Refresh Hyperliquid Day",
-    description: "Stop API, clear one day of Hyperliquid candles, import the day again, then restart API.",
+    description: "Stop API, refresh the latest 24 hours of Hyperliquid 1-minute candles, then restart API.",
     adminVisible: true
   },
   {
@@ -269,12 +269,36 @@ export class JobExecutor {
       }
       case "batch-refresh-hl-day": {
         const coin = ensureSafeCoin(input.coin);
-        const date = ensureSafeDate(input.date);
+        const until = new Date();
+        const since = new Date(until.getTime() - (24 * 60 * 60 * 1000));
+        const interval = "1m";
 
         return combineResults([
           await runDocker(["stop", apiContainerName]),
-          await this.run("batch-clear-kline", { coin, interval: "1m" }),
-          await this.run("batch-import-hl-day", { coin, date }),
+          await runBatchNode([
+            "dist/jobs/clear-market-history.js",
+            "--coin",
+            coin,
+            "--interval",
+            interval,
+            "--source",
+            "hyperliquid",
+            "--after",
+            since.toISOString(),
+            "--before",
+            until.toISOString()
+          ]),
+          await runBatchNode([
+            "dist/jobs/import-hyperliquid-day.js",
+            "--coin",
+            coin,
+            "--interval",
+            interval,
+            "--since",
+            since.toISOString(),
+            "--until",
+            until.toISOString()
+          ]),
           await runDocker(["start", apiContainerName])
         ]);
       }

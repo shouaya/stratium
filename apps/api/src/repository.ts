@@ -17,6 +17,12 @@ const toJson = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJ
 const isFillEvent = (eventType: string): boolean =>
   eventType === "OrderFilled" || eventType === "OrderPartiallyFilled";
 
+const positionRowId = (accountId: string, symbol: string): string => `${accountId}:${symbol}`;
+const simulationEventRowId = (sessionId: string, eventId: string): string => `${sessionId}:${eventId}`;
+const orderRowId = (accountId: string, orderId: string): string => `${accountId}:${orderId}`;
+const fillRowId = (accountId: string, fillId: string): string => `${accountId}:${fillId}`;
+const marketTickRowId = (symbol: string, tickTime: string): string => `${symbol}:${tickTime}`;
+
 type AuthSeedInput = {
   username: string;
   passwordHash: string;
@@ -45,7 +51,7 @@ export class TradingRepository {
         passwordHash: input.frontend.passwordHash,
         role: "frontend",
         displayName: input.frontend.displayName,
-        tradingAccountId: input.frontend.tradingAccountId ?? "paper-account-1",
+        tradingAccountId: input.frontend.tradingAccountId ?? input.frontend.username,
         isActive: true
       }
     });
@@ -532,7 +538,7 @@ export class TradingRepository {
             occurredAt: new Date(event.occurredAt)
           },
           create: {
-            id: event.eventId,
+            id: simulationEventRowId(event.simulationSessionId, event.eventId),
             sequence: event.sequence,
             simulationSessionId: event.simulationSessionId,
             accountId: event.accountId,
@@ -549,9 +555,21 @@ export class TradingRepository {
         const payload = event.payload as MarketTick;
 
         operations.push(
-          prisma.marketTick.create({
-            data: {
-              id: event.eventId,
+          prisma.marketTick.upsert({
+            where: {
+              id: marketTickRowId(event.symbol, payload.tickTime)
+            },
+            update: {
+              symbol: event.symbol,
+              bid: payload.bid,
+              ask: payload.ask,
+              last: payload.last,
+              spread: payload.spread,
+              volatilityTag: payload.volatilityTag,
+              tickTime: new Date(payload.tickTime)
+            },
+            create: {
+              id: marketTickRowId(event.symbol, payload.tickTime),
               symbol: event.symbol,
               bid: payload.bid,
               ask: payload.ask,
@@ -570,7 +588,7 @@ export class TradingRepository {
         operations.push(
           prisma.fill.upsert({
             where: {
-              id: payload.fillId
+              id: fillRowId(event.accountId, payload.fillId)
             },
             update: {
               price: payload.fillPrice,
@@ -579,7 +597,7 @@ export class TradingRepository {
               fee: payload.fee
             },
             create: {
-              id: payload.fillId,
+              id: fillRowId(event.accountId, payload.fillId),
               orderId: payload.orderId,
               accountId: event.accountId,
               symbol: event.symbol,
@@ -625,7 +643,7 @@ export class TradingRepository {
     operations.push(
       prisma.position.upsert({
         where: {
-          id: "position_1"
+          id: positionRowId(state.account.accountId, state.position.symbol)
         },
         update: {
           accountId: state.account.accountId,
@@ -641,7 +659,7 @@ export class TradingRepository {
           liquidationPrice: state.position.liquidationPrice
         },
         create: {
-          id: "position_1",
+          id: positionRowId(state.account.accountId, state.position.symbol),
           accountId: state.account.accountId,
           symbol: state.position.symbol,
           side: state.position.side,
@@ -661,11 +679,11 @@ export class TradingRepository {
       operations.push(
         prisma.order.upsert({
           where: {
-            id: order.id
+            id: orderRowId(order.accountId, order.id)
           },
           update: this.mapOrder(order),
           create: {
-            id: order.id,
+            id: orderRowId(order.accountId, order.id),
             ...this.mapOrder(order)
           }
         })
@@ -681,7 +699,7 @@ export class TradingRepository {
   }> {
     const [account, position] = await Promise.all([
       prisma.account.findUnique({ where: { id: accountId } }),
-      prisma.position.findUnique({ where: { id: "position_1" } })
+      prisma.position.findFirst({ where: { accountId }, orderBy: { updatedAt: "desc" } })
     ]);
 
     return {

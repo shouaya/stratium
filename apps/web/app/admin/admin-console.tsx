@@ -121,9 +121,9 @@ export function AdminConsole({
   const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
   const [simForm, setSimForm] = useState({ intervalMs: "1200", volatilityBps: "22", driftBps: "0", anchorPrice: "69830" });
   const [tickForm, setTickForm] = useState({ symbol: "BTC-USD", bid: "", ask: "", last: "", spread: "" });
-  const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "", tradingAccountId: "paper-account-1" });
+  const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "" });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [editUserForm, setEditUserForm] = useState({ displayName: "", password: "", tradingAccountId: "paper-account-1", isActive: true });
+  const [editUserForm, setEditUserForm] = useState({ displayName: "", password: "", isActive: true });
   const [settingsForm, setSettingsForm] = useState<PlatformSettings>({
     platformName: "Stratium Demo",
     platformAnnouncement: "",
@@ -137,32 +137,38 @@ export function AdminConsole({
     interval: "1m"
   });
   const sectionLoadTokenRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ui = getUiText(locale);
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
 
   useEffect(() => {
-    const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
-    ws.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as {
-        state?: { latestTick?: TickPayload };
-        simulator?: MarketSimulatorState;
-        platform?: PlatformSettings;
-        batch?: {
-          runningJobs?: RunningBatchJob[];
-          lastExecution?: BatchJobRunResult | null;
-        };
+    let active = true;
+    let socket: WebSocket | null = null;
+    let hasConnected = false;
+
+    const handlePayload = (payload: {
+      state?: { latestTick?: TickPayload };
+      simulator?: MarketSimulatorState;
+      platform?: PlatformSettings;
+      batch?: {
+        runningJobs?: RunningBatchJob[];
+        lastExecution?: BatchJobRunResult | null;
       };
-
-      if (!payload.state) {
-        return;
+    }) => {
+      if (payload.state) {
+        setState((current) => ({
+          latestTick: payload.state?.latestTick ?? current.latestTick,
+          simulator: payload.simulator ?? current.simulator,
+          platform: payload.platform ?? current.platform
+        }));
+      } else if (payload.simulator || payload.platform) {
+        setState((current) => ({
+          ...current,
+          simulator: payload.simulator ?? current.simulator,
+          platform: payload.platform ?? current.platform
+        }));
       }
-
-      setState((current) => ({
-        latestTick: payload.state?.latestTick ?? current.latestTick,
-        simulator: payload.simulator ?? current.simulator,
-        platform: payload.platform ?? current.platform
-      }));
 
       if (payload.platform) {
         setSettingsForm(payload.platform);
@@ -172,9 +178,50 @@ export function AdminConsole({
         setRunningJobs(payload.batch.runningJobs ?? []);
         setJobResult(payload.batch.lastExecution ?? null);
       }
-    });
+    };
 
-    return () => ws.close();
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimerRef.current) {
+        return;
+      }
+
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connect();
+      }, 1000);
+    };
+
+    const connect = () => {
+      if (!active) {
+        return;
+      }
+
+      socket = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
+      socket.addEventListener("open", () => {
+        if (hasConnected) {
+          void refreshCurrentSection();
+        }
+
+        hasConnected = true;
+      });
+      socket.addEventListener("message", (event) => {
+        handlePayload(JSON.parse(event.data) as Parameters<typeof handlePayload>[0]);
+      });
+
+      socket.addEventListener("close", scheduleReconnect);
+      socket.addEventListener("error", scheduleReconnect);
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      socket?.close();
+    };
   }, [apiBaseUrl, authToken]);
 
   useEffect(() => {
@@ -363,7 +410,7 @@ export function AdminConsole({
         return;
       }
 
-      setNewUserForm({ username: "", displayName: "", password: "", tradingAccountId: "paper-account-1" });
+      setNewUserForm({ username: "", displayName: "", password: "" });
       setMessage(ui.admin.userCreated);
       await loadUsers();
     } finally {
@@ -376,7 +423,6 @@ export function AdminConsole({
     setEditUserForm({
       displayName: user.displayName,
       password: "",
-      tradingAccountId: user.tradingAccountId ?? "paper-account-1",
       isActive: user.isActive
     });
   };
@@ -395,7 +441,6 @@ export function AdminConsole({
         body: JSON.stringify({
           displayName: editUserForm.displayName,
           password: editUserForm.password || undefined,
-          tradingAccountId: editUserForm.tradingAccountId,
           isActive: editUserForm.isActive
         })
       });
@@ -539,7 +584,6 @@ export function AdminConsole({
           <Field label={ui.login.username} value={newUserForm.username} onChange={(value) => setNewUserForm((current) => ({ ...current, username: value }))} />
           <Field label={ui.admin.displayName} value={newUserForm.displayName} onChange={(value) => setNewUserForm((current) => ({ ...current, displayName: value }))} />
           <Field label={ui.login.password} value={newUserForm.password} type="password" onChange={(value) => setNewUserForm((current) => ({ ...current, password: value }))} />
-          <Field label={ui.admin.tradingAccountId} value={newUserForm.tradingAccountId} onChange={(value) => setNewUserForm((current) => ({ ...current, tradingAccountId: value }))} />
           <button onClick={() => void createUser()} style={primaryButton} disabled={busy}>{ui.admin.issueUser}</button>
         </div>
       </section>
@@ -561,7 +605,6 @@ export function AdminConsole({
                 <div style={{ display: "grid", gap: 8 }}>
                   <Field label={ui.admin.displayName} value={editUserForm.displayName} onChange={(value) => setEditUserForm((current) => ({ ...current, displayName: value }))} />
                   <Field label={ui.admin.resetPassword} value={editUserForm.password} type="password" onChange={(value) => setEditUserForm((current) => ({ ...current, password: value }))} />
-                  <Field label={ui.admin.tradingAccountId} value={editUserForm.tradingAccountId} onChange={(value) => setEditUserForm((current) => ({ ...current, tradingAccountId: value }))} />
                   <Toggle label={ui.common.active} checked={editUserForm.isActive} onChange={(checked) => setEditUserForm((current) => ({ ...current, isActive: checked }))} />
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => void saveUser()} style={primaryButton}>{ui.common.save}</button>

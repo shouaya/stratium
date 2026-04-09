@@ -38,6 +38,17 @@ const DEFAULT_FRONTEND_PASSWORD = "demo123456";
 const DEFAULT_ADMIN_USERNAME = "admin";
 const DEFAULT_ADMIN_PASSWORD = "admin123456";
 
+const issueTradingAccountId = (username: string): string => {
+  const normalized = username
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+
+  return `paper-${normalized || randomUUID().slice(0, 8)}`;
+};
+
 const derivePasswordHash = (password: string, salt = randomBytes(16).toString("hex")): string => {
   const derived = scryptSync(password, salt, 64).toString("hex");
   return `${salt}:${derived}`;
@@ -88,6 +99,10 @@ export class AuthRuntime {
       throw new Error("Invalid credentials.");
     }
 
+    if (expectedRole === "frontend" && !user.tradingAccountId) {
+      throw new Error("Trading account is not assigned.");
+    }
+
     const session: AuthSession = {
       token: `${randomUUID()}-${randomBytes(16).toString("hex")}`,
       user: this.toProfile(user)
@@ -124,11 +139,12 @@ export class AuthRuntime {
     displayName: string;
     tradingAccountId?: string | null;
   }): Promise<FrontendUserView> {
+    const normalizedUsername = input.username.trim().toLowerCase();
     const user = await this.repository.createFrontendUser({
-      username: input.username.trim().toLowerCase(),
+      username: normalizedUsername,
       passwordHash: derivePasswordHash(input.password),
       displayName: input.displayName.trim(),
-      tradingAccountId: input.tradingAccountId?.trim() || "paper-account-1"
+      tradingAccountId: input.tradingAccountId?.trim() || issueTradingAccountId(normalizedUsername)
     });
 
     return { ...this.toProfile(user), role: "frontend" };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes } from "react";
 import type { AccountView, AnyEventEnvelope, OrderView, PositionView } from "@stratium/shared";
 import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
@@ -194,13 +194,14 @@ export function TradingDashboard({
   const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("balances");
   const [timeframe, setTimeframe] = useState<TimeframeId>("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  const tradingAccountId = viewer.tradingAccountId ?? "";
   const [orderForm, setOrderForm] = useState({
-    accountId: viewer.tradingAccountId ?? "paper-account-1",
     symbol: "BTC-USD",
     quantity: "1",
     limitPrice: "100"
   });
   const [leverageDraft, setLeverageDraft] = useState(10);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const priceDigits = useMemo(() => priceDigitsForSymbol(orderForm.symbol), [orderForm.symbol]);
   const contractCoin = useMemo(() => state.market?.coin ?? coinFromSymbol(orderForm.symbol), [orderForm.symbol, state.market?.coin]);
   const quantityDecimals = state.symbolConfig?.szDecimals ?? 4;
@@ -694,18 +695,22 @@ export function TradingDashboard({
   }, [orderForm.symbol, state.symbolConfig?.symbol]);
 
   useEffect(() => {
-    setOrderForm((current) => ({
-      ...current,
-      accountId: viewer.tradingAccountId ?? current.accountId
-    }));
-  }, [viewer.tradingAccountId]);
-
-  useEffect(() => {
     void refresh();
-    const ws = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
-    ws.addEventListener("message", (event) => {
-      const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"]; platform?: PlatformSettings };
-      if (payload.state) {
+    let active = true;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (!active) {
+        return;
+      }
+
+      socket = new WebSocket(`${apiBaseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authToken)}`);
+      socket.addEventListener("message", (event) => {
+        const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: MarketSimulatorState; market?: MarketState; symbolConfig?: State["symbolConfig"]; platform?: PlatformSettings };
+        if (!payload.state) {
+          return;
+        }
+
         const nextState = payload.state;
         setState((cur) => ({
           account: nextState.account ?? cur.account,
@@ -718,9 +723,33 @@ export function TradingDashboard({
           symbolConfig: payload.symbolConfig ?? cur.symbolConfig,
           platform: payload.platform ?? cur.platform
         }));
+      });
+
+      const scheduleReconnect = () => {
+        if (!active || reconnectTimerRef.current) {
+          return;
+        }
+
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          connect();
+        }, 1000);
+      };
+
+      socket.addEventListener("close", scheduleReconnect);
+      socket.addEventListener("error", scheduleReconnect);
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
-    });
-    return () => ws.close();
+      socket?.close();
+    };
   }, [apiBaseUrl, authToken]);
 
   const refresh = async () => {
@@ -742,7 +771,7 @@ export function TradingDashboard({
   };
 
   const submitOrder = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
+    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
     const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
     setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : ui.trader.orderRejected);
     if (response.ok) {
@@ -752,7 +781,7 @@ export function TradingDashboard({
   };
 
   const cancelOrder = async (orderId: string) => {
-    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
+    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, orderId }) });
     setMessage(response.ok ? `Order ${orderId} canceled.` : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
@@ -771,7 +800,7 @@ export function TradingDashboard({
       method: "POST",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({
-        accountId: orderForm.accountId,
+        accountId: tradingAccountId,
         symbol: state.position.symbol,
         side: closingSide,
         orderType: "market",

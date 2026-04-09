@@ -99,7 +99,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       return;
     }
 
-    return runtime.getStatePayload();
+    return runtime.getStatePayload(session.user.tradingAccountId as string);
   });
 
   app.get("/api/market-history", async (request, reply) => {
@@ -133,38 +133,43 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   });
 
   app.get("/api/account", async (request, reply) => {
-    if (!requireRole(request, reply, "frontend")) {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
       return;
     }
-    return runtime.getEngineState().account;
+    return runtime.getEngineState(session.user.tradingAccountId as string).account;
   });
   app.get("/api/orders", async (request, reply) => {
-    if (!requireRole(request, reply, "frontend")) {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
       return;
     }
-    return runtime.getEngineState().orders;
+    return runtime.getEngineState(session.user.tradingAccountId as string).orders;
   });
   app.get("/api/positions", async (request, reply) => {
-    if (!requireRole(request, reply, "frontend")) {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
       return;
     }
-    return runtime.getEngineState().position;
+    return runtime.getEngineState(session.user.tradingAccountId as string).position;
   });
   app.get("/api/events", async (request, reply) => {
-    if (!requireRole(request, reply, "frontend")) {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
       return;
     }
 
     return {
-      sessionId: runtime.getEngineState().simulationSessionId,
-      events: runtime.getEventStore()
+      sessionId: runtime.getEngineState(session.user.tradingAccountId as string).simulationSessionId,
+      events: runtime.getEventStore(session.user.tradingAccountId as string)
     };
   });
   app.get("/api/replay/:sessionId", async (request, reply) => {
-    if (!requireRole(request, reply, "frontend")) {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
       return;
     }
-    return runtime.getReplayPayload((request.params as { sessionId: string }).sessionId);
+    return runtime.getReplayPayload(session.user.tradingAccountId as string, (request.params as { sessionId: string }).sessionId);
   });
   app.get("/api/market-simulator", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
@@ -399,8 +404,8 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return reply.code(202).send({
       status: "updated",
       symbolConfig: runtime.getSymbolConfigState(),
-      account: runtime.getEngineState().account,
-      position: runtime.getEngineState().position
+      account: runtime.getEngineState(session.user.tradingAccountId as string).account,
+      position: runtime.getEngineState(session.user.tradingAccountId as string).position
     });
   });
 
@@ -495,7 +500,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const input = request.body as CreateOrderInput;
     const result = await runtime.submitOrder({
       ...input,
-      accountId: session.user.tradingAccountId ?? runtime.getEngineState().account.accountId
+      accountId: session.user.tradingAccountId as string
     });
 
     return reply.code(202).send(result);
@@ -510,7 +515,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const input = request.body as CancelOrderInput;
     const result = await runtime.cancelOrder({
       ...input,
-      accountId: session.user.tradingAccountId ?? runtime.getEngineState().account.accountId
+      accountId: session.user.tradingAccountId as string
     });
 
     return reply.code(202).send(result);
@@ -524,7 +529,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const params = request.params as { id: string };
     const input = request.body as Partial<CancelOrderInput>;
     const result = await runtime.cancelOrder({
-      accountId: session.user.tradingAccountId ?? input.accountId ?? runtime.getEngineState().account.accountId,
+      accountId: session.user.tradingAccountId as string,
       orderId: params.id,
       requestedAt: input.requestedAt
     });
@@ -539,7 +544,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
         socket.close();
         return;
       }
-      runtime.addSocket(socket);
+      runtime.addSocket(socket, session);
     });
   });
 };

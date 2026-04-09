@@ -6,6 +6,10 @@ const repositoryMocks = vi.hoisted(() => ({
   close: vi.fn(),
   ensureDefaultAccess: vi.fn(),
   getPlatformSettings: vi.fn(),
+  listFrontendUsers: vi.fn(),
+  createFrontendUser: vi.fn(),
+  updateFrontendUser: vi.fn(),
+  findUserByUsername: vi.fn(),
   loadSymbolConfig: vi.fn(),
   loadSymbolConfigMeta: vi.fn(),
   loadEvents: vi.fn(),
@@ -76,6 +80,10 @@ vi.mock("../src/repository", () => ({
     close = repositoryMocks.close;
     ensureDefaultAccess = repositoryMocks.ensureDefaultAccess;
     getPlatformSettings = repositoryMocks.getPlatformSettings;
+    listFrontendUsers = repositoryMocks.listFrontendUsers;
+    createFrontendUser = repositoryMocks.createFrontendUser;
+    updateFrontendUser = repositoryMocks.updateFrontendUser;
+    findUserByUsername = repositoryMocks.findUserByUsername;
     loadSymbolConfig = repositoryMocks.loadSymbolConfig;
     loadSymbolConfigMeta = repositoryMocks.loadSymbolConfigMeta;
     loadEvents = repositoryMocks.loadEvents;
@@ -114,6 +122,18 @@ const batchJobStateMocks = vi.hoisted(() => ({
   getRunningJobs: vi.fn(() => []),
   getLastExecution: vi.fn(() => null)
 }));
+
+const frontendSession = {
+  token: "frontend-token",
+  user: {
+    id: "frontend-user-1",
+    username: "demo",
+    role: "frontend" as const,
+    displayName: "Demo Trader",
+    tradingAccountId: "paper-account-1",
+    isActive: true
+  }
+};
 
 vi.mock("@stratium/trading-core", () => {
   class TradingEngine {
@@ -359,6 +379,33 @@ describe("ApiRuntime", () => {
       allowManualTicks: true,
       allowSimulatorControl: true
     });
+    repositoryMocks.listFrontendUsers.mockResolvedValue([{
+      id: "frontend-user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-account-1",
+      isActive: true
+    }]);
+    repositoryMocks.createFrontendUser.mockResolvedValue({
+      id: "frontend-user-2",
+      username: "demo-2",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo 2",
+      tradingAccountId: "paper-account-2",
+      isActive: true
+    });
+    repositoryMocks.updateFrontendUser.mockResolvedValue({
+      id: "frontend-user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-account-1",
+      isActive: true
+    });
     repositoryMocks.persistState.mockResolvedValue(undefined);
     repositoryMocks.updateSymbolLeverage.mockResolvedValue(undefined);
     repositoryMocks.loadRecentVolumeRecords.mockResolvedValue([{ id: "vol-1" }]);
@@ -469,7 +516,7 @@ describe("ApiRuntime", () => {
     };
 
     await runtime.bootstrap();
-    runtime.addSocket(socket);
+    runtime.addSocket(socket, frontendSession);
 
     const submitResult = await runtime.submitOrder({
       accountId: "paper-account-1",
@@ -882,7 +929,7 @@ describe("ApiRuntime", () => {
     };
 
     await runtime.bootstrap();
-    runtime.addSocket(socket);
+    runtime.addSocket(socket, frontendSession);
     runtime.removeSocket(socket);
     runtime.setMarketTickInFlight(true);
     runtime.setMarketSimulatorRunning(false);

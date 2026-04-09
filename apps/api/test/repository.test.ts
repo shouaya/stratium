@@ -37,7 +37,8 @@ const prismaMock = vi.hoisted(() => ({
     findFirst: vi.fn()
   },
   marketTick: {
-    create: vi.fn()
+    create: vi.fn(),
+    upsert: vi.fn()
   },
   fill: {
     upsert: vi.fn()
@@ -48,7 +49,8 @@ const prismaMock = vi.hoisted(() => ({
   },
   position: {
     upsert: vi.fn(),
-    findUnique: vi.fn()
+    findUnique: vi.fn(),
+    findFirst: vi.fn()
   },
   order: {
     upsert: vi.fn()
@@ -81,6 +83,7 @@ describe("TradingRepository", () => {
       }
     }
     prismaMock.marketTick.create.mockReturnValue(Promise.resolve({}));
+    prismaMock.marketTick.upsert.mockReturnValue(Promise.resolve({}));
   });
 
   it("connects and closes prisma", async () => {
@@ -507,7 +510,7 @@ describe("TradingRepository", () => {
     }, events);
 
     expect(prismaMock.simulationEvent.upsert).toHaveBeenCalledTimes(2);
-    expect(prismaMock.marketTick.create).toHaveBeenCalled();
+    expect(prismaMock.marketTick.upsert).toHaveBeenCalled();
     expect(prismaMock.fill.upsert).toHaveBeenCalled();
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
@@ -524,7 +527,7 @@ describe("TradingRepository", () => {
       unrealizedPnl: 80,
       riskRatio: 0.2
     });
-    prismaMock.position.findUnique.mockResolvedValue({
+    prismaMock.position.findFirst.mockResolvedValue({
       symbol: "BTC-USD",
       side: "long",
       quantity: 1,
@@ -566,7 +569,7 @@ describe("TradingRepository", () => {
 
   it("loads null account and null position snapshots", async () => {
     prismaMock.account.findUnique.mockResolvedValue(null);
-    prismaMock.position.findUnique.mockResolvedValue(null);
+    prismaMock.position.findFirst.mockResolvedValue(null);
 
     expect(await repository.loadSnapshot("paper-account-2")).toEqual({
       account: null,
@@ -639,7 +642,7 @@ describe("TradingRepository", () => {
     } satisfies AnyEventEnvelope]);
 
     expect(prismaMock.fill.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "fill-partial" }
+      where: { id: "paper-account-1:fill-partial" }
     }));
     expect(prismaMock.order.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({

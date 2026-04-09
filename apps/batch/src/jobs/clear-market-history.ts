@@ -5,6 +5,7 @@ interface CliOptions {
   coin?: string;
   interval?: string;
   source?: string;
+  after?: Date;
   before?: Date;
 }
 
@@ -72,6 +73,22 @@ const parseCliOptions = (argv: string[]): CliOptions => {
       continue;
     }
 
+    if (current === "--after") {
+      if (!next) {
+        throw new Error("--after requires an ISO datetime value");
+      }
+
+      const after = new Date(next);
+
+      if (Number.isNaN(after.getTime())) {
+        throw new Error("--after must be a valid ISO datetime");
+      }
+
+      options.after = after;
+      index += 1;
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${current}`);
   }
 
@@ -79,7 +96,7 @@ const parseCliOptions = (argv: string[]): CliOptions => {
 };
 
 const validateScope = (options: CliOptions) => {
-  if (!options.all && !options.coin && !options.interval && !options.source && !options.before) {
+  if (!options.all && !options.coin && !options.interval && !options.source && !options.before && !options.after) {
     throw new Error("Refusing to clear K-line history without filters. Use --all to clear everything.");
   }
 };
@@ -87,17 +104,29 @@ const validateScope = (options: CliOptions) => {
 const main = async () => {
   const options = parseCliOptions(process.argv.slice(2));
   validateScope(options);
+  const openTimeFilter = options.after || options.before
+    ? {
+      ...(options.after ? { gte: options.after } : {}),
+      ...(options.before ? { lt: options.before } : {})
+    }
+    : undefined;
+  const bucketStartFilter = options.after || options.before
+    ? {
+      ...(options.after ? { gte: options.after } : {}),
+      ...(options.before ? { lt: options.before } : {})
+    }
+    : undefined;
   const candleWhere = {
     ...(options.coin ? { coin: options.coin } : {}),
     ...(options.interval ? { interval: options.interval } : {}),
     ...(options.source ? { source: options.source } : {}),
-    ...(options.before ? { openTime: { lt: options.before } } : {})
+    ...(openTimeFilter ? { openTime: openTimeFilter } : {})
   };
   const volumeWhere = {
     ...(options.coin ? { coin: options.coin } : {}),
     ...(options.interval ? { interval: options.interval } : {}),
     ...(options.source ? { source: options.source } : {}),
-    ...(options.before ? { bucketStart: { lt: options.before } } : {})
+    ...(bucketStartFilter ? { bucketStart: bucketStartFilter } : {})
   };
 
   const prisma = await connectPrismaWithLocalhostFallback();
@@ -114,6 +143,7 @@ const main = async () => {
       coin: options.coin ?? null,
       interval: options.interval ?? null,
       source: options.source ?? null,
+      after: options.after?.toISOString() ?? null,
       before: options.before?.toISOString() ?? null,
       matchedCandles: candleCount,
       matchedVolumeRecords: volumeCount

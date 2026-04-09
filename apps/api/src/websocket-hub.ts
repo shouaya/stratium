@@ -11,14 +11,27 @@ interface BroadcastPayload {
   market: HyperliquidMarketSnapshot;
   symbolConfig?: SymbolConfigState;
   batch?: BatchJobPayload;
+  platform?: unknown;
+}
+
+type PayloadFactory = (events?: AnyEventEnvelope[]) => BroadcastPayload;
+
+interface SocketRegistration {
+  socket: SocketLike;
+  createPayload: PayloadFactory;
 }
 
 export class WebSocketHub {
-  private readonly sockets = new Set<SocketLike>();
+  private readonly sockets = new Map<SocketLike, SocketRegistration>();
 
-  addSocket(socket: SocketLike, payload: BroadcastPayload): void {
-    this.sockets.add(socket);
-    socket.send(JSON.stringify(payload));
+  addSocket(socket: SocketLike, createPayload: PayloadFactory): void {
+    this.sockets.set(socket, { socket, createPayload });
+    try {
+      socket.send(JSON.stringify(createPayload([])));
+    } catch {
+      this.removeSocket(socket);
+      return;
+    }
     socket.on?.("close", () => {
       this.removeSocket(socket);
     });
@@ -28,11 +41,13 @@ export class WebSocketHub {
     this.sockets.delete(socket);
   }
 
-  broadcast(payload: BroadcastPayload): void {
-    const message = JSON.stringify(payload);
-
-    for (const socket of this.sockets) {
-      socket.send(message);
+  broadcast(events: AnyEventEnvelope[] = []): void {
+    for (const registration of this.sockets.values()) {
+      try {
+        registration.socket.send(JSON.stringify(registration.createPayload(events)));
+      } catch {
+        this.removeSocket(registration.socket);
+      }
     }
   }
 }

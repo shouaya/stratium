@@ -15,6 +15,7 @@ export interface TradingEngineOptions {
   readonly sessionId?: string;
   readonly symbolConfig?: TradingSymbolConfig;
   readonly initialBalance?: number;
+  readonly accountId?: string;
 }
 
 export const DEFAULT_SYMBOL_CONFIG: TradingSymbolConfig = {
@@ -63,7 +64,7 @@ export const createInitialTradingState = (
   options: TradingEngineOptions = {}
 ): TradingEngineState => ({
   simulationSessionId: options.sessionId ?? "session-1",
-  account: createBootstrapAccount("paper-account-1", options.initialBalance ?? 10000),
+  account: createBootstrapAccount(options.accountId ?? "paper-account-1", options.initialBalance ?? 10000),
   position: createBootstrapPosition(options.symbolConfig?.symbol ?? DEFAULT_SYMBOL_CONFIG.symbol),
   orders: [],
   nextSequence: 1,

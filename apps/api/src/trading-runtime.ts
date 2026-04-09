@@ -43,96 +43,127 @@ const validateManualTick = (
 };
 
 interface BootstrapTradingRuntimeInput {
-  sessionId: string;
-  persistedEvents: AnyEventEnvelope[];
+  frontendAccountIds: string[];
   persistedSymbolConfig: TradingSymbolConfig | null;
 }
 
 interface TradingRuntimeOptions {
   logger: FastifyBaseLogger;
   repository: TradingRepository;
-  onEvents: (events: AnyEventEnvelope[]) => void;
+  onEvents: (accountId: string, events: AnyEventEnvelope[]) => void;
 }
+
+interface AccountRuntimeSlot {
+  accountId: string;
+  sessionId: string;
+  engine: TradingEngine;
+  eventStore: AnyEventEnvelope[];
+  persistQueue: Promise<void>;
+}
+
+const createSessionId = (accountId: string): string => `session-${accountId}`;
 
 export class TradingRuntime {
   private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
 
-  private engine = new TradingEngine(createInitialTradingState());
-
-  private readonly eventStore: AnyEventEnvelope[] = [];
+  private readonly accountRuntimes = new Map<string, AccountRuntimeSlot>();
 
   private bootstrapReady = false;
 
-  private persistQueue: Promise<void> = Promise.resolve();
+  private symbolConfig: TradingSymbolConfig | null = null;
 
   constructor(private readonly options: TradingRuntimeOptions) {}
 
-  getEngine() {
-    return this.engine;
+  getAccountIds(): string[] {
+    return [...this.accountRuntimes.keys()];
   }
 
-  getEngineState() {
-    return this.engine.getState();
+  getPrimaryAccountId(): string | null {
+    return this.accountRuntimes.keys().next().value ?? null;
   }
 
-  getEventStore() {
-    return this.eventStore;
+  getEngine(accountId?: string) {
+    return this.getRequiredRuntime(accountId).engine;
   }
 
-  getRecentEventStore(limit = TradingRuntime.DEFAULT_RECENT_EVENT_LIMIT) {
-    if (limit <= 0 || this.eventStore.length <= limit) {
-      return this.eventStore;
+  getEngineState(accountId?: string) {
+    return this.getRequiredRuntime(accountId).engine.getState();
+  }
+
+  getEventStore(accountId?: string) {
+    return this.getRequiredRuntime(accountId).eventStore;
+  }
+
+  getRecentEventStore(accountId?: string, limit = TradingRuntime.DEFAULT_RECENT_EVENT_LIMIT) {
+    const eventStore = this.getRequiredRuntime(accountId).eventStore;
+
+    if (limit <= 0 || eventStore.length <= limit) {
+      return eventStore;
     }
 
-    return this.eventStore.slice(-limit);
+    return eventStore.slice(-limit);
   }
 
-  getReplayState(sessionId: string) {
-    return replayEvents(this.eventStore, { sessionId }).state;
+  getReplayState(accountId: string) {
+    const runtime = this.getRequiredRuntime(accountId);
+    return replayEvents(runtime.eventStore, { sessionId: runtime.sessionId }).state;
   }
 
   async bootstrap(input: BootstrapTradingRuntimeInput): Promise<void> {
-    this.eventStore.length = 0;
-    const engineOptions: { sessionId: string; symbolConfig?: TradingSymbolConfig } = {
-      sessionId: input.sessionId,
-      symbolConfig: input.persistedSymbolConfig ?? undefined
-    };
+    this.bootstrapReady = false;
+    this.symbolConfig = input.persistedSymbolConfig;
 
-    if (input.persistedEvents.length > 0) {
-      for (const event of input.persistedEvents) {
-        this.eventStore.push(event);
-      }
+    for (const accountId of input.frontendAccountIds) {
+      await this.ensureAccountRuntime(accountId);
+    }
+  }
 
-      this.engine = new TradingEngine(replayEvents(input.persistedEvents, engineOptions).state, engineOptions);
+  async ensureFrontendAccount(accountId: string): Promise<void> {
+    await this.ensureAccountRuntime(accountId);
+  }
+
+  async setBootstrapReady(value: boolean): Promise<void> {
+    this.bootstrapReady = value;
+
+    if (!value) {
       return;
     }
 
-    this.engine = new TradingEngine(createInitialTradingState(engineOptions), engineOptions);
-    await this.options.repository.persistState(this.engine.getState(), []);
-  }
+    await Promise.all(this.getAccountIds().map(async (accountId) => {
+      const runtime = this.getRequiredRuntime(accountId);
 
-  setBootstrapReady(value: boolean): void {
-    this.bootstrapReady = value;
+      if (runtime.eventStore.length === 0) {
+        await this.options.repository.persistState(runtime.engine.getState(), []);
+      }
+    }));
   }
 
   async flushPersistence(): Promise<void> {
-    await this.persistQueue.catch(() => undefined);
+    await Promise.all(
+      [...this.accountRuntimes.values()].map((runtime) => runtime.persistQueue.catch(() => undefined))
+    );
   }
 
   async handleLiveTick(tick: MarketTick): Promise<void> {
-    const result = this.engine.ingestMarketTick(tick);
-    await this.persistEvents(result.events);
+    await Promise.all(
+      [...this.accountRuntimes.values()].map(async (runtime) => {
+        const result = runtime.engine.ingestMarketTick(tick);
+        await this.persistEvents(runtime, result.events);
+      })
+    );
   }
 
   async submitOrder(input: CreateOrderInput) {
-    const result = this.engine.submitOrder(input);
-    await this.persistEvents(result.events);
+    const runtime = await this.ensureAccountRuntime(input.accountId);
+    const result = runtime.engine.submitOrder(input);
+    await this.persistEvents(runtime, result.events);
     return result;
   }
 
   async cancelOrder(input: CancelOrderInput) {
-    const result = this.engine.cancelOrder(input);
-    await this.persistEvents(result.events);
+    const runtime = await this.ensureAccountRuntime(input.accountId);
+    const result = runtime.engine.cancelOrder(input);
+    await this.persistEvents(runtime, result.events);
     return result;
   }
 
@@ -143,7 +174,8 @@ export class TradingRuntime {
     | { ok: true; result: ReturnType<TradingEngine["ingestMarketTick"]> }
     | { ok: false; message: string }
   > {
-    const validationError = validateManualTick(tick, this.engine.getState().latestTick, expectedSymbol);
+    const primaryRuntime = this.getRequiredRuntime();
+    const validationError = validateManualTick(tick, primaryRuntime.engine.getState().latestTick, expectedSymbol);
 
     if (validationError) {
       return {
@@ -152,19 +184,34 @@ export class TradingRuntime {
       };
     }
 
-    const result = this.engine.ingestMarketTick(tick);
-    await this.persistEvents(result.events);
+    let primaryResult: ReturnType<TradingEngine["ingestMarketTick"]> | null = null;
+
+    for (const runtime of this.accountRuntimes.values()) {
+      const result = runtime.engine.ingestMarketTick(tick);
+      await this.persistEvents(runtime, result.events);
+
+      if (!primaryResult) {
+        primaryResult = result;
+      }
+    }
 
     return {
       ok: true,
-      result
+      result: primaryResult ?? primaryRuntime.engine.ingestMarketTick(tick)
     };
   }
 
   async updateLeverage(symbolConfigState: SymbolConfigState, leverage: number): Promise<SymbolConfigState> {
-    this.engine.setLeverage(leverage);
+    this.symbolConfig = this.symbolConfig
+      ? { ...this.symbolConfig, leverage }
+      : { symbol: symbolConfigState.symbol, leverage, maintenanceMarginRate: 0.05, takerFeeRate: 0.0005, makerFeeRate: 0.00015, baseSlippageBps: 5, partialFillEnabled: false };
+
+    for (const runtime of this.accountRuntimes.values()) {
+      runtime.engine.setLeverage(leverage);
+      await this.options.repository.persistState(runtime.engine.getState(), []);
+    }
+
     await this.options.repository.updateSymbolLeverage(symbolConfigState.symbol, leverage);
-    await this.options.repository.persistState(this.engine.getState(), []);
 
     return {
       ...symbolConfigState,
@@ -172,32 +219,81 @@ export class TradingRuntime {
     };
   }
 
-  async persistExternalEvents(events: AnyEventEnvelope[]): Promise<void> {
-    await this.persistEvents(events);
+  async persistExternalEvents(accountId: string, events: AnyEventEnvelope[]): Promise<void> {
+    await this.persistEvents(this.getRequiredRuntime(accountId), events);
   }
 
-  private async persistEvents(events: AnyEventEnvelope[]): Promise<void> {
-    for (const event of events) {
-      this.eventStore.push(event);
+  private getRequiredRuntime(accountId?: string): AccountRuntimeSlot {
+    const resolvedAccountId = accountId ?? this.getPrimaryAccountId();
+
+    if (!resolvedAccountId) {
+      throw new Error("No trading account runtime is available.");
     }
 
-    this.persistQueue = this.persistQueue
+    const runtime = this.accountRuntimes.get(resolvedAccountId);
+
+    if (!runtime) {
+      throw new Error(`Trading account runtime ${resolvedAccountId} is not initialized.`);
+    }
+
+    return runtime;
+  }
+
+  private async ensureAccountRuntime(accountId: string): Promise<AccountRuntimeSlot> {
+    const existing = this.accountRuntimes.get(accountId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const sessionId = createSessionId(accountId);
+    const persistedEvents = await this.options.repository.loadEvents(sessionId);
+    const engineOptions = {
+      sessionId,
+      accountId,
+      symbolConfig: this.symbolConfig ?? undefined
+    };
+    const slot: AccountRuntimeSlot = {
+      accountId,
+      sessionId,
+      engine: persistedEvents.length > 0
+        ? new TradingEngine(replayEvents(persistedEvents, engineOptions).state, engineOptions)
+        : new TradingEngine(createInitialTradingState(engineOptions), engineOptions),
+      eventStore: [...persistedEvents],
+      persistQueue: Promise.resolve()
+    };
+
+    this.accountRuntimes.set(accountId, slot);
+
+    if (this.bootstrapReady && persistedEvents.length === 0) {
+      await this.options.repository.persistState(slot.engine.getState(), []);
+    }
+
+    return slot;
+  }
+
+  private async persistEvents(runtime: AccountRuntimeSlot, events: AnyEventEnvelope[]): Promise<void> {
+    for (const event of events) {
+      runtime.eventStore.push(event);
+    }
+
+    runtime.persistQueue = runtime.persistQueue
       .then(async () => {
         if (!this.bootstrapReady) {
           return;
         }
 
-        await this.options.repository.persistState(this.engine.getState(), events);
+        await this.options.repository.persistState(runtime.engine.getState(), events);
       })
       .catch((error: unknown) => {
-        this.options.logger.error({ error }, "Failed to persist trading state");
+        this.options.logger.error({ error, accountId: runtime.accountId }, "Failed to persist trading state");
       });
-    await this.persistQueue;
+    await runtime.persistQueue;
 
     if (events.length === 0) {
       return;
     }
 
-    this.options.onEvents(events);
+    this.options.onEvents(runtime.accountId, events);
   }
 }

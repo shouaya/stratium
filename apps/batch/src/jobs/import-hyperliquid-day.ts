@@ -4,6 +4,8 @@ interface CliOptions {
   coin: string;
   interval: string;
   date?: string;
+  since?: string;
+  until?: string;
   apiUrl: string;
 }
 
@@ -78,6 +80,38 @@ const parseCliOptions = (argv: string[]): CliOptions => {
       continue;
     }
 
+    if (current === "--since") {
+      if (!next) {
+        throw new Error("--since requires an ISO datetime value");
+      }
+
+      const candidate = new Date(next.trim());
+
+      if (Number.isNaN(candidate.getTime())) {
+        throw new Error("--since must be a valid ISO datetime");
+      }
+
+      options.since = candidate.toISOString();
+      index += 1;
+      continue;
+    }
+
+    if (current === "--until") {
+      if (!next) {
+        throw new Error("--until requires an ISO datetime value");
+      }
+
+      const candidate = new Date(next.trim());
+
+      if (Number.isNaN(candidate.getTime())) {
+        throw new Error("--until must be a valid ISO datetime");
+      }
+
+      options.until = candidate.toISOString();
+      index += 1;
+      continue;
+    }
+
     if (current === "--api-url") {
       if (!next) {
         throw new Error("--api-url requires a value");
@@ -94,10 +128,33 @@ const parseCliOptions = (argv: string[]): CliOptions => {
   return options;
 };
 
-const resolveDateRange = (dateText?: string): { dateLabel: string; startTime: number; endTime: number } => {
+const resolveDateRange = (options: CliOptions): { dateLabel: string; startTime: number; endTime: number } => {
   const now = new Date();
-  const target = dateText
-    ? new Date(`${dateText}T00:00:00`)
+  const since = options.since ? new Date(options.since) : null;
+  const until = options.until ? new Date(options.until) : null;
+
+  if ((since && !until) || (!since && until)) {
+    throw new Error("--since and --until must be provided together");
+  }
+
+  if (since && until) {
+    if (options.date) {
+      throw new Error("--date cannot be combined with --since/--until");
+    }
+
+    if (since.getTime() >= until.getTime()) {
+      throw new Error("--since must be earlier than --until");
+    }
+
+    return {
+      dateLabel: `${since.toISOString()} .. ${until.toISOString()}`,
+      startTime: since.getTime(),
+      endTime: until.getTime()
+    };
+  }
+
+  const target = options.date
+    ? new Date(`${options.date}T00:00:00`)
     : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
   if (Number.isNaN(target.getTime())) {
@@ -109,7 +166,7 @@ const resolveDateRange = (dateText?: string): { dateLabel: string; startTime: nu
   const endTime = Math.min(now.getTime(), endOfDay);
 
   return {
-    dateLabel: dateText ?? formatLocalDate(target),
+    dateLabel: options.date ?? formatLocalDate(target),
     startTime,
     endTime
   };
@@ -158,7 +215,7 @@ const main = async () => {
     throw new Error("This command currently supports only --interval 1m.");
   }
 
-  const { dateLabel, startTime, endTime } = resolveDateRange(options.date);
+  const { dateLabel, startTime, endTime } = resolveDateRange(options);
   const candles = await fetchCandles(options.apiUrl, options.coin, options.interval, startTime, endTime);
   const prisma = await connectPrismaWithLocalhostFallback();
 

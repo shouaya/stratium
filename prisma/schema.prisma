@@ -27,7 +27,7 @@ model AppUser {
   passwordHash    String
   role            String
   displayName     String
-  tradingAccountId String?
+  tradingAccountId String?  @unique
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -75,8 +75,8 @@ export class ApiRuntime {
     this.tradingRuntime = new TradingRuntime({
       logger,
       repository: this.repository,
-      onEvents: (events) => {
-        this.broadcast(events);
+      onEvents: (accountId, events) => {
+        this.broadcast(accountId, events);
       }
     });
 
@@ -88,12 +88,12 @@ export class ApiRuntime {
     });
   }
 
-  getEngineState() {
-    return this.tradingRuntime.getEngineState();
+  getEngineState(accountId?: string) {
+    return this.tradingRuntime.getEngineState(accountId);
   }
 
-  getEventStore() {
-    return this.tradingRuntime.getEventStore();
+  getEventStore(accountId?: string) {
+    return this.tradingRuntime.getEventStore(accountId);
   }
 
   getMarketData() {
@@ -120,10 +120,10 @@ export class ApiRuntime {
     return this.platformSettings;
   }
 
-  getStatePayload() {
+  getStatePayload(accountId: string) {
     return createStatePayload({
-      state: this.tradingRuntime.getEngineState(),
-      events: this.tradingRuntime.getRecentEventStore(ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
+      state: this.tradingRuntime.getEngineState(accountId),
+      events: this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
       simulator: this.marketRuntime.getMarketSimulatorState(),
       market: this.marketRuntime.getMarketData(),
       symbolConfig: this.symbolConfigState,
@@ -136,20 +136,23 @@ export class ApiRuntime {
   }
 
   getAdminStatePayload() {
+    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
+
     return {
-      latestTick: this.tradingRuntime.getEngineState().latestTick,
+      latestTick: primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick : null,
       simulator: this.marketRuntime.getMarketSimulatorState(),
       platform: this.platformSettings,
+      accountIds: this.tradingRuntime.getAccountIds(),
       runningBatchJobs: this.runningBatchJobs,
       lastBatchJobExecution: this.lastBatchJobExecution
     };
   }
 
-  getReplayPayload(sessionId: string) {
+  getReplayPayload(accountId: string, sessionId: string) {
     return createReplayPayload(
       sessionId,
-      this.tradingRuntime.getReplayState(this.tradingRuntime.getEngineState().simulationSessionId),
-      this.tradingRuntime.getEventStore(),
+      this.tradingRuntime.getReplayState(accountId),
+      this.tradingRuntime.getEventStore(accountId),
       this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
       this.platformSettings,
@@ -167,15 +170,16 @@ export class ApiRuntime {
     this.runningBatchJobs = this.batchJobStateFeed.getRunningJobs();
     this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
     const bootstrapState = await loadApiBootstrapState(this.repository, {
-      sessionId: "session-1",
       configuredTradingSymbol: this.configuredTradingSymbol,
       hyperliquidCoin: this.hyperliquidCoin,
       hyperliquidCandleInterval: this.hyperliquidCandleInterval
     });
+    const frontendUsers = await this.authRuntime.listFrontendUsers();
 
     await this.tradingRuntime.bootstrap({
-      sessionId: "session-1",
-      persistedEvents: bootstrapState.persistedEvents,
+      frontendAccountIds: frontendUsers
+        .map((user) => user.tradingAccountId)
+        .filter((accountId): accountId is string => Boolean(accountId)),
       persistedSymbolConfig: bootstrapState.persistedSymbolConfig
     });
 
@@ -188,43 +192,93 @@ export class ApiRuntime {
       };
     }
 
+    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
     this.marketRuntime.setBootstrapState(
-      this.tradingRuntime.getEngineState().position.symbol,
-      this.tradingRuntime.getEngineState().latestTick?.last,
+      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).position.symbol : this.configuredTradingSymbol,
+      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick?.last : undefined,
       bootstrapState.persistedMarketSnapshot
     );
 
-    this.tradingRuntime.setBootstrapReady(true);
+    await this.tradingRuntime.setBootstrapReady(true);
     this.marketRuntime.maybeStartConfiguredSource();
   }
 
   async shutdown(): Promise<void> {
-    this.tradingRuntime.setBootstrapReady(false);
+    await this.tradingRuntime.setBootstrapReady(false);
     await this.marketRuntime.shutdown();
     await this.batchJobStateFeed.shutdown();
     await this.tradingRuntime.flushPersistence();
     await this.repository.close();
   }
 
-  addSocket(socket: SocketLike): void {
-    this.webSocketHub.addSocket(
-      socket,
-      createSocketBootstrapPayload(
-        this.tradingRuntime.getEngineState(),
-        this.tradingRuntime.getRecentEventStore(ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
-        this.marketRuntime.getMarketSimulatorState(),
-        this.marketRuntime.getMarketData(),
-        this.platformSettings,
-        {
-          runningJobs: this.runningBatchJobs,
-          lastExecution: this.lastBatchJobExecution
-        }
-      )
-    );
+  addSocket(socket: SocketLike, session: AuthSession): void {
+    this.webSocketHub.addSocket(socket, (events = []) => {
+      if (session.user.role === "admin") {
+        const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
+
+        return createSocketBootstrapPayload(
+          primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId) : {
+            simulationSessionId: "session-admin",
+            account: null,
+            orders: [],
+            position: null,
+            latestTick: null
+          },
+          [],
+          this.marketRuntime.getMarketSimulatorState(),
+          this.marketRuntime.getMarketData(),
+          this.platformSettings,
+          {
+            runningJobs: this.runningBatchJobs,
+            lastExecution: this.lastBatchJobExecution
+          }
+        );
+      }
+
+      const accountId = session.user.tradingAccountId;
+
+      if (!accountId) {
+        throw new Error("Frontend user is missing a trading account.");
+      }
+
+      const state = this.tradingRuntime.getEngineState(accountId);
+      const filteredEvents = events.filter((event) => event.accountId === accountId);
+
+      return events.length === 0
+        ? createSocketBootstrapPayload(
+          state,
+          this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
+          this.marketRuntime.getMarketSimulatorState(),
+          this.marketRuntime.getMarketData(),
+          this.platformSettings,
+          {
+            runningJobs: this.runningBatchJobs,
+            lastExecution: this.lastBatchJobExecution
+          }
+        )
+        : createSocketEventsPayload(
+          state,
+          filteredEvents,
+          this.marketRuntime.getMarketSimulatorState(),
+          this.marketRuntime.getMarketData(),
+          this.symbolConfigState,
+          this.platformSettings,
+          {
+            runningJobs: this.runningBatchJobs,
+            lastExecution: this.lastBatchJobExecution
+          }
+        );
+    });
   }
 
   async login(username: string, password: string, role: AuthRole) {
-    return this.authRuntime.login(username, password, role);
+    const session = await this.authRuntime.login(username, password, role);
+
+    if (session.user.role === "frontend" && session.user.tradingAccountId) {
+      await this.tradingRuntime.ensureFrontendAccount(session.user.tradingAccountId);
+    }
+
+    return session;
   }
 
   logout(token: string | undefined): void {
@@ -245,7 +299,11 @@ export class ApiRuntime {
     displayName: string;
     tradingAccountId?: string | null;
   }): Promise<FrontendUserView> {
-    return this.authRuntime.createFrontendUser(input);
+    const user = await this.authRuntime.createFrontendUser(input);
+    if (user.tradingAccountId) {
+      await this.tradingRuntime.ensureFrontendAccount(user.tradingAccountId);
+    }
+    return user;
   }
 
   async updateFrontendUser(userId: string, input: {
@@ -254,7 +312,11 @@ export class ApiRuntime {
     tradingAccountId?: string | null;
     isActive?: boolean;
   }): Promise<FrontendUserView> {
-    return this.authRuntime.updateFrontendUser(userId, input);
+    const user = await this.authRuntime.updateFrontendUser(userId, input);
+    if (user.tradingAccountId) {
+      await this.tradingRuntime.ensureFrontendAccount(user.tradingAccountId);
+    }
+    return user;
   }
 
   async updatePlatformSettings(input: PlatformSettingsView): Promise<PlatformSettingsView> {
@@ -319,7 +381,11 @@ export class ApiRuntime {
   startMarketSimulator(
     payload: Partial<Pick<MarketSimulatorState, "intervalMs" | "driftBps" | "volatilityBps" | "anchorPrice">> = {}
   ): MarketSimulatorState {
-    return this.marketRuntime.startMarketSimulator(payload, this.tradingRuntime.getEngineState().latestTick);
+    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
+    return this.marketRuntime.startMarketSimulator(
+      payload,
+      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick : undefined
+    );
   }
 
   stopMarketSimulator(): MarketSimulatorState {
@@ -327,7 +393,10 @@ export class ApiRuntime {
   }
 
   async runMarketSimulationTick(): Promise<void> {
-    await this.marketRuntime.runMarketSimulationTick(this.tradingRuntime.getEngineState().latestTick ?? undefined);
+    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
+    await this.marketRuntime.runMarketSimulationTick(
+      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick ?? undefined : undefined
+    );
   }
 
   setMarketSimulatorRunning(value: boolean): void {
@@ -338,23 +407,8 @@ export class ApiRuntime {
     this.marketRuntime.setMarketTickInFlight(value);
   }
 
-  private createSocketPayload(events: AnyEventEnvelope[] = []) {
-    return createSocketEventsPayload(
-      this.tradingRuntime.getEngineState(),
-      events,
-      this.marketRuntime.getMarketSimulatorState(),
-      this.marketRuntime.getMarketData(),
-      this.symbolConfigState,
-      this.platformSettings,
-      {
-        runningJobs: this.runningBatchJobs,
-        lastExecution: this.lastBatchJobExecution
-      }
-    );
-  }
-
-  private broadcast(events: AnyEventEnvelope[] = []): void {
-    this.webSocketHub.broadcast(this.createSocketPayload(events));
+  private broadcast(accountId?: string, events: AnyEventEnvelope[] = []): void {
+    this.webSocketHub.broadcast(accountId ? events.filter((event) => event.accountId === accountId) : events);
   }
 
   private get engine() {
@@ -362,6 +416,12 @@ export class ApiRuntime {
   }
 
   private async persistEvents(events: AnyEventEnvelope[]): Promise<void> {
-    await this.tradingRuntime.persistExternalEvents(events);
+    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
+
+    if (!primaryAccountId) {
+      return;
+    }
+
+    await this.tradingRuntime.persistExternalEvents(primaryAccountId, events);
   }
 }

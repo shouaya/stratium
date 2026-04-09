@@ -36,34 +36,20 @@ describe("WebSocketHub", () => {
       }
     };
 
-    hub.addSocket(first, bootstrapPayload);
-    hub.addSocket(second, bootstrapPayload);
+    hub.addSocket(first, () => bootstrapPayload);
+    hub.addSocket(second, () => bootstrapPayload);
 
     expect(first.send).toHaveBeenCalledTimes(1);
     expect(second.send).toHaveBeenCalledTimes(1);
 
-    hub.broadcast({
-      ...bootstrapPayload,
-      type: "events",
-      symbolConfig: {
-        symbol: "BTC-USD",
-        coin: "BTC",
-        leverage: 5,
-        maxLeverage: 10,
-        szDecimals: 5,
-        quoteAsset: "USDC"
-      }
-    });
+    hub.broadcast([]);
     expect(first.send).toHaveBeenCalledTimes(2);
     expect(second.send).toHaveBeenCalledTimes(2);
 
     const closeListener = first.on.mock.calls[0]?.[1] as (() => void) | undefined;
     closeListener?.();
 
-    hub.broadcast({
-      ...bootstrapPayload,
-      type: "events"
-    });
+    hub.broadcast([]);
     expect(first.send).toHaveBeenCalledTimes(2);
     expect(second.send).toHaveBeenCalledTimes(3);
   });
