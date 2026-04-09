@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth";
+import { BatchJobRunner, type BatchJobDefinition, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner";
 import { loadApiBootstrapState } from "./bootstrap";
 import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime";
 import {
@@ -40,6 +41,7 @@ export class ApiRuntime {
 
   private readonly tradingRuntime: TradingRuntime;
   private readonly authRuntime: AuthRuntime;
+  private readonly batchJobRunner = new BatchJobRunner();
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.symbolConfigState = {
@@ -231,6 +233,14 @@ export class ApiRuntime {
     this.platformSettings = await this.authRuntime.updatePlatformSettings(input);
     this.broadcast();
     return this.platformSettings;
+  }
+
+  listBatchJobs(): BatchJobDefinition[] {
+    return this.batchJobRunner.listJobs();
+  }
+
+  async runBatchJob(jobId: BatchJobId, input: BatchJobRunInput = {}) {
+    return this.batchJobRunner.run(jobId, input);
   }
 
   removeSocket(socket: SocketLike): void {

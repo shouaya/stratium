@@ -50,6 +50,8 @@ describe("registerRoutes", () => {
     getMarketSimulatorState: vi.fn(),
     getSymbolConfigState: vi.fn(),
     getAdminStatePayload: vi.fn(),
+    listBatchJobs: vi.fn(),
+    runBatchJob: vi.fn(),
     listFrontendUsers: vi.fn(),
     createFrontendUser: vi.fn(),
     updateFrontendUser: vi.fn(),
@@ -94,6 +96,21 @@ describe("registerRoutes", () => {
       maxLeverage: 20
     });
     runtime.getAdminStatePayload.mockReturnValue({ events: [], platform: platformSettings });
+    runtime.listBatchJobs.mockReturnValue([
+      {
+        id: "batch-refresh-hl-day",
+        label: "Refresh Hyperliquid Day",
+        description: "Reload today's candles."
+      }
+    ]);
+    runtime.runBatchJob.mockResolvedValue({
+      ok: true,
+      command: "make",
+      args: ["batch-refresh-hl-day", "COIN=BTC"],
+      stdout: "done",
+      stderr: "",
+      code: 0
+    });
     runtime.listFrontendUsers.mockResolvedValue([frontendSession.user]);
     runtime.createFrontendUser.mockResolvedValue(frontendSession.user);
     runtime.updateFrontendUser.mockResolvedValue(frontendSession.user);
@@ -363,6 +380,36 @@ describe("registerRoutes", () => {
       headers: { authorization: `Bearer ${adminSession.token}` }
     });
     expect(adminStateResponse.json()).toEqual({ events: [], platform: platformSettings });
+
+    const batchJobsResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-jobs",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(batchJobsResponse.json()).toEqual({
+      jobs: [
+        {
+          id: "batch-refresh-hl-day",
+          label: "Refresh Hyperliquid Day",
+          description: "Reload today's candles."
+        }
+      ]
+    });
+
+    const runBatchJobResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {
+        coin: "BTC",
+        date: "2026-04-09"
+      }
+    });
+    expect(runBatchJobResponse.statusCode).toBe(202);
+    expect(runtime.runBatchJob).toHaveBeenCalledWith("batch-refresh-hl-day", {
+      coin: "BTC",
+      date: "2026-04-09"
+    });
 
     const logoutResponse = await app.inject({
       method: "POST",

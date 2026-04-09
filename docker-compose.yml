@@ -59,8 +59,9 @@ services:
         max-size: "10m"
         max-file: "3"
     working_dir: /workspace
-    command: sh -lc "pnpm --filter @stratium/web dev"
+    command: sh -lc "rm -rf apps/web/.next-dev && pnpm --filter @stratium/web dev"
     environment:
+      NEXT_DIST_DIR: .next-dev
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
     ports:
       - "3000:3000"

@@ -1,20 +1,35 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { authHeaders, clearStoredToken, getStoredToken, setStoredToken, type AuthUser, type PlatformSettings } from "./auth-client";
+import { useRouter } from "next/navigation";
+import {
+  authHeaders,
+  clearStoredToken,
+  getStoredLocale,
+  getStoredToken,
+  publicHeaders,
+  setStoredLocale,
+  setStoredToken,
+  type AppLocale,
+  type AuthUser,
+  type PlatformSettings
+} from "./auth-client";
+import { getUiText } from "./i18n";
 import { LoginPanel } from "./login-panel";
-import { TradingDashboard } from "./trading-dashboard";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
-export default function HomePage() {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
+export function FrontendLoginPage() {
+  const router = useRouter();
   const [platform, setPlatform] = useState<PlatformSettings | null>(null);
+  const [locale, setLocale] = useState<AppLocale>("en");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
+  const ui = getUiText(locale);
 
   useEffect(() => {
+    const storedLocale = getStoredLocale();
+    setLocale(storedLocale);
     const storedToken = getStoredToken("frontend");
 
     if (!storedToken) {
@@ -22,20 +37,18 @@ export default function HomePage() {
       return;
     }
 
-    void loadSession(storedToken);
+    void loadSession(storedToken, storedLocale);
   }, []);
 
-  const loadSession = async (candidateToken: string) => {
+  const loadSession = async (candidateToken: string, nextLocale = locale) => {
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/me`, {
-        headers: authHeaders(candidateToken),
+        headers: authHeaders(candidateToken, nextLocale),
         cache: "no-store"
       });
 
       if (!response.ok) {
         clearStoredToken("frontend");
-        setToken(null);
-        setUser(null);
         setBusy(false);
         return;
       }
@@ -48,12 +61,9 @@ export default function HomePage() {
         return;
       }
 
-      setToken(candidateToken);
-      setUser(payload.user);
-      setPlatform(payload.platform);
-      setError("");
+      router.replace("/trade");
     } catch {
-      setError("Failed to reach the API.");
+      setError(ui.login.failedReachApi);
     } finally {
       setBusy(false);
     }
@@ -66,56 +76,40 @@ export default function HomePage() {
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: publicHeaders(locale, { "Content-Type": "application/json" }),
         body: JSON.stringify(credentials)
       });
       const payload = await response.json() as { token?: string; user?: AuthUser; platform?: PlatformSettings; message?: string };
 
       if (!response.ok || !payload.token || !payload.user || payload.user.role !== "frontend") {
-        setError(payload.message ?? "Login failed.");
+        setError(payload.message ?? ui.login.failedLogin);
         return;
       }
 
       setStoredToken("frontend", payload.token);
-      setToken(payload.token);
-      setUser(payload.user);
       setPlatform(payload.platform ?? null);
+      router.replace("/trade");
     } catch {
-      setError("Login failed.");
+      setError(ui.login.failedLogin);
     } finally {
       setBusy(false);
     }
   };
 
-  const logout = async () => {
-    const currentToken = token;
-    clearStoredToken("frontend");
-    setToken(null);
-    setUser(null);
-
-    if (!currentToken) {
-      return;
-    }
-
-    await fetch(`${apiBaseUrl}/api/auth/logout`, {
-      method: "POST",
-      headers: authHeaders(currentToken)
-    }).catch(() => undefined);
-  };
-
-  if (!token || !user) {
-    return (
-      <LoginPanel
-        role="frontend"
-        title="Trader Login"
-        subtitle="Use a frontend account issued by admin. Registration is disabled."
-        platform={platform}
-        busy={busy}
-        error={error}
-        onSubmit={login}
-      />
-    );
-  }
-
-  return <TradingDashboard apiBaseUrl={apiBaseUrl} authToken={token} viewer={user} onLogout={() => void logout()} />;
+  return (
+    <LoginPanel
+      role="frontend"
+      title={ui.login.traderTitle}
+      subtitle={ui.login.traderSubtitle}
+      platform={platform}
+      locale={locale}
+      onLocaleChange={(nextLocale) => {
+        setLocale(nextLocale);
+        setStoredLocale(nextLocale);
+      }}
+      busy={busy}
+      error={error}
+      onSubmit={login}
+    />
+  );
 }

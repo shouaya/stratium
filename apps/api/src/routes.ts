@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale";
 import type { ApiRuntime, MarketSimulatorState } from "./runtime";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
@@ -22,12 +23,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     reply: { code(code: number): { send(payload: unknown): unknown } },
     role: "frontend" | "admin"
   ) => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const session = runtime.getSession(getToken(request));
 
     if (!session || session.user.role !== role) {
       reply.code(401).send({
         status: "unauthorized",
-        message: `Login required for ${role}.`
+        message: role === "admin" ? messages.auth.loginRequiredForAdmin : messages.auth.loginRequiredForFrontend
       });
       return null;
     }
@@ -40,12 +43,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   }));
 
   app.post("/api/auth/login", async (request, reply) => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const payload = request.body as { username?: string; password?: string; role?: "frontend" | "admin" };
 
     if (!payload.username || !payload.password || !payload.role) {
       return reply.code(400).send({
         status: "rejected",
-        message: "username, password, and role are required."
+        message: messages.auth.loginFieldsRequired
       });
     }
 
@@ -60,18 +65,20 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     } catch (error) {
       return reply.code(401).send({
         status: "unauthorized",
-        message: error instanceof Error ? error.message : "Login failed."
+        message: error instanceof Error && error.message !== "Invalid credentials." ? error.message : messages.auth.invalidCredentials
       });
     }
   });
 
   app.get("/api/auth/me", async (request, reply) => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const session = runtime.getSession(getToken(request));
 
     if (!session) {
       return reply.code(401).send({
         status: "unauthorized",
-        message: "Login required."
+        message: messages.auth.loginRequired
       });
     }
 
@@ -96,9 +103,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   });
 
   app.get("/api/market-history", async (request, reply) => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const session = runtime.getSession(getToken(request));
     if (!session) {
-      return reply.code(401).send({ status: "unauthorized", message: "Login required." });
+      return reply.code(401).send({ status: "unauthorized", message: messages.auth.loginRequired });
     }
 
     const query = request.query as { limit?: string };
@@ -108,9 +117,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   });
 
   app.get("/api/market-volume", async (request, reply) => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const session = runtime.getSession(getToken(request));
     if (!session) {
-      return reply.code(401).send({ status: "unauthorized", message: "Login required." });
+      return reply.code(401).send({ status: "unauthorized", message: messages.auth.loginRequired });
     }
 
     const query = request.query as { limit?: string; interval?: string; coin?: string };
@@ -184,6 +195,8 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!requireRole(request, reply, "admin")) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
 
     const payload = request.body as {
       username?: string;
@@ -195,7 +208,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!payload.username || !payload.password || !payload.displayName) {
       return reply.code(400).send({
         status: "rejected",
-        message: "username, password, and displayName are required."
+        message: messages.admin.createUserFieldsRequired
       });
     }
 
@@ -241,6 +254,16 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return runtime.getPlatformSettings();
   });
 
+  app.get("/api/admin/batch-jobs", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return {
+      jobs: runtime.listBatchJobs()
+    };
+  });
+
   app.put("/api/admin/platform-settings", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;
@@ -263,11 +286,38 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     });
   });
 
+  app.post("/api/admin/batch-jobs/:jobId/run", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
+
+    const params = request.params as { jobId: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day" };
+    const payload = request.body as {
+      coin?: string;
+      date?: string;
+      interval?: string;
+    };
+
+    try {
+      const result = await runtime.runBatchJob(params.jobId, payload ?? {});
+      return reply.code(result.ok ? 202 : 500).send(result);
+    } catch (error) {
+      return reply.code(400).send({
+        ok: false,
+        message: error instanceof Error ? error.message : messages.admin.batchJobRequestFailed
+      });
+    }
+  });
+
   app.post("/api/leverage", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
     const payload = request.body as { symbol?: string; leverage?: number };
     const symbolConfigState = runtime.getSymbolConfigState();
     const symbol = payload.symbol ?? symbolConfigState.symbol;
@@ -276,7 +326,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!Number.isFinite(requestedLeverage)) {
       return reply.code(400).send({
         status: "rejected",
-        message: "Leverage must be a number."
+        message: messages.trading.leverageMustBeNumber
       });
     }
 
@@ -285,21 +335,21 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (leverage < 1) {
       return reply.code(400).send({
         status: "rejected",
-        message: "Leverage must be at least 1x."
+        message: messages.trading.leverageMin
       });
     }
 
     if (symbol !== symbolConfigState.symbol) {
       return reply.code(400).send({
         status: "rejected",
-        message: "Leverage can only be updated for the active trading symbol."
+        message: messages.trading.leverageWrongSymbol
       });
     }
 
     if (leverage > symbolConfigState.maxLeverage) {
       return reply.code(400).send({
         status: "rejected",
-        message: `Leverage exceeds max ${symbolConfigState.maxLeverage}x for ${symbol}.`
+        message: messages.trading.leverageMax(symbolConfigState.maxLeverage, symbol)
       });
     }
 
@@ -317,11 +367,13 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!requireRole(request, reply, "admin")) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
 
     if (!runtime.getPlatformSettings().allowSimulatorControl) {
       return reply.code(403).send({
         status: "rejected",
-        message: "Simulator control is disabled by platform settings."
+        message: messages.admin.simulatorDisabled
       });
     }
 
@@ -339,11 +391,13 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!requireRole(request, reply, "admin")) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
 
     if (!runtime.getPlatformSettings().allowSimulatorControl) {
       return reply.code(403).send({
         status: "rejected",
-        message: "Simulator control is disabled by platform settings."
+        message: messages.admin.simulatorDisabled
       });
     }
 
@@ -359,11 +413,13 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!requireRole(request, reply, "admin")) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
 
     if (!runtime.getPlatformSettings().allowManualTicks) {
       return reply.code(403).send({
         status: "rejected",
-        message: "Manual ticks are disabled by platform settings."
+        message: messages.admin.manualTicksDisabled
       });
     }
 
@@ -373,7 +429,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!result.ok) {
       return reply.code(400).send({
         status: "rejected",
-        message: result.message
+        message: localizeRuntimeMessage(locale, result.message)
       });
     }
 
@@ -385,11 +441,13 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
 
     if (!runtime.getPlatformSettings().allowFrontendTrading) {
       return reply.code(403).send({
         status: "rejected",
-        message: "Trading is disabled by platform settings."
+        message: messages.admin.tradingDisabled
       });
     }
 

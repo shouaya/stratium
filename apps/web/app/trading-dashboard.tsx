@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, HTMLAttributes } from "react";
 import type { AccountView, AnyEventEnvelope, OrderView, PositionView } from "@stratium/shared";
 import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
-import type { AuthUser, PlatformSettings } from "./auth-client";
+import type { AppLocale, AuthUser, PlatformSettings } from "./auth-client";
 import { authHeaders } from "./auth-client";
+import { APP_LOCALES, getUiText, LOCALE_LABELS } from "./i18n";
 import { CandlestickChart } from "./candlestick-chart";
 
 type TickPayload = {
@@ -173,13 +174,19 @@ export function TradingDashboard({
   apiBaseUrl,
   authToken,
   viewer,
+  locale,
+  onLocaleChange,
   onLogout
 }: {
   apiBaseUrl: string;
   authToken: string;
   viewer: AuthUser;
+  locale: AppLocale;
+  onLocaleChange: (locale: AppLocale) => void;
   onLogout: () => void;
 }) {
+  const ui = getUiText(locale);
+  const t = ui.trader;
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<"market" | "limit">("market");
@@ -433,31 +440,31 @@ export function TradingDashboard({
   );
   const orderValidation = useMemo(() => {
     if (!orderForm.quantity.trim()) {
-      return "Contracts are required.";
+      return t.contractsRequired;
     }
 
     if (!Number.isFinite(quantityValue)) {
-      return "Contracts must be a valid number.";
+      return t.contractsValidNumber;
     }
 
     if (quantityValue <= 0) {
-      return "Contracts must be greater than zero.";
+      return t.contractsGreaterThanZero;
     }
 
     const quantityText = orderForm.quantity.trim();
     const decimalPart = quantityText.includes(".") ? quantityText.split(".")[1] ?? "" : "";
 
     if (decimalPart.length > quantityDecimals) {
-      return `Contracts support up to ${quantityDecimals} decimal places for ${contractCoin}.`;
+      return t.contractsPrecision.replace("{decimals}", String(quantityDecimals)).replace("{coin}", contractCoin);
     }
 
     if (tab === "limit") {
       if (!orderForm.limitPrice.trim()) {
-        return "Limit price is required.";
+        return t.limitPriceRequired;
       }
 
       if (!Number.isFinite(limitPriceValue) || limitPriceValue <= 0) {
-        return "Limit price must be greater than zero.";
+        return t.limitPriceGreaterThanZero;
       }
     }
 
@@ -465,21 +472,21 @@ export function TradingDashboard({
   }, [contractCoin, limitPriceValue, orderForm.limitPrice, orderForm.quantity, quantityDecimals, quantityValue, tab]);
   const quantityFieldError = useMemo(() => {
     if (!orderForm.quantity.trim()) {
-      return "Enter contracts.";
+      return t.enterContracts;
     }
 
     if (!Number.isFinite(quantityValue)) {
-      return "Contracts must be numeric.";
+      return t.contractsNumeric;
     }
 
     if (quantityValue <= 0) {
-      return "Contracts must be greater than zero.";
+      return t.contractsGreaterThanZero;
     }
 
     const decimalPart = orderForm.quantity.trim().includes(".") ? orderForm.quantity.trim().split(".")[1] ?? "" : "";
 
     if (decimalPart.length > quantityDecimals) {
-      return `Max ${quantityDecimals} decimals.`;
+      return t.maxDecimals.replace("{decimals}", String(quantityDecimals));
     }
 
     return null;
@@ -490,11 +497,11 @@ export function TradingDashboard({
     }
 
     if (!orderForm.limitPrice.trim()) {
-      return "Enter limit price.";
+      return t.enterLimitPrice;
     }
 
     if (!Number.isFinite(limitPriceValue) || limitPriceValue <= 0) {
-      return "Price must be greater than zero.";
+      return t.priceGreaterThanZero;
     }
 
     return null;
@@ -525,7 +532,7 @@ export function TradingDashboard({
     }
 
     if (pricingPreview && pricingPreview.estimatedMargin > (state.account?.availableBalance ?? 0)) {
-      return "Estimated margin exceeds available balance.";
+      return t.estimatedMarginExceeds;
     }
 
     return null;
@@ -535,28 +542,28 @@ export function TradingDashboard({
 
     return [
       {
-        label: "Contracts",
+        label: t.contracts,
         ok: !quantityFieldError,
-        detail: quantityFieldError ?? `Precision ok · max ${quantityDecimals} decimals`
+        detail: quantityFieldError ?? t.precisionOk.replace("{decimals}", String(quantityDecimals))
       },
       {
-        label: tab === "limit" ? "Limit price" : "Reference price",
+        label: tab === "limit" ? t.limitPrice : t.referencePrice,
         ok: tab === "limit" ? !limitPriceFieldError : Boolean(marketReferencePrice),
         detail: tab === "limit"
-          ? limitPriceFieldError ?? `Ready at ${fmt(limitPriceValue, priceDigits)}`
+          ? limitPriceFieldError ?? t.readyAt.replace("{price}", fmt(limitPriceValue, priceDigits))
           : marketReferencePrice
-            ? `${side === "buy" ? "Ask" : "Bid"} ${fmt(marketReferencePrice, priceDigits)}`
-            : "Waiting for live quote"
+            ? `${side === "buy" ? ui.admin.ask : ui.admin.bid} ${fmt(marketReferencePrice, priceDigits)}`
+            : t.waitingForLiveQuote
       },
       {
         label: "Margin",
         ok: Boolean(pricingPreview) && !orderError,
         detail: pricingPreview
-          ? `${fmt(pricingPreview.estimatedMargin, 2)} USDC required`
-          : "No estimate yet"
+          ? t.marginRequired.replace("{amount}", fmt(pricingPreview.estimatedMargin, 2))
+          : t.noEstimateYet
       }
     ];
-  }, [limitPriceFieldError, limitPriceValue, orderError, priceDigits, pricingPreview, quantityDecimals, quantityFieldError, side, state.latestTick?.ask, state.latestTick?.bid, tab]);
+  }, [limitPriceFieldError, limitPriceValue, orderError, priceDigits, pricingPreview, quantityDecimals, quantityFieldError, side, state.latestTick?.ask, state.latestTick?.bid, tab, t, ui.admin.ask, ui.admin.bid]);
   const leverageInUse = state.symbolConfig?.leverage ?? leverageDraft;
   const marginUsageRatio = pricingPreview && availableBalance > 0
     ? Math.min(pricingPreview.estimatedMargin / availableBalance, 1)
@@ -718,10 +725,10 @@ export function TradingDashboard({
 
   const refresh = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken) });
+      const response = await fetch(`${apiBaseUrl}/api/state`, { cache: "no-store", headers: authHeaders(authToken, locale) });
 
       if (response.status === 401) {
-        setMessage("Session expired.");
+        setMessage(ui.trader.sessionExpired);
         onLogout();
         return;
       }
@@ -730,14 +737,14 @@ export function TradingDashboard({
       setState(payload);
       setMessage("");
     } catch {
-      setMessage("Failed to fetch API state.");
+      setMessage(ui.trader.failedLoad);
     }
   };
 
   const submitOrder = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
+    const response = await fetch(`${apiBaseUrl}/api/orders`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
     const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
-    setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : "Failed to submit order.");
+    setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
       setAccountTab("fills");
@@ -745,8 +752,8 @@ export function TradingDashboard({
   };
 
   const cancelOrder = async (orderId: string) => {
-    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
-    setMessage(response.ok ? `Order ${orderId} canceled.` : "Failed to cancel order.");
+    const response = await fetch(`${apiBaseUrl}/api/orders/cancel`, { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: orderForm.accountId, orderId }) });
+    setMessage(response.ok ? `Order ${orderId} canceled.` : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
       setAccountTab("openOrders");
@@ -762,7 +769,7 @@ export function TradingDashboard({
     const closingSide = state.position.side === "long" ? "sell" : "buy";
     const response = await fetch(`${apiBaseUrl}/api/orders`, {
       method: "POST",
-      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         accountId: orderForm.accountId,
         symbol: state.position.symbol,
@@ -773,7 +780,7 @@ export function TradingDashboard({
     });
 
     const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
-    setMessage(response.ok ? extractResponseMessage(payload, "Position close order submitted.") : "Failed to close position.");
+    setMessage(response.ok ? extractResponseMessage(payload, "Position close order submitted.") : ui.trader.orderRejected);
 
     if (response.ok) {
       await refresh();
@@ -784,7 +791,7 @@ export function TradingDashboard({
   const updateLeverage = async () => {
     const response = await fetch(`${apiBaseUrl}/api/leverage`, {
       method: "POST",
-      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         symbol: state.symbolConfig?.symbol ?? orderForm.symbol,
         leverage: leverageDraft
@@ -793,7 +800,7 @@ export function TradingDashboard({
     const payload = await response.json().catch(() => ({}) as { message?: string; symbolConfig?: State["symbolConfig"] });
 
     if (!response.ok) {
-      setMessage(payload.message ?? "Failed to update leverage.");
+      setMessage(payload.message ?? ui.trader.failedLoad);
       return;
     }
 
@@ -820,7 +827,7 @@ export function TradingDashboard({
               </div>
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-              <Metric label="Price" value={fmt(stats.last, priceDigits)} strong />
+              <Metric label={locale === "zh" ? "价格" : locale === "ja" ? "価格" : "Price"} value={fmt(stats.last, priceDigits)} strong />
               <Metric label="24h Change" value={`${fmt(stats.change, 2)}%`} tone={stats.change && stats.change < 0 ? "down" : "up"} />
               <Metric label="24h Low" value={fmt(stats.low, priceDigits)} />
               <Metric label="24h High" value={fmt(stats.high, priceDigits)} />
@@ -829,18 +836,20 @@ export function TradingDashboard({
               <Metric label="Funding" value={state.market?.assetCtx?.fundingRate != null ? `${fmt(state.market.assetCtx.fundingRate * 100, 4)}%` : "-"} />
               <Metric label="OI" value={fmt(state.market?.assetCtx?.openInterest, 3)} />
               <Metric label="24h Volume" value={state.market?.assetCtx?.dayNotionalVolume != null ? `$${fmt(state.market.assetCtx.dayNotionalVolume, 2)}` : "-"} />
-              <Metric label="Clock" value={clock(state.latestTick?.tickTime)} />
+              <Metric label={locale === "zh" ? "时间" : locale === "ja" ? "時刻" : "Clock"} value={clock(state.latestTick?.tickTime)} />
             </div>
-            <div style={{ justifySelf: "end", display: "grid", gap: 8, textAlign: "right" }}>
+            <div style={{ justifySelf: "end", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", justifyContent: "flex-end", textAlign: "right" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#7e97a5", fontSize: 11 }}>{ui.common.language}</span>
+                <select value={locale} onChange={(event) => onLocaleChange(event.target.value as AppLocale)} style={selectStyle}>
+                  {APP_LOCALES.map((entry) => <option key={entry} value={entry}>{LOCALE_LABELS[entry]}</option>)}
+                </select>
+              </div>
               <div>
                 <div style={{ color: "#56d7c4", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em" }}>{viewer.displayName}</div>
                 <div style={{ color: "#9ab0bc", fontSize: 12 }}>{viewer.username}</div>
               </div>
-              <div>
-                <div style={{ color: "#60727f", fontSize: 11 }}>Trading Account</div>
-                <div style={{ color: "#f8fafc", fontSize: 14, fontWeight: 700 }}>{viewer.tradingAccountId ?? state.account?.accountId ?? "paper-account-1"}</div>
-              </div>
-              <button onClick={onLogout} style={btnInline}>Logout</button>
+              <button onClick={onLogout} style={btnInline}>{ui.trader.signOut}</button>
             </div>
           </div>
         </div>
@@ -857,18 +866,18 @@ export function TradingDashboard({
                     </button>
                   ))}
                 </div>
-                <div style={{ display: "flex", gap: 12 }}><span>Indicators</span><span>Drawing</span><span>Layout</span></div>
+                <div style={{ display: "flex", gap: 12 }}><span>{locale === "zh" ? "指标" : locale === "ja" ? "指標" : "Indicators"}</span><span>{locale === "zh" ? "绘图" : locale === "ja" ? "描画" : "Drawing"}</span><span>{locale === "zh" ? "布局" : locale === "ja" ? "レイアウト" : "Layout"}</span></div>
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <div>
                     <div style={{ fontSize: 20, fontWeight: 700 }}>{contractCoin} Perp</div>
-                    <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || state.platform?.platformAnnouncement || `Ready · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : "Synthetic fallback"}`}</div>
+                    <div style={{ color: "#7e97a5", fontSize: 12 }}>{message || state.platform?.platformAnnouncement || `${locale === "zh" ? "已就绪" : locale === "ja" ? "準備完了" : "Ready"} · ${selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : locale === "zh" ? "合成回退" : locale === "ja" ? "合成フォールバック" : "Synthetic fallback"}`}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ color: stats.change && stats.change < 0 ? "#f87171" : "#2dd4bf", fontSize: 22, fontWeight: 700 }}>{fmt(stats.last, priceDigits)}</div>
                     <div style={{ color: "#7e97a5", fontSize: 12 }}>
-                      Spread {fmt(state.latestTick?.spread, 4)} · {state.market?.connected ? "Hyperliquid live" : state.simulator?.enabled ? "simulator live" : "paused"} · {selectedTimeframe.hint}
+                      {locale === "zh" ? "点差" : locale === "ja" ? "スプレッド" : "Spread"} {fmt(state.latestTick?.spread, 4)} · {state.market?.connected ? "Hyperliquid live" : state.simulator?.enabled ? (locale === "zh" ? "模拟器运行中" : locale === "ja" ? "シミュレーター稼働中" : "simulator live") : (locale === "zh" ? "暂停" : locale === "ja" ? "停止中" : "paused")} · {selectedTimeframe.hint}
                     </div>
                   </div>
                 </div>
@@ -878,26 +887,26 @@ export function TradingDashboard({
 
             <div style={{ ...box(), display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
               <div style={{ display: "flex", gap: 4, padding: "0 10px", borderBottom: "1px solid #16262f" }}>
-                <TabButton active={accountTab === "balances"} label="Balances" onClick={() => setAccountTab("balances")} />
-                <TabButton active={accountTab === "positions"} label="Positions" onClick={() => setAccountTab("positions")} />
-                <TabButton active={accountTab === "openOrders"} label="Open Orders" onClick={() => setAccountTab("openOrders")} />
-                <TabButton active={accountTab === "fills"} label="Fill History" onClick={() => setAccountTab("fills")} />
+                <TabButton active={accountTab === "balances"} label={t.balances} onClick={() => setAccountTab("balances")} />
+                <TabButton active={accountTab === "positions"} label={t.positions} onClick={() => setAccountTab("positions")} />
+                <TabButton active={accountTab === "openOrders"} label={t.openOrders} onClick={() => setAccountTab("openOrders")} />
+                <TabButton active={accountTab === "fills"} label={t.fillHistory} onClick={() => setAccountTab("fills")} />
               </div>
               <div style={{ overflowX: "auto", overflowY: "auto", flex: 1, minHeight: 0 }}>
                 {accountTab === "balances" ? (
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                        <th style={th}>Metric</th><th style={th}>Value</th>
+                        <th style={th}>{t.metric}</th><th style={th}>{t.value}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {[
-                        ["Wallet", `${fmt(state.account?.walletBalance, 2)} USDC`],
-                        ["Available", `${fmt(state.account?.availableBalance, 2)} USDC`],
-                        ["Equity", `${fmt(state.account?.equity, 2)} USDC`],
-                        ["Realized PnL", `${fmt(state.account?.realizedPnl, 4)} USDC`],
-                        ["Unrealized PnL", `${fmt(state.account?.unrealizedPnl, 4)} USDC`]
+                        [t.wallet, `${fmt(state.account?.walletBalance, 2)} USDC`],
+                        [t.available, `${fmt(state.account?.availableBalance, 2)} USDC`],
+                        [t.equity, `${fmt(state.account?.equity, 2)} USDC`],
+                        [t.realizedPnl, `${fmt(state.account?.realizedPnl, 4)} USDC`],
+                        [t.unrealizedPnl, `${fmt(state.account?.unrealizedPnl, 4)} USDC`]
                       ].map(([label, value]) => (
                         <tr key={label} style={{ borderTop: "1px solid #13212a" }}>
                           <td style={td}>{label}</td>
@@ -910,12 +919,12 @@ export function TradingDashboard({
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                        <th style={th}>Symbol</th><th style={th}>Side</th><th style={th}>Contracts</th><th style={th}>Entry</th><th style={th}>Mark</th><th style={th}>Unrealized PnL</th><th style={th}>Action</th>
+                        <th style={th}>{t.symbol}</th><th style={th}>{t.side}</th><th style={th}>{t.contracts}</th><th style={th}>{t.entry}</th><th style={th}>{t.mark}</th><th style={th}>{t.unrealizedPnl}</th><th style={th}>{t.action}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {!state.position || state.position.side === "flat" ? (
-                        <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No position.</td></tr>
+                        <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noPosition}</td></tr>
                       ) : (
                         <tr style={{ borderTop: "1px solid #13212a" }}>
                           <td style={td}>{state.position.symbol}</td>
@@ -924,7 +933,7 @@ export function TradingDashboard({
                           <td style={td}>{fmt(state.position.averageEntryPrice, priceDigits)}</td>
                           <td style={td}>{fmt(state.position.markPrice, priceDigits)}</td>
                           <td style={td}>{fmt(state.position.unrealizedPnl, 4)} USDC</td>
-                          <td style={td}><button onClick={() => void closePosition()} style={btnInline}>Close Position</button></td>
+                          <td style={td}><button onClick={() => void closePosition()} style={btnInline}>{t.closePosition}</button></td>
                         </tr>
                       )}
                     </tbody>
@@ -933,11 +942,11 @@ export function TradingDashboard({
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                        <th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Contracts</th><th style={th}>Filled</th><th style={th}>Status</th><th style={th}>Action</th>
+                        <th style={th}>{t.order}</th><th style={th}>{t.side}</th><th style={th}>{t.type}</th><th style={th}>{t.contracts}</th><th style={th}>{t.filled}</th><th style={th}>{t.status}</th><th style={th}>{t.action}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeOrders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No open orders.</td></tr> : activeOrders.map((order) => (
+                      {activeOrders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noOpenOrders}</td></tr> : activeOrders.map((order) => (
                         <tr key={order.id} style={{ borderTop: "1px solid #13212a" }}>
                           <td style={td}>{order.id}</td>
                           <td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td>
@@ -945,7 +954,7 @@ export function TradingDashboard({
                           <td style={td}>{fmt(order.quantity)}</td>
                           <td style={td}>{fmt(order.filledQuantity)}</td>
                           <td style={td}>{order.status}</td>
-                          <td style={td}><button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel</button></td>
+                          <td style={td}><button onClick={() => void cancelOrder(order.id)} style={btnInline}>{t.cancel}</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -954,11 +963,11 @@ export function TradingDashboard({
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ color: "#7e97a5", textAlign: "left" }}>
-                        <th style={th}>Time</th><th style={th}>Order</th><th style={th}>Side</th><th style={th}>Type</th><th style={th}>Role</th><th style={th}>Entry Price</th><th style={th}>Exit Price</th><th style={th}>Contracts</th><th style={th}>PnL</th><th style={th}>Fee</th><th style={th}>Slippage</th>
+                        <th style={th}>{t.time}</th><th style={th}>{t.order}</th><th style={th}>{t.side}</th><th style={th}>{t.type}</th><th style={th}>{t.role}</th><th style={th}>{t.entryPrice}</th><th style={th}>{t.exitPrice}</th><th style={th}>{t.contracts}</th><th style={th}>{t.realizedPnl}</th><th style={th}>{t.fee}</th><th style={th}>{t.slippage}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {personalFills.length === 0 ? <tr><td colSpan={11} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>No fills yet.</td></tr> : personalFills.map((fill) => (
+                      {personalFills.length === 0 ? <tr><td colSpan={11} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noFills}</td></tr> : personalFills.map((fill) => (
                         <tr key={fill.id} style={{ borderTop: "1px solid #13212a" }}>
                           <td style={td}>{dateTime(fill.filledAt)}</td>
                           <td style={td}>{fill.orderId}</td>
@@ -982,12 +991,12 @@ export function TradingDashboard({
 
           <div style={box()}>
             <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
-              <button onClick={() => setBookTab("book")} style={bookTab === "book" ? tabActive : tabIdle}>Order Book</button>
-              <button onClick={() => setBookTab("trades")} style={bookTab === "trades" ? tabActive : tabIdle}>Trades</button>
+              <button onClick={() => setBookTab("book")} style={bookTab === "book" ? tabActive : tabIdle}>{t.orderBook}</button>
+              <button onClick={() => setBookTab("trades")} style={bookTab === "trades" ? tabActive : tabIdle}>{t.trades}</button>
             </div>
             {bookTab === "book" ? (
               <div style={{ padding: 14 }}>
-                <div style={bookHead}><span>Price</span><span>Size (Contracts)</span><span>Total (Contracts)</span></div>
+                <div style={bookHead}><span>{t.price}</span><span>{t.sizeContracts}</span><span>{t.totalContracts}</span></div>
                 {bookWithDepth.asks.map((row) => (
                   <BookRow
                     key={`a-${row.price}`}
@@ -999,7 +1008,7 @@ export function TradingDashboard({
                     priceDigits={priceDigits}
                   />
                 ))}
-                <div style={{ display: "flex", justifyContent: "space-between", margin: "10px 0", padding: "8px 10px", borderRadius: 8, background: "#10222c" }}><span>Spread</span><strong>{fmt(state.latestTick?.spread, 4)}</strong></div>
+                <div style={{ display: "flex", justifyContent: "space-between", margin: "10px 0", padding: "8px 10px", borderRadius: 8, background: "#10222c" }}><span>{ui.admin.spread}</span><strong>{fmt(state.latestTick?.spread, 4)}</strong></div>
                 {bookWithDepth.bids.map((row) => (
                   <BookRow
                     key={`b-${row.price}`}
@@ -1014,8 +1023,8 @@ export function TradingDashboard({
               </div>
             ) : (
               <div style={{ padding: 14, display: "grid", gap: 8 }}>
-                <div style={bookHead}><span>Time</span><span>Price</span><span>Contracts</span></div>
-                {trades.length === 0 ? <div style={{ color: "#60727f" }}>No trades yet.</div> : trades.map((trade) => {
+                <div style={bookHead}><span>{t.time}</span><span>{t.price}</span><span>{t.contracts}</span></div>
+                {trades.length === 0 ? <div style={{ color: "#60727f" }}>{t.noTrades}</div> : trades.map((trade) => {
                   return <div key={trade.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, opacity: trade.source === "tape" ? 0.84 : 1 }}><span>{clock(trade.time)}</span><strong style={{ color: trade.side === "sell" ? "#f87171" : "#2dd4bf" }}>{fmt(trade.price, priceDigits)}</strong><span>{fmt(trade.size, 4)}</span></div>;
                 })}
               </div>
@@ -1026,18 +1035,18 @@ export function TradingDashboard({
           <div style={{ display: "grid", gap: 8, alignContent: "start" }}>
             <div style={box()}>
               <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
-                <button onClick={() => setTab("market")} style={tab === "market" ? tabActive : tabIdle}>Market</button>
-                <button onClick={() => setTab("limit")} style={tab === "limit" ? tabActive : tabIdle}>Limit</button>
+                <button onClick={() => setTab("market")} style={tab === "market" ? tabActive : tabIdle}>{t.market}</button>
+                <button onClick={() => setTab("limit")} style={tab === "limit" ? tabActive : tabIdle}>{t.limit}</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "0 14px 14px" }}>
-                <button onClick={() => setSide("buy")} style={side === "buy" ? btnBuyActive : btnSide}>Buy</button>
-                <button onClick={() => setSide("sell")} style={side === "sell" ? btnSellActive : btnSide}>Sell</button>
+                <button onClick={() => setSide("buy")} style={side === "buy" ? btnBuyActive : btnSide}>{t.buy}</button>
+                <button onClick={() => setSide("sell")} style={side === "sell" ? btnSellActive : btnSide}>{t.sell}</button>
               </div>
               <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
-                <Line label="Leverage" value={`${leverageInUse}x / max ${state.symbolConfig?.maxLeverage ?? leverageDraft}x`} />
-                <Line label="Rolling Market" value={state.simulator?.enabled ? `Running · ${state.simulator.intervalMs}ms` : "Stopped"} />
+                <Line label={t.leverage} value={`${leverageInUse}x / max ${state.symbolConfig?.maxLeverage ?? leverageDraft}x`} />
+                <Line label={t.rollingMarket} value={state.simulator?.enabled ? `${t.running} · ${state.simulator.intervalMs}ms` : t.stopped} />
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ color: "#7e97a5", fontSize: 12 }}>Adjust Leverage</span>
+                  <span style={{ color: "#7e97a5", fontSize: 12 }}>{t.adjustLeverage}</span>
                   <input
                     type="range"
                     min={1}
@@ -1051,27 +1060,27 @@ export function TradingDashboard({
                     <strong style={{ color: "#f8fafc" }}>{leverageDraft}x</strong>
                     <span>{state.symbolConfig?.maxLeverage ?? 10}x</span>
                   </div>
-                  <button onClick={() => void updateLeverage()} style={btnGhost}>Apply Leverage</button>
+                  <button onClick={() => void updateLeverage()} style={btnGhost}>{t.applyLeverage}</button>
                 </label>
                 <Field
-                  label="Contracts"
+                  label={t.contracts}
                   value={orderForm.quantity}
                   onChange={(v) => setOrderForm((s) => ({ ...s, quantity: v }))}
                   inputMode="decimal"
                   error={quantityFieldError ?? undefined}
-                  hint={!quantityFieldError ? `Margin preview updates on each keystroke · precision ${quantityDecimals} decimals` : undefined}
+                  hint={!quantityFieldError ? t.marginPreviewHint.replace("{decimals}", String(quantityDecimals)) : undefined}
                 />
                 {tab === "limit" && (
                   <Field
-                    label="Limit Price"
+                    label={t.limitPrice}
                     value={orderForm.limitPrice}
                     onChange={(v) => setOrderForm((s) => ({ ...s, limitPrice: v }))}
                     inputMode="decimal"
                     error={limitPriceFieldError ?? undefined}
-                    hint={!limitPriceFieldError ? `Reference ${side === "buy" ? "ask" : "bid"} ${fmt(side === "buy" ? state.latestTick?.ask : state.latestTick?.bid, priceDigits)}` : undefined}
+                    hint={!limitPriceFieldError ? `${t.referencePrice} ${side === "buy" ? ui.admin.ask.toLowerCase() : ui.admin.bid.toLowerCase()} ${fmt(side === "buy" ? state.latestTick?.ask : state.latestTick?.bid, priceDigits)}` : undefined}
                   />
                 )}
-                <div style={{ color: "#7e97a5", fontSize: 12 }}>1 contract = 1 {contractCoin}</div>
+                <div style={{ color: "#7e97a5", fontSize: 12 }}>{t.oneContract.replace("{coin}", contractCoin)}</div>
                 <div style={{ display: "grid", gap: 8 }}>
                   {orderCheckItems.map((item) => (
                     <div
@@ -1094,32 +1103,32 @@ export function TradingDashboard({
                 </div>
                 {pricingPreview ? (
                   <div style={{ display: "grid", gap: 6, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e", fontSize: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Estimated Price</span><strong>{fmt(pricingPreview.referencePrice, priceDigits)}</strong></div>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Notional</span><strong>{fmt(pricingPreview.notional, 2)} USDC</strong></div>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Required Margin</span><strong>{fmt(pricingPreview.estimatedMargin, 2)} USDC</strong></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.estimatedPrice}</span><strong>{fmt(pricingPreview.referencePrice, priceDigits)}</strong></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.notional}</span><strong>{fmt(pricingPreview.notional, 2)} USDC</strong></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.requiredMargin}</span><strong>{fmt(pricingPreview.estimatedMargin, 2)} USDC</strong></div>
                     <div style={{ display: "grid", gap: 6, marginTop: 4 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                        <span style={{ color: "#7e97a5" }}>Margin Usage</span>
+                        <span style={{ color: "#7e97a5" }}>{t.marginUsage}</span>
                         <strong>{fmt(marginUsageRatio * 100, 1)}%</strong>
                       </div>
                       <div style={{ height: 8, borderRadius: 999, background: "#0b151b", overflow: "hidden" }}>
                         <div style={{ width: `${marginUsageRatio * 100}%`, height: "100%", background: marginUsageRatio > 0.85 ? "#ef4444" : marginUsageRatio > 0.6 ? "#f59e0b" : "#22c55e" }} />
                       </div>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>Available After</span><strong style={{ color: pricingPreview.remainingAvailable < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(pricingPreview.remainingAvailable, 2)} USDC</strong></div>
-                    <div style={{ color: "#7e97a5" }}>Post-trade free margin: {fmt(postTradeAvailableRatio, 1)}% of current equity</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.availableAfter}</span><strong style={{ color: pricingPreview.remainingAvailable < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(pricingPreview.remainingAvailable, 2)} USDC</strong></div>
+                    <div style={{ color: "#7e97a5" }}>{t.postTradeFreeMargin.replace("{ratio}", fmt(postTradeAvailableRatio, 1))}</div>
                   </div>
                 ) : null}
-                {orderError ? <div style={{ color: "#f87171", fontSize: 12 }}>{orderError}</div> : <div style={{ color: "#7e97a5", fontSize: 12 }}>Checks passed for current order input.</div>}
-                <button disabled={Boolean(orderError)} onClick={() => void submitOrder()} style={{ ...(side === "buy" ? btnBuySubmit : btnSellSubmit), opacity: orderError ? 0.5 : 1, cursor: orderError ? "not-allowed" : "pointer" }}>{side === "buy" ? "Buy" : "Sell"} {contractCoin} Perp</button>
+                {orderError ? <div style={{ color: "#f87171", fontSize: 12 }}>{orderError}</div> : <div style={{ color: "#7e97a5", fontSize: 12 }}>{t.checksPassed}</div>}
+                <button disabled={Boolean(orderError)} onClick={() => void submitOrder()} style={{ ...(side === "buy" ? btnBuySubmit : btnSellSubmit), opacity: orderError ? 0.5 : 1, cursor: orderError ? "not-allowed" : "pointer" }}>{side === "buy" ? t.buy : t.sell} {contractCoin} Perp</button>
               </div>
             </div>
 
             <div style={box()}>
-              <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>Active Orders</div>
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid #16262f", fontWeight: 700 }}>{t.activeOrders}</div>
               <div style={{ padding: 14, display: "grid", gap: 10 }}>
                 {activeOrders.length === 0 ? (
-                  <div style={{ color: "#60727f", fontSize: 13 }}>No active orders.</div>
+                  <div style={{ color: "#60727f", fontSize: 13 }}>{t.noActiveOrders}</div>
                 ) : activeOrders.map((order) => (
                   <div key={order.id} style={{ border: "1px solid #15262e", borderRadius: 10, padding: 12, display: "grid", gap: 8, background: "#0c171d" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
@@ -1129,7 +1138,7 @@ export function TradingDashboard({
                     <div style={{ color: "#7e97a5", fontSize: 12 }}>
                       {order.orderType} · {fmt(order.remainingQuantity, 4)} / {fmt(order.quantity, 4)} contracts
                     </div>
-                    <button onClick={() => void cancelOrder(order.id)} style={btnInline}>Cancel Order</button>
+                    <button onClick={() => void cancelOrder(order.id)} style={btnInline}>{t.cancelOrder}</button>
                   </div>
                 ))}
               </div>
@@ -1257,6 +1266,7 @@ const tabIdle: CSSProperties = {
 const tabActive: CSSProperties = { ...tabIdle, color: "#f8fafc", borderBottomColor: "#2dd4bf" };
 const btnGhost: CSSProperties = { border: "1px solid #253740", background: "#111d24", color: "#dce7ee", padding: "10px 14px", borderRadius: 10, cursor: "pointer" };
 const btnInline: CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
+const selectStyle: CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", outline: "none" };
 const btnSide: CSSProperties = {
   borderWidth: 1,
   borderStyle: "solid",
