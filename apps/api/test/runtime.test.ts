@@ -352,6 +352,7 @@ vi.mock("../src/batch-job-state", () => ({
 }));
 
 const { ApiRuntime } = await import("../src/runtime");
+const { TradingRuntime } = await import("../src/trading-runtime");
 
 describe("ApiRuntime", () => {
   const logger = {
@@ -968,5 +969,193 @@ describe("ApiRuntime", () => {
     expect(recentEvents.some((event) => event.eventType === "OrderAccepted")).toBe(true);
     expect(orderResult.events.some((event) => event.eventType === "OrderAccepted")).toBe(true);
     expect(recentEvents.filter((event) => event.eventType === "MarketTickReceived").length).toBeLessThanOrEqual(240);
+  });
+
+  it("covers wrapper methods and broadcast listeners", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    await runtime.bootstrap();
+
+    const privateRuntime = runtime as never;
+    privateRuntime.tradingRuntime = {
+      getEngineState: vi.fn(() => ({ account: { accountId: "paper-account-1" } })),
+      getEventStore: vi.fn(() => [{ eventType: "OrderAccepted" }]),
+      getFillHistoryEvents: vi.fn(() => [{ eventType: "OrderFilled" }]),
+      getAccountIds: vi.fn(() => ["paper-account-1"]),
+      getOrders: vi.fn(() => [{ id: "ord_1" }]),
+      getOrderByClientOrderId: vi.fn(() => ({ id: "ord_1", clientOrderId: "0xabc" })),
+      cancelAllOpenOrders: vi.fn(async () => [{ orderId: "ord_1" }]),
+      getPrimaryAccountId: vi.fn(() => "paper-account-1"),
+      getReplayState: vi.fn(() => ({ sequence: 1 })),
+      submitOrder: vi.fn(async () => ({ order: { id: "ord_1" }, events: [] })),
+      cancelOrder: vi.fn(async () => ({ events: [] })),
+      ensureFrontendAccount: vi.fn(async () => undefined),
+      updateLeverage: vi.fn(async (state: unknown, leverage: number) => ({ ...(state as object), leverage })),
+      setBootstrapReady: vi.fn(async () => undefined),
+      flushPersistence: vi.fn(async () => undefined),
+      persistExternalEvents: vi.fn(async () => undefined),
+      getEngine: vi.fn(() => ({ ingestMarketTick: vi.fn() })),
+      ingestManualTick: vi.fn(async () => ({ ok: true })),
+      bootstrap: vi.fn(async () => undefined),
+      getRecentEventStore: vi.fn(() => [{ eventType: "OrderAccepted" }])
+    };
+    privateRuntime.marketRuntime = {
+      getMarketData: vi.fn(() => ({ markPrice: 70000 })),
+      getMarketSimulatorState: vi.fn(() => ({ enabled: false })),
+      getHyperliquidCoin: vi.fn(() => "BTC"),
+      getHyperliquidCandleInterval: vi.fn(() => "1m"),
+      getMarketHistory: vi.fn(async () => ({ candles: [], trades: [], book: { bids: [], asks: [] } })),
+      getMarketVolume: vi.fn(async () => ({ records: [] })),
+      startMarketSimulator: vi.fn(() => ({ enabled: true })),
+      stopMarketSimulator: vi.fn(() => ({ enabled: false })),
+      runMarketSimulationTick: vi.fn(async () => undefined),
+      setMarketSimulatorRunning: vi.fn(),
+      setMarketTickInFlight: vi.fn(),
+      shutdown: vi.fn(async () => undefined)
+    };
+    privateRuntime.authRuntime = {
+      login: vi.fn(async () => frontendSession),
+      logout: vi.fn(),
+      getSession: vi.fn(() => frontendSession),
+      listFrontendUsers: vi.fn(async () => [frontendSession.user]),
+      createFrontendUser: vi.fn(async () => frontendSession.user),
+      updateFrontendUser: vi.fn(async () => frontendSession.user),
+      updatePlatformSettings: vi.fn(async (input: unknown) => input),
+      bootstrap: vi.fn(async () => runtime.getPlatformSettings())
+    };
+    privateRuntime.batchJobRunner = {
+      listJobs: vi.fn(() => [{ id: "db-bootstrap" }]),
+      run: vi.fn(async () => ({ executionId: "exec-1" })),
+      listRunningJobs: vi.fn(async () => [{ executionId: "exec-1" }]),
+      getExecution: vi.fn(async () => ({ executionId: "exec-1" }))
+    };
+    privateRuntime.webSocketHub = {
+      addSocket: vi.fn(),
+      removeSocket: vi.fn(),
+      broadcast: vi.fn()
+    };
+
+    expect(runtime.getEngineState("paper-account-1")).toEqual({ account: { accountId: "paper-account-1" } });
+    expect(runtime.getEventStore("paper-account-1")).toEqual([{ eventType: "OrderAccepted" }]);
+    expect(runtime.getFillHistoryEvents("paper-account-1")).toEqual([{ eventType: "OrderFilled" }]);
+    expect(runtime.getMarketData()).toEqual({ markPrice: 70000 });
+    expect(runtime.getMarketSimulatorState()).toEqual({ enabled: false });
+    expect(runtime.getHyperliquidCoin()).toBe("BTC");
+    expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
+    expect(runtime.getAccountIds()).toEqual(["paper-account-1"]);
+    expect(runtime.getOrders("paper-account-1")).toEqual([{ id: "ord_1" }]);
+    expect(runtime.getOrderByClientOrderId("paper-account-1", "0xabc")).toEqual({ id: "ord_1", clientOrderId: "0xabc" });
+    expect(await runtime.cancelAllOpenOrders("paper-account-1")).toEqual([{ orderId: "ord_1" }]);
+    expect(await runtime.getMarketHistory(10)).toEqual({ candles: [], trades: [], book: { bids: [], asks: [] } });
+    expect(await runtime.getMarketVolume(10, "1m", "BTC")).toEqual({ records: [] });
+    expect(runtime.startMarketSimulator()).toEqual({ enabled: true });
+    expect(runtime.stopMarketSimulator()).toEqual({ enabled: false });
+    runtime.setMarketSimulatorRunning(true);
+    runtime.setMarketTickInFlight(true);
+    expect(await runtime.login("demo", "demo123456", "frontend")).toEqual(frontendSession);
+    runtime.logout(frontendSession.token);
+    expect(runtime.getSession(frontendSession.token)).toEqual(frontendSession);
+    expect(await runtime.listFrontendUsers()).toEqual([frontendSession.user]);
+    expect(await runtime.createFrontendUser({
+      username: "demo",
+      password: "demo123456",
+      displayName: "Demo Trader"
+    })).toEqual(frontendSession.user);
+    expect(await runtime.updateFrontendUser("frontend-user-1", {
+      displayName: "Demo Trader"
+    })).toEqual(frontendSession.user);
+    expect(await runtime.updatePlatformSettings({
+      platformName: "Desk",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: true
+    })).toMatchObject({ platformName: "Desk" });
+    expect(runtime.listBatchJobs()).toEqual([{ id: "db-bootstrap" }]);
+    expect(await runtime.runBatchJob("db-bootstrap")).toEqual({ executionId: "exec-1" });
+    expect(await runtime.listRunningBatchJobs()).toEqual([{ executionId: "exec-1" }]);
+    expect(await runtime.getBatchJobExecution("exec-1")).toEqual({ executionId: "exec-1" });
+
+    const listener = vi.fn();
+    const unsubscribe = runtime.onBroadcast(listener);
+    privateRuntime.broadcast("paper-account-1", [{ accountId: "paper-account-1", eventType: "OrderAccepted" }]);
+    expect(listener).toHaveBeenCalled();
+    unsubscribe();
+    privateRuntime.broadcast("paper-account-1", [{ accountId: "paper-account-1", eventType: "OrderAccepted" }]);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    const socket = { send: vi.fn(), on: vi.fn() };
+    runtime.removeSocket(socket);
+    expect(privateRuntime.webSocketHub.removeSocket).toHaveBeenCalledWith(socket);
+  });
+
+  it("covers TradingRuntime edge branches directly", async () => {
+    const repository = {
+      loadEvents: vi.fn(async (sessionId: string) => sessionId === "session-paper-a"
+        ? [{
+          eventId: "evt-1",
+          eventType: "MarketTickReceived",
+          occurredAt: "2026-01-01T00:00:00.000Z",
+          sequence: 1,
+          simulationSessionId: "session-paper-a",
+          accountId: "paper-a",
+          symbol: "BTC-USD",
+          source: "system",
+          payload: {
+            symbol: "BTC-USD",
+            bid: 100,
+            ask: 101,
+            last: 100.5,
+            spread: 1,
+            tickTime: "2026-01-01T00:00:00.000Z",
+            volatilityTag: "normal"
+          }
+        }]
+        : []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined)
+    };
+    const onEvents = vi.fn();
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents
+    });
+
+    expect(() => runtime.getEngineState()).toThrow("No trading account runtime is available.");
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+    await runtime.ensureFrontendAccount("paper-a");
+    expect(repository.loadEvents).toHaveBeenCalledTimes(1);
+
+    expect(runtime.getPrimaryAccountId()).toBe("paper-a");
+    expect(runtime.getFillHistoryEvents("paper-a")).toEqual([]);
+    expect(runtime.getOrderByClientOrderId("paper-a", "0xmissing")).toBeUndefined();
+    expect(runtime.getRecentEventStore("paper-a", 0).length).toBe(1);
+    expect(runtime.getRecentEventStore("paper-a", 5).length).toBe(1);
+    expect(runtime.getReplayState("paper-a")).toMatchObject({
+      simulationSessionId: "session-1"
+    });
+
+    await runtime.setBootstrapReady(false);
+    expect(repository.persistState).not.toHaveBeenCalled();
+    await runtime.persistExternalEvents("paper-a", []);
+    expect(onEvents).not.toHaveBeenCalled();
+
+    expect(await runtime.cancelAllOpenOrders("paper-a")).toEqual([]);
+
+    await runtime.updateLeverage({
+      symbol: "BTC-USD",
+      coin: "BTC",
+      leverage: 10,
+      maxLeverage: 20,
+      szDecimals: 5
+    }, 3);
+    expect(repository.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 3);
+
+    await runtime.flushPersistence();
+    await runtime.setBootstrapReady(true);
+    expect(repository.persistState).toHaveBeenCalled();
   });
 });

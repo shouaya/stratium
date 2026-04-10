@@ -8,6 +8,7 @@ export interface CreateOrderInput {
   orderType: OrderType;
   quantity: number;
   limitPrice?: number;
+  clientOrderId?: string;
   submittedAt?: string;
 }
 

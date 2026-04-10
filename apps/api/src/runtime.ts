@@ -18,6 +18,7 @@ export type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./mark
 
 export class ApiRuntime {
   private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
+  private readonly broadcastListeners = new Set<(accountId: string | undefined, events: AnyEventEnvelope[]) => void>();
 
   private readonly repository = new TradingRepository();
 
@@ -122,6 +123,10 @@ export class ApiRuntime {
 
   getPlatformSettings() {
     return this.platformSettings;
+  }
+
+  getAccountIds() {
+    return this.tradingRuntime.getAccountIds();
   }
 
   getStatePayload(accountId: string) {
@@ -357,6 +362,18 @@ export class ApiRuntime {
     return this.tradingRuntime.cancelOrder(input);
   }
 
+  getOrders(accountId: string) {
+    return this.tradingRuntime.getOrders(accountId);
+  }
+
+  getOrderByClientOrderId(accountId: string, clientOrderId: string) {
+    return this.tradingRuntime.getOrderByClientOrderId(accountId, clientOrderId);
+  }
+
+  async cancelAllOpenOrders(accountId: string, requestedAt?: string) {
+    return this.tradingRuntime.cancelAllOpenOrders(accountId, requestedAt);
+  }
+
   async ingestManualTick(tick: MarketTick): Promise<
     | { ok: true; result: ReturnType<ReturnType<TradingRuntime["getEngine"]>["ingestMarketTick"]> }
     | { ok: false; message: string }
@@ -413,6 +430,16 @@ export class ApiRuntime {
 
   private broadcast(accountId?: string, events: AnyEventEnvelope[] = []): void {
     this.webSocketHub.broadcast(accountId ? events.filter((event) => event.accountId === accountId) : events);
+    for (const listener of this.broadcastListeners) {
+      listener(accountId, accountId ? events.filter((event) => event.accountId === accountId) : events);
+    }
+  }
+
+  onBroadcast(listener: (accountId: string | undefined, events: AnyEventEnvelope[]) => void): () => void {
+    this.broadcastListeners.add(listener);
+    return () => {
+      this.broadcastListeners.delete(listener);
+    };
   }
 
   private get engine() {

@@ -43,6 +43,17 @@ const prismaMock = vi.hoisted(() => ({
   fill: {
     upsert: vi.fn()
   },
+  appUser: {
+    upsert: vi.fn(),
+    findUnique: vi.fn(),
+    findMany: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn()
+  },
+  platformSettings: {
+    upsert: vi.fn(),
+    findUnique: vi.fn()
+  },
   account: {
     upsert: vi.fn(),
     findUnique: vi.fn()
@@ -92,6 +103,160 @@ describe("TradingRepository", () => {
 
     expect(prismaMock.$connect).toHaveBeenCalled();
     expect(prismaMock.$disconnect).toHaveBeenCalled();
+  });
+
+  it("seeds default access, loads users, and manages frontend users and platform settings", async () => {
+    prismaMock.appUser.upsert.mockResolvedValue({});
+    prismaMock.platformSettings.upsert.mockResolvedValue({
+      id: "platform",
+      platformName: "Desk",
+      platformAnnouncement: "Notice",
+      allowFrontendTrading: false,
+      allowManualTicks: false,
+      allowSimulatorControl: false
+    });
+    prismaMock.appUser.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo",
+      isActive: true
+    }).mockResolvedValueOnce(null);
+    prismaMock.appUser.findMany.mockResolvedValue([{
+      id: "user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo",
+      isActive: true
+    }]);
+    prismaMock.appUser.create.mockResolvedValue({
+      id: "user-2",
+      username: "alice",
+      passwordHash: "hash2",
+      role: "frontend",
+      displayName: "Alice",
+      tradingAccountId: "paper-alice",
+      isActive: true
+    });
+    prismaMock.appUser.update.mockResolvedValue({
+      id: "user-2",
+      username: "alice",
+      passwordHash: "hash3",
+      role: "frontend",
+      displayName: "Alice 2",
+      tradingAccountId: null,
+      isActive: false
+    });
+    prismaMock.platformSettings.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "platform",
+        platformName: "Desk",
+        platformAnnouncement: "Notice",
+        allowFrontendTrading: false,
+        allowManualTicks: false,
+        allowSimulatorControl: false
+      });
+
+    await repository.ensureDefaultAccess({
+      frontend: {
+        username: "demo",
+        passwordHash: "hash",
+        displayName: "Demo Trader",
+        tradingAccountId: "paper-demo"
+      },
+      admin: {
+        username: "admin",
+        passwordHash: "hash-admin",
+        displayName: "Admin"
+      }
+    });
+    expect(prismaMock.appUser.upsert).toHaveBeenCalledTimes(2);
+    expect(prismaMock.platformSettings.upsert).toHaveBeenCalled();
+
+    expect(await repository.findUserByUsername("demo")).toEqual({
+      id: "user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo",
+      isActive: true
+    });
+    expect(await repository.findUserByUsername("missing")).toBeNull();
+
+    expect(await repository.listFrontendUsers()).toEqual([{
+      id: "user-1",
+      username: "demo",
+      passwordHash: "hash",
+      role: "frontend",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo",
+      isActive: true
+    }]);
+
+    expect(await repository.createFrontendUser({
+      username: "alice",
+      passwordHash: "hash2",
+      displayName: "Alice",
+      tradingAccountId: "paper-alice"
+    })).toEqual({
+      id: "user-2",
+      username: "alice",
+      passwordHash: "hash2",
+      role: "frontend",
+      displayName: "Alice",
+      tradingAccountId: "paper-alice",
+      isActive: true
+    });
+
+    expect(await repository.updateFrontendUser("user-2", {
+      passwordHash: "hash3",
+      displayName: "Alice 2",
+      tradingAccountId: null,
+      isActive: false
+    })).toEqual({
+      id: "user-2",
+      username: "alice",
+      passwordHash: "hash3",
+      role: "frontend",
+      displayName: "Alice 2",
+      tradingAccountId: null,
+      isActive: false
+    });
+
+    expect(await repository.getPlatformSettings()).toEqual({
+      platformName: "Stratium Demo",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: true
+    });
+    expect(await repository.getPlatformSettings()).toEqual({
+      platformName: "Desk",
+      platformAnnouncement: "Notice",
+      allowFrontendTrading: false,
+      allowManualTicks: false,
+      allowSimulatorControl: false
+    });
+
+    expect(await repository.updatePlatformSettings({
+      platformName: "Desk",
+      platformAnnouncement: "Notice",
+      allowFrontendTrading: false,
+      allowManualTicks: false,
+      allowSimulatorControl: false
+    })).toEqual({
+      platformName: "Desk",
+      platformAnnouncement: "Notice",
+      allowFrontendTrading: false,
+      allowManualTicks: false,
+      allowSimulatorControl: false
+    });
   });
 
   it("loads events and symbol config metadata", async () => {

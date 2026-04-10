@@ -4,6 +4,7 @@ export type PositionSide = "long" | "short" | "flat";
 
 export interface OrderView {
   id: string;
+  clientOrderId?: string;
   accountId: string;
   symbol: string;
   side: OrderSide;

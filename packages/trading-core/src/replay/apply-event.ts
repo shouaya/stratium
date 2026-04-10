@@ -53,6 +53,7 @@ export const applyEvent = (
           ...currentState.orders,
           {
             id: payload.orderId,
+            clientOrderId: payload.clientOrderId,
             accountId: event.accountId,
             symbol: event.symbol,
             side: payload.side,

@@ -184,6 +184,30 @@ export class TradingRuntime {
     return result;
   }
 
+  getOrders(accountId: string) {
+    return this.getRequiredRuntime(accountId).engine.getState().orders;
+  }
+
+  getOrderByClientOrderId(accountId: string, clientOrderId: string) {
+    return this.getRequiredRuntime(accountId).engine.getState().orders.find((order) => order.clientOrderId === clientOrderId);
+  }
+
+  async cancelAllOpenOrders(accountId: string, requestedAt?: string) {
+    const openOrders = this.getRequiredRuntime(accountId).engine.getState().orders
+      .filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED");
+
+    const results = [];
+    for (const order of openOrders) {
+      results.push(await this.cancelOrder({
+        accountId,
+        orderId: order.id,
+        requestedAt
+      }));
+    }
+
+    return results;
+  }
+
   async ingestManualTick(
     tick: MarketTick,
     expectedSymbol: string

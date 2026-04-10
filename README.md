@@ -214,5 +214,7 @@ Batch is docker-job only:
 - [Order Rules](docs/order-rules.md)
 - [Margin Rules](docs/margin-rules.md)
 - [Hyperliquid API Compatibility](docs/hyperliquid-api-compatibility.md)
+- [Hyperliquid WebSocket Compatibility](docs/hyperliquid-websocket-compatibility.md)
 - [MCP Feasibility](docs/mcp-feasibility.md)
+- [Trader MCP](docs/trader-mcp.md)
 - [Hyperliquid + MCP Roadmap](docs/roadmap-hyperliquid-mcp.md)

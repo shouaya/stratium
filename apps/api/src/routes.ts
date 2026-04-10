@@ -1,9 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import { HyperliquidBotAuth } from "./hyperliquid-bot-auth.js";
+import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "./hyperliquid-compat.js";
+import { HyperliquidExchangeCompat } from "./hyperliquid-exchange.js";
+import { HyperliquidPrivateWsHub } from "./hyperliquid-private-ws.js";
 import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js";
 import type { ApiRuntime, MarketSimulatorState } from "./runtime.js";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
+  const exchangeCompat = new HyperliquidExchangeCompat();
+  const botAuth = new HyperliquidBotAuth();
+  const privateWsHub = new HyperliquidPrivateWsHub({
+    getOrders: (accountId) => runtime.getOrders(accountId),
+    getFillHistoryEvents: (accountId) => runtime.getFillHistoryEvents(accountId),
+    getEventStore: (accountId) => runtime.getEventStore(accountId)
+  });
+  runtime.onBroadcast((accountId, events) => {
+    privateWsHub.broadcast(accountId, events);
+  });
   const getToken = (request: { headers: { authorization?: string | string[] | undefined }; query?: unknown }): string | undefined => {
     const authorization = Array.isArray(request.headers.authorization)
       ? request.headers.authorization[0]
@@ -38,9 +52,106 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return session;
   };
 
+  const resolveFrontendAccount = (
+    request: { headers: { authorization?: string | string[] | undefined }; query?: unknown; body?: unknown },
+    reply: { code(code: number): { send(payload: unknown): unknown } },
+    options?: { allowBotSigner?: boolean }
+  ): { accountId: string } | null => {
+    const session = runtime.getSession(getToken(request));
+    if (session?.user.role === "frontend" && session.user.tradingAccountId) {
+      return { accountId: session.user.tradingAccountId };
+    }
+
+    if (options?.allowBotSigner) {
+      try {
+        const bot = botAuth.authenticate(runtime, (request.body ?? {}) as {
+          action?: unknown;
+          nonce?: number;
+          vaultAddress?: string;
+          expiresAfter?: number;
+          signature?: { r?: string; s?: string; v?: number };
+        });
+        return { accountId: bot.accountId };
+      } catch (error) {
+        return reply.code(401).send({
+          status: "unauthorized",
+          message: error instanceof Error ? error.message : "Bot authentication failed."
+        }) as null;
+      }
+    }
+
+    return reply.code(401).send({
+      status: "unauthorized",
+      message: getMessages(resolveLocale(request as never)).auth.loginRequiredForFrontend
+    }) as null;
+  };
+
   app.get("/health", async () => ({
     status: "ok"
   }));
+
+  app.post("/info", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      type?: string;
+      coin?: string;
+      user?: string;
+      oid?: number | string;
+      req?: {
+        coin?: string;
+        interval?: string;
+        startTime?: number;
+        endTime?: number;
+      };
+    };
+    const requiresUserContext = body.type === "openOrders"
+      || body.type === "frontendOpenOrders"
+      || body.type === "orderStatus"
+      || body.type === "clearinghouseState";
+    const frontendAccount = requiresUserContext ? resolveFrontendAccount(request, reply, { allowBotSigner: true }) : null;
+    if (requiresUserContext && !frontendAccount) {
+      return;
+    }
+
+    try {
+      const infoRuntime: HyperliquidInfoRuntime = {
+        getMarketData: () => runtime.getMarketData(),
+        getMarketHistory: (limit: number) => runtime.getMarketHistory(limit),
+        getSymbolConfigState: () => runtime.getSymbolConfigState(),
+        getEngineState: (accountId: string) => runtime.getEngineState(accountId),
+        getOrders: (accountId: string) => runtime.getOrders(accountId),
+        getOrderByClientOrderId: (accountId: string, clientOrderId: string) =>
+          runtime.getOrderByClientOrderId(accountId, clientOrderId),
+        getVirtualOpenOrders: (accountId: string) => exchangeCompat.getVirtualOpenOrders(accountId),
+        getVirtualOrderStatus: (accountId: string, oidOrCloid: number | string) =>
+          exchangeCompat.getVirtualOrderStatus(accountId, oidOrCloid)
+      };
+      return await buildHyperliquidInfoResponse(infoRuntime, body, frontendAccount?.accountId ?? undefined);
+    } catch (error) {
+      return reply.code(400).send({
+        status: "error",
+        message: error instanceof Error ? error.message : "Unsupported Hyperliquid info request."
+      });
+    }
+  });
+
+  app.post("/exchange", async (request, reply) => {
+    const frontendAccount = resolveFrontendAccount(request, reply, { allowBotSigner: true });
+    if (!frontendAccount) {
+      return;
+    }
+
+    try {
+      return await exchangeCompat.handle(runtime, frontendAccount.accountId, request.body as never);
+    } catch (error) {
+      return reply.code(400).send({
+        status: "error",
+        response: {
+          type: "error",
+          data: String(error instanceof Error ? error.message : error)
+        }
+      });
+    }
+  });
 
   app.post("/api/auth/login", async (request, reply) => {
     const locale = resolveLocale(request as never);
@@ -91,6 +202,15 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   app.post("/api/auth/logout", async (request, reply) => {
     runtime.logout(getToken(request));
     return reply.code(204).send();
+  });
+
+  app.get("/api/bot-credentials", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    return botAuth.getCredentials(session.user.tradingAccountId as string);
   });
 
   app.get("/api/state", async (request, reply) => {
@@ -556,6 +676,36 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
         return;
       }
       runtime.addSocket(socket, session);
+    });
+
+    instance.get("/ws-hyperliquid", { websocket: true }, (socket, request) => {
+      const resolved = resolveFrontendAccount({
+        headers: request.headers,
+        query: request.query,
+        body: typeof request.query === "object" && request.query !== null ? {
+          nonce: Number((request.query as { nonce?: string }).nonce),
+          vaultAddress: (request.query as { vaultAddress?: string }).vaultAddress,
+          signature: {
+            r: (request.query as { signer?: string }).signer,
+            s: (request.query as { sig?: string }).sig,
+            v: 27
+          }
+        } : undefined
+      }, {
+        code: () => ({
+          send: () => undefined
+        })
+      }, { allowBotSigner: true });
+
+      if (!resolved) {
+        socket.close();
+        return;
+      }
+
+      privateWsHub.addSocket(socket, resolved.accountId);
+      socket.on?.("message", (message: unknown) => {
+        privateWsHub.handleMessage(socket, String(message));
+      });
     });
   });
 };

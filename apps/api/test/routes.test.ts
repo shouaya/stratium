@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
+import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerRoutes } from "../src/routes";
 
@@ -34,38 +35,120 @@ describe("registerRoutes", () => {
     allowManualTicks: true,
     allowSimulatorControl: true
   };
+  const canonicalStringify = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => canonicalStringify(entry)).join(",")}]`;
+    }
+    if (value && typeof value === "object") {
+      return `{${Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalStringify(entry)}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  };
+  const waitForSocketOpen = (socket: {
+    addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+  }) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for websocket open")), 5_000);
+      socket.addEventListener("open", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Websocket connection failed"));
+      }, { once: true });
+    });
+  const waitForSocketClose = (socket: {
+    addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+  }) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for websocket close")), 5_000);
+      socket.addEventListener("close", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Websocket close failed"));
+      }, { once: true });
+    });
+  const waitForSocketMessage = (socket: {
+    addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+  }) =>
+    new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for websocket message")), 5_000);
+      socket.addEventListener("message", (event: unknown) => {
+        clearTimeout(timer);
+        const payload = event as { data?: unknown };
+        resolve(typeof payload.data === "string" ? JSON.parse(payload.data) : payload.data);
+      }, { once: true });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Websocket message failed"));
+      }, { once: true });
+    });
   const runtime = {
     login: vi.fn(),
     logout: vi.fn(),
     getSession: vi.fn(),
     getPlatformSettings: vi.fn(),
+    getAccountIds: vi.fn(),
     getStatePayload: vi.fn(),
+    getMarketData: vi.fn(),
     getMarketHistory: vi.fn(),
+    getOrders: vi.fn(),
+    getOrderByClientOrderId: vi.fn(),
     getHyperliquidCandleInterval: vi.fn(() => "1m"),
     getHyperliquidCoin: vi.fn(() => "BTC"),
     getMarketVolume: vi.fn(),
     getEngineState: vi.fn(),
     getEventStore: vi.fn(),
+    getFillHistoryEvents: vi.fn(),
     getReplayPayload: vi.fn(),
     getMarketSimulatorState: vi.fn(),
     getSymbolConfigState: vi.fn(),
     getAdminStatePayload: vi.fn(),
     listBatchJobs: vi.fn(),
     runBatchJob: vi.fn(),
+    listRunningBatchJobs: vi.fn(),
+    getBatchJobExecution: vi.fn(),
     listFrontendUsers: vi.fn(),
     createFrontendUser: vi.fn(),
     updateFrontendUser: vi.fn(),
     updatePlatformSettings: vi.fn(),
     updateLeverage: vi.fn(),
+    cancelAllOpenOrders: vi.fn(),
     startMarketSimulator: vi.fn(),
     stopMarketSimulator: vi.fn(),
     ingestManualTick: vi.fn(),
     submitOrder: vi.fn(),
     cancelOrder: vi.fn(),
-    addSocket: vi.fn()
+    addSocket: vi.fn(),
+    onBroadcast: vi.fn(() => () => undefined)
   };
 
   beforeEach(async () => {
+    const exchangeOrders: Array<{
+      id: string;
+      clientOrderId?: string;
+      accountId: string;
+      symbol: string;
+      side: "buy" | "sell";
+      orderType: "market" | "limit";
+      status: "ACCEPTED" | "FILLED";
+      quantity: number;
+      limitPrice?: number;
+      filledQuantity: number;
+      remainingQuantity: number;
+      averageFillPrice?: number;
+      createdAt: string;
+      updatedAt: string;
+    }> = [];
+
     vi.clearAllMocks();
     runtime.login.mockResolvedValue(frontendSession);
     runtime.getSession.mockImplementation((token?: string) => {
@@ -78,22 +161,77 @@ describe("registerRoutes", () => {
       return null;
     });
     runtime.getPlatformSettings.mockReturnValue(platformSettings);
+    runtime.getAccountIds.mockReturnValue(["paper-account-1"]);
     runtime.getStatePayload.mockResolvedValue({ ok: true });
+    runtime.getMarketData.mockReturnValue({
+      source: "hyperliquid",
+      coin: "BTC",
+      connected: true,
+      bestBid: 69999,
+      bestAsk: 70001,
+      markPrice: 70000,
+      book: {
+        bids: [{ price: 69999, size: 1.2, orders: 3 }],
+        asks: [{ price: 70001, size: 1.4, orders: 2 }],
+        updatedAt: 1_700_000_000_000
+      },
+      trades: [],
+      candles: [],
+      assetCtx: {
+        coin: "BTC",
+        markPrice: 70000,
+        midPrice: 70000,
+        oraclePrice: 70002,
+        fundingRate: 0.0001,
+        openInterest: 1234,
+        prevDayPrice: 69000,
+        dayNotionalVolume: 999999,
+        capturedAt: 1_700_000_000_000
+      }
+    });
     runtime.getMarketHistory.mockResolvedValue({ candles: [], trades: [] });
+    runtime.getOrders.mockImplementation(() => exchangeOrders);
+    runtime.getOrderByClientOrderId.mockImplementation((_accountId: string, cloid: string) =>
+      exchangeOrders.find((order) => order.clientOrderId === cloid)
+    );
     runtime.getMarketVolume.mockResolvedValue({ records: [] });
     runtime.getEngineState.mockReturnValue({
       simulationSessionId: "session-1",
-      account: { accountId: "paper-account-1" },
+      account: {
+        accountId: "paper-account-1",
+        walletBalance: 1000,
+        availableBalance: 800,
+        positionMargin: 100,
+        orderMargin: 50,
+        equity: 1010,
+        realizedPnl: 5,
+        unrealizedPnl: 5,
+        riskRatio: 0.2
+      },
       orders: [],
-      position: {}
+      position: {
+        symbol: "BTC-USD",
+        side: "long",
+        quantity: 1,
+        averageEntryPrice: 70000,
+        markPrice: 70100,
+        realizedPnl: 5,
+        unrealizedPnl: 5,
+        initialMargin: 100,
+        maintenanceMargin: 50,
+        liquidationPrice: 65000
+      }
     });
     runtime.getEventStore.mockReturnValue([]);
+    runtime.getFillHistoryEvents.mockReturnValue([]);
     runtime.getReplayPayload.mockReturnValue({ sessionId: "session-1" });
     runtime.getMarketSimulatorState.mockReturnValue({ enabled: false });
     runtime.getSymbolConfigState.mockReturnValue({
       symbol: "BTC-USD",
+      coin: "BTC",
       leverage: 10,
-      maxLeverage: 20
+      maxLeverage: 20,
+      szDecimals: 5
     });
     runtime.getAdminStatePayload.mockReturnValue({ events: [], platform: platformSettings });
     runtime.listBatchJobs.mockReturnValue([
@@ -113,6 +251,27 @@ describe("registerRoutes", () => {
       stdout: "",
       stderr: ""
     });
+    runtime.listRunningBatchJobs.mockResolvedValue([{
+      executionId: "exec-1",
+      jobId: "batch-refresh-hl-day",
+      status: "running",
+      startedAt: "2026-04-09T00:00:00.000Z",
+      command: "",
+      args: [],
+      stdout: "",
+      stderr: ""
+    }]);
+    runtime.getBatchJobExecution.mockResolvedValue({
+      executionId: "exec-1",
+      jobId: "batch-refresh-hl-day",
+      status: "success",
+      startedAt: "2026-04-09T00:00:00.000Z",
+      finishedAt: "2026-04-09T00:10:00.000Z",
+      command: "",
+      args: [],
+      stdout: "ok",
+      stderr: ""
+    });
     runtime.listFrontendUsers.mockResolvedValue([frontendSession.user]);
     runtime.createFrontendUser.mockResolvedValue(frontendSession.user);
     runtime.updateFrontendUser.mockResolvedValue(frontendSession.user);
@@ -121,8 +280,43 @@ describe("registerRoutes", () => {
     runtime.startMarketSimulator.mockReturnValue({ enabled: true });
     runtime.stopMarketSimulator.mockReturnValue({ enabled: false });
     runtime.ingestManualTick.mockResolvedValue({ ok: true, result: { events: [] } });
-    runtime.submitOrder.mockResolvedValue({ events: [] });
+    runtime.submitOrder.mockImplementation(async (input: {
+      accountId: string;
+      symbol: string;
+      side: "buy" | "sell";
+      orderType: "market" | "limit";
+      quantity: number;
+      limitPrice?: number;
+      clientOrderId?: string;
+    }) => {
+      const nextOrder = {
+        id: `ord_${exchangeOrders.length + 1}`,
+        clientOrderId: input.clientOrderId,
+        accountId: input.accountId,
+        symbol: input.symbol,
+        side: input.side,
+        orderType: input.orderType,
+        status: input.orderType === "market" ? "FILLED" as const : "ACCEPTED" as const,
+        quantity: input.quantity,
+        limitPrice: input.limitPrice,
+        filledQuantity: input.orderType === "market" ? input.quantity : 0,
+        remainingQuantity: input.orderType === "market" ? 0 : input.quantity,
+        averageFillPrice: input.orderType === "market" ? 70000 : undefined,
+        createdAt: "2026-04-10T00:00:00.000Z",
+        updatedAt: "2026-04-10T00:00:00.000Z"
+      };
+      exchangeOrders.push(nextOrder);
+      return {
+        events: [{
+          eventType: "OrderRequested",
+          payload: {
+            orderId: nextOrder.id
+          }
+        }]
+      };
+    });
     runtime.cancelOrder.mockResolvedValue({ events: [] });
+    runtime.cancelAllOpenOrders.mockResolvedValue([]);
 
     app = Fastify();
     await app.register(websocket);
@@ -156,7 +350,7 @@ describe("registerRoutes", () => {
       method: "GET",
       url: "/api/account",
       headers: { authorization: `Bearer ${frontendSession.token}` }
-    })).json()).toEqual({ accountId: "paper-account-1" });
+    })).json()).toMatchObject({ accountId: "paper-account-1" });
     expect((await app.inject({
       method: "GET",
       url: "/api/orders",
@@ -175,6 +369,335 @@ describe("registerRoutes", () => {
       url: "/api/replay/session-2",
       headers: { authorization: `Bearer ${frontendSession.token}` }
     })).json()).toEqual({ sessionId: "session-1" });
+  });
+
+  it("serves hyperliquid-compatible info endpoints", async () => {
+    const metaResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: { type: "meta" }
+    });
+    expect(metaResponse.statusCode).toBe(200);
+    expect(metaResponse.json()).toEqual({
+      universe: [{
+        szDecimals: 5,
+        name: "BTC",
+        maxLeverage: 20,
+        marginTableId: 1
+      }],
+      marginTables: [[1, {
+        description: "stratium-single-symbol",
+        marginTiers: [{
+          lowerBound: "0.0",
+          maxLeverage: 20
+        }]
+      }]],
+      collateralToken: 0
+    });
+
+    const orderBookResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: { type: "l2Book", coin: "BTC" }
+    });
+    expect(orderBookResponse.statusCode).toBe(200);
+    expect(orderBookResponse.json()).toEqual({
+      coin: "BTC",
+      time: 1_700_000_000_000,
+      levels: [
+        [{ px: "69999", sz: "1.2", n: 3 }],
+        [{ px: "70001", sz: "1.4", n: 2 }]
+      ]
+    });
+
+    const unsupportedResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: { type: "userState" }
+    });
+    expect(unsupportedResponse.statusCode).toBe(400);
+  });
+
+  it("serves hyperliquid-compatible private info endpoints", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: true,
+            p: "70000",
+            s: "2",
+            r: false,
+            t: { limit: { tif: "Gtc" } },
+            c: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }],
+          grouping: "na"
+        },
+        nonce: 1,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    const openOrdersResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "openOrders", user: "paper-account-1" }
+    });
+    expect(openOrdersResponse.statusCode).toBe(200);
+    expect(openOrdersResponse.json()).toEqual([{
+      coin: "BTC",
+      side: "B",
+      limitPx: "70000",
+      sz: "2",
+      oid: 1,
+      timestamp: new Date("2026-04-10T00:00:00.000Z").getTime(),
+      origSz: "2",
+      cloid: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }]);
+
+    const orderStatusResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "orderStatus", user: "paper-account-1", oid: 1 }
+    });
+    expect(orderStatusResponse.statusCode).toBe(200);
+    expect(orderStatusResponse.json()).toEqual({
+      order: {
+        order: {
+          coin: "BTC",
+          side: "B",
+          limitPx: "70000",
+          sz: "2",
+          oid: 1,
+          timestamp: new Date("2026-04-10T00:00:00.000Z").getTime(),
+          origSz: "2",
+          cloid: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        status: "open",
+        statusTimestamp: new Date("2026-04-10T00:00:00.000Z").getTime()
+      }
+    });
+
+    const clearinghouseResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "clearinghouseState", user: "paper-account-1" }
+    });
+    expect(clearinghouseResponse.statusCode).toBe(200);
+    expect(clearinghouseResponse.json()).toMatchObject({
+      marginSummary: {
+        accountValue: "1010",
+        totalNtlPos: "70000",
+        totalRawUsd: "1000",
+        totalMarginUsed: "150"
+      },
+      crossMaintenanceMarginUsed: "50",
+      withdrawable: "800"
+    });
+  });
+
+  it("serves hyperliquid-compatible exchange endpoints", async () => {
+    const placeResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: true,
+            p: "70000",
+            s: "1",
+            r: false,
+            t: { limit: { tif: "Gtc" } },
+            c: "0x1234567890abcdef1234567890abcdef"
+          }],
+          grouping: "na"
+        },
+        nonce: 1,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    expect(placeResponse.statusCode).toBe(200);
+    expect(placeResponse.json()).toEqual({
+      status: "ok",
+      response: {
+        type: "order",
+        data: {
+          statuses: [{
+            resting: {
+              oid: 1,
+              cloid: "0x1234567890abcdef1234567890abcdef"
+            }
+          }]
+        }
+      }
+    });
+
+    const cancelByCloidResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "cancelByCloid",
+          cancels: [{
+            asset: 0,
+            cloid: "0x1234567890abcdef1234567890abcdef"
+          }]
+        },
+        nonce: 2,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    expect(cancelByCloidResponse.statusCode).toBe(200);
+    expect(cancelByCloidResponse.json()).toEqual({
+      status: "ok",
+      response: {
+        type: "cancel",
+        data: {
+          statuses: [{ success: "ok" }]
+        }
+      }
+    });
+
+    const scheduleCancelResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "scheduleCancel",
+          time: Date.now() + 10_000
+        },
+        nonce: 3,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    expect(scheduleCancelResponse.statusCode).toBe(200);
+    expect(scheduleCancelResponse.json().response.type).toBe("scheduleCancel");
+  });
+
+  it("supports modify reduceOnly and trigger compatibility flows", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: false,
+            p: "70010",
+            s: "1",
+            r: false,
+            t: { limit: { tif: "Gtc" } },
+            c: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }]
+        },
+        nonce: 11,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    const modifyResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "modify",
+          oid: 1,
+          order: {
+            a: 0,
+            b: false,
+            p: "70020",
+            s: "1",
+            r: false,
+            t: { limit: { tif: "Gtc" } }
+          }
+        },
+        nonce: 12,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+    expect(modifyResponse.statusCode).toBe(200);
+    expect(modifyResponse.json().response.data.statuses[0]).toEqual({
+      resting: {
+        oid: 2,
+        cloid: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    });
+
+    const reduceOnlyResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: true,
+            p: "70000",
+            s: "1",
+            r: true,
+            t: { limit: { tif: "Gtc" } }
+          }]
+        },
+        nonce: 13,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+    expect(reduceOnlyResponse.statusCode).toBe(200);
+    expect(reduceOnlyResponse.json().response.data.statuses[0]).toEqual({
+      error: "reduceOnly buy order can only reduce a short position"
+    });
+
+    const triggerResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: false,
+            p: "69900",
+            s: "0.5",
+            r: false,
+            t: { trigger: { isMarket: false, triggerPx: "69950", tpsl: "sl" } },
+            c: "0xtrigger00000000000000000000000001"
+          }]
+        },
+        nonce: 14,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+    expect(triggerResponse.statusCode).toBe(200);
+    expect(triggerResponse.json().response.data.statuses[0].resting.oid).toBeGreaterThanOrEqual(1000000001);
+
+    const triggerOpenOrdersResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "openOrders", user: "paper-account-1" }
+    });
+    expect(triggerOpenOrdersResponse.statusCode).toBe(200);
+    expect(triggerOpenOrdersResponse.json().some((entry: { triggerCondition?: unknown }) => Boolean(entry.triggerCondition))).toBe(true);
   });
 
   it("validates leverage updates and handles success", async () => {
@@ -312,6 +835,16 @@ describe("registerRoutes", () => {
       platform: platformSettings
     });
 
+    const botCredentialsResponse = await app.inject({
+      method: "GET",
+      url: "/api/bot-credentials",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(botCredentialsResponse.statusCode).toBe(200);
+    expect(botCredentialsResponse.json()).toMatchObject({
+      accountId: "paper-account-1"
+    });
+
     const listUsersResponse = await app.inject({
       method: "GET",
       url: "/api/admin/users",
@@ -398,6 +931,43 @@ describe("registerRoutes", () => {
       ]
     });
 
+    const runningExecutionsResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/running",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(runningExecutionsResponse.statusCode).toBe(200);
+    expect(runningExecutionsResponse.json()).toEqual({
+      jobs: [{
+        executionId: "exec-1",
+        jobId: "batch-refresh-hl-day",
+        status: "running",
+        startedAt: "2026-04-09T00:00:00.000Z",
+        command: "",
+        args: [],
+        stdout: "",
+        stderr: ""
+      }]
+    });
+
+    const executionResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/exec-1",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(executionResponse.statusCode).toBe(200);
+    expect(executionResponse.json()).toEqual({
+      executionId: "exec-1",
+      jobId: "batch-refresh-hl-day",
+      status: "success",
+      startedAt: "2026-04-09T00:00:00.000Z",
+      finishedAt: "2026-04-09T00:10:00.000Z",
+      command: "",
+      args: [],
+      stdout: "ok",
+      stderr: ""
+    });
+
     const runBatchJobResponse = await app.inject({
       method: "POST",
       url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
@@ -420,5 +990,395 @@ describe("registerRoutes", () => {
     });
     expect(logoutResponse.statusCode).toBe(204);
     expect(runtime.logout).toHaveBeenCalledWith(frontendSession.token);
+  });
+
+  it("returns localized auth and admin failures", async () => {
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/state"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/users",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(401);
+
+    runtime.getPlatformSettings.mockReturnValueOnce({
+      ...platformSettings,
+      allowFrontendTrading: false
+    });
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { symbol: "BTC-USD", side: "buy", orderType: "market", quantity: 1 }
+    })).statusCode).toBe(403);
+
+    runtime.getPlatformSettings.mockReturnValueOnce({
+      ...platformSettings,
+      allowSimulatorControl: false
+    });
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/market-simulator/start",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {}
+    })).statusCode).toBe(403);
+
+    runtime.getPlatformSettings.mockReturnValueOnce({
+      ...platformSettings,
+      allowManualTicks: false
+    });
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/market-ticks",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: { symbol: "BTC-USD" }
+    })).statusCode).toBe(403);
+
+    runtime.listRunningBatchJobs.mockRejectedValueOnce(new Error("runner unavailable"));
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/running",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    })).statusCode).toBe(500);
+
+    runtime.getBatchJobExecution.mockRejectedValueOnce(new Error("execution missing"));
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/exec-missing",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    })).statusCode).toBe(500);
+
+    runtime.login.mockRejectedValueOnce(new Error("Invalid credentials."));
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "demo", password: "bad", role: "frontend" }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "", password: "", role: undefined }
+    })).statusCode).toBe(400);
+  });
+
+  it("covers additional route error branches and less-used endpoints", async () => {
+    const meUnauthorized = await app.inject({
+      method: "GET",
+      url: "/api/auth/me"
+    });
+    expect(meUnauthorized.statusCode).toBe(401);
+
+    const marketHistoryUnauthorized = await app.inject({
+      method: "GET",
+      url: "/api/market-history"
+    });
+    expect(marketHistoryUnauthorized.statusCode).toBe(401);
+
+    const marketVolumeUnauthorized = await app.inject({
+      method: "GET",
+      url: "/api/market-volume"
+    });
+    expect(marketVolumeUnauthorized.statusCode).toBe(401);
+
+    const privateInfoUnauthorized = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: { type: "openOrders", user: "paper-account-1" }
+    });
+    expect(privateInfoUnauthorized.statusCode).toBe(401);
+
+    const exchangeBadPayload = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        nonce: 999,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+    expect(exchangeBadPayload.statusCode).toBe(400);
+    expect(exchangeBadPayload.json()).toEqual({
+      status: "error",
+      response: {
+        type: "error",
+        data: "Missing action"
+      }
+    });
+
+    const positionsResponse = await app.inject({
+      method: "GET",
+      url: "/api/positions",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(positionsResponse.statusCode).toBe(200);
+    expect(positionsResponse.json()).toMatchObject({
+      symbol: "BTC-USD",
+      side: "long",
+      quantity: 1
+    });
+
+    const fillHistoryResponse = await app.inject({
+      method: "GET",
+      url: "/api/fill-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(fillHistoryResponse.statusCode).toBe(200);
+    expect(fillHistoryResponse.json()).toEqual({
+      sessionId: "session-1",
+      events: []
+    });
+
+    const simulatorStateResponse = await app.inject({
+      method: "GET",
+      url: "/api/market-simulator",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(simulatorStateResponse.statusCode).toBe(200);
+    expect(simulatorStateResponse.json()).toEqual({ enabled: false });
+
+    const adminPlatformSettingsResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/platform-settings",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(adminPlatformSettingsResponse.statusCode).toBe(200);
+    expect(adminPlatformSettingsResponse.json()).toEqual(platformSettings);
+
+    const createUserRejected = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {
+        username: "missing-fields"
+      }
+    });
+    expect(createUserRejected.statusCode).toBe(400);
+
+    runtime.runBatchJob
+      .mockResolvedValueOnce({
+        executionId: "exec-2",
+        jobId: "batch-refresh-hl-day",
+        status: "success",
+        ok: true
+      })
+      .mockResolvedValueOnce({
+        executionId: "exec-3",
+        jobId: "batch-refresh-hl-day",
+        status: "failed",
+        ok: false
+      })
+      .mockRejectedValueOnce("runner exploded");
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {}
+    })).statusCode).toBe(200);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {}
+    })).statusCode).toBe(500);
+
+    const batchRunRejected = await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {}
+    });
+    expect(batchRunRejected.statusCode).toBe(400);
+    expect(batchRunRejected.json()).toEqual({
+      ok: false,
+      message: "Batch job request failed."
+    });
+
+    runtime.login.mockRejectedValueOnce(new Error("Custom auth backend error"));
+    const loginCustomError = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "demo", password: "bad", role: "frontend" }
+    });
+    expect(loginCustomError.statusCode).toBe(401);
+    expect(loginCustomError.json()).toEqual({
+      status: "unauthorized",
+      message: "Custom auth backend error"
+    });
+
+    runtime.getPlatformSettings.mockReturnValueOnce({
+      ...platformSettings,
+      allowSimulatorControl: false
+    });
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/market-simulator/stop",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    })).statusCode).toBe(403);
+
+    const cancelByIdResponse = await app.inject({
+      method: "POST",
+      url: "/api/orders/ord_10/cancel",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { requestedAt: "2026-04-10T00:00:00.000Z" }
+    });
+    expect(cancelByIdResponse.statusCode).toBe(202);
+    expect(runtime.cancelOrder).toHaveBeenLastCalledWith({
+      accountId: "paper-account-1",
+      orderId: "ord_10",
+      requestedAt: "2026-04-10T00:00:00.000Z"
+    });
+  });
+
+  it("authenticates bot signer requests without frontend session", async () => {
+    const credentialsResponse = await app.inject({
+      method: "GET",
+      url: "/api/bot-credentials",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    const credentials = credentialsResponse.json() as {
+      accountId: string;
+      vaultAddress: string;
+      signerAddress: string;
+      apiSecret: string;
+    };
+
+    const signBody = (body: Record<string, unknown>) => {
+      return `0x${createHmac("sha256", credentials.apiSecret).update(canonicalStringify(body)).digest("hex")}`;
+    };
+
+    const exchangeBody = {
+      action: {
+        type: "order",
+        orders: [{
+          a: 0,
+          b: true,
+          p: "70000",
+          s: "1",
+          r: false,
+          t: { limit: { tif: "Gtc" } }
+        }]
+      },
+      nonce: 101,
+      vaultAddress: credentials.vaultAddress,
+      signature: {
+        r: credentials.signerAddress,
+        s: "",
+        v: 27
+      }
+    };
+    exchangeBody.signature.s = signBody({
+      action: exchangeBody.action,
+      nonce: exchangeBody.nonce,
+      vaultAddress: exchangeBody.vaultAddress
+    });
+
+    const exchangeResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      payload: exchangeBody
+    });
+    expect(exchangeResponse.statusCode).toBe(200);
+
+    const replayResponse = await app.inject({
+      method: "POST",
+      url: "/exchange",
+      payload: exchangeBody
+    });
+    expect(replayResponse.statusCode).toBe(401);
+
+    const infoBody = {
+      type: "openOrders",
+      user: credentials.accountId,
+      nonce: 102,
+      vaultAddress: credentials.vaultAddress,
+      signature: {
+        r: credentials.signerAddress,
+        s: "",
+        v: 27
+      }
+    };
+    infoBody.signature.s = signBody({
+      type: infoBody.type,
+      user: infoBody.user,
+      nonce: infoBody.nonce,
+      vaultAddress: infoBody.vaultAddress
+    });
+
+    const infoResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: infoBody
+    });
+    expect(infoResponse.statusCode).toBe(200);
+    expect(Array.isArray(infoResponse.json())).toBe(true);
+  });
+
+  it("handles websocket auth branches and private websocket subscriptions", async () => {
+    const address = await app.listen({ port: 0, host: "127.0.0.1" });
+    const credentialsResponse = await app.inject({
+      method: "GET",
+      url: "/api/bot-credentials",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    const credentials = credentialsResponse.json() as {
+      accountId: string;
+      vaultAddress: string;
+      signerAddress: string;
+      apiSecret: string;
+    };
+    const signBody = (body: Record<string, unknown>) =>
+      `0x${createHmac("sha256", credentials.apiSecret).update(canonicalStringify(body)).digest("hex")}`;
+
+    const unauthorizedFrontendSocket = new (globalThis as unknown as { WebSocket: new (url: string) => {
+      close: () => void;
+      addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+    } }).WebSocket(`${address.replace("http", "ws")}/ws`);
+    await waitForSocketClose(unauthorizedFrontendSocket);
+
+    const frontendSocket = new (globalThis as unknown as { WebSocket: new (url: string) => {
+      close: () => void;
+      addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+    } }).WebSocket(`${address.replace("http", "ws")}/ws?token=${frontendSession.token}`);
+    await waitForSocketOpen(frontendSocket);
+    expect(runtime.addSocket).toHaveBeenCalledTimes(1);
+    frontendSocket.close();
+    await waitForSocketClose(frontendSocket);
+
+    const invalidPrivateSocket = new (globalThis as unknown as { WebSocket: new (url: string) => {
+      close: () => void;
+      addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+    } }).WebSocket(`${address.replace("http", "ws")}/ws-hyperliquid?nonce=401&vaultAddress=0xdeadbeef&signer=0xdeadbeef&sig=0xdeadbeef`);
+    await waitForSocketClose(invalidPrivateSocket);
+
+    const nonce = 402;
+    const vaultAddress = credentials.vaultAddress;
+    const signer = credentials.signerAddress;
+    const sig = signBody({ nonce, vaultAddress });
+    const privateSocket = new (globalThis as unknown as { WebSocket: new (url: string) => {
+      close: () => void;
+      send: (payload: string) => void;
+      addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+    } }).WebSocket(`${address.replace("http", "ws")}/ws-hyperliquid?nonce=${nonce}&vaultAddress=${encodeURIComponent(vaultAddress)}&signer=${encodeURIComponent(signer)}&sig=${encodeURIComponent(sig)}`);
+    await waitForSocketOpen(privateSocket);
+    privateSocket.send(JSON.stringify({
+      method: "subscribe",
+      subscription: {
+        type: "orderUpdates",
+        user: vaultAddress
+      }
+    }));
+    const message = await waitForSocketMessage(privateSocket);
+    expect(message).toEqual({
+      channel: "orderUpdates",
+      data: []
+    });
+    privateSocket.close();
+    await waitForSocketClose(privateSocket);
   });
 });

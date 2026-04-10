@@ -6,6 +6,7 @@ export type EventSource = "market" | "user" | "system" | "replay";
 
 export interface OrderRequestedPayload {
   orderId: string;
+  clientOrderId?: string;
   side: OrderSide;
   orderType: OrderType;
   quantity: number;

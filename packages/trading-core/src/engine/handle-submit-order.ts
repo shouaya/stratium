@@ -18,6 +18,7 @@ export const handleSubmitOrder: TradingCommandHandler<HandleSubmitOrderArgs> = (
 
   context.emitAndApply(events, "OrderRequested", "user", input.symbol, {
     orderId,
+    clientOrderId: input.clientOrderId,
     side: input.side,
     orderType: input.orderType,
     quantity: input.quantity,

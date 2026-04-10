@@ -45,6 +45,13 @@ type FillHistoryResponse = {
   events: AnyEventEnvelope[];
 };
 
+type BotCredentials = {
+  accountId: string;
+  vaultAddress: string;
+  signerAddress: string;
+  apiSecret: string;
+};
+
 type MarketSimulatorState = {
   enabled: boolean;
   symbol: string;
@@ -169,6 +176,66 @@ const extractResponseMessage = (payload: { events?: AnyEventEnvelope[] }, succes
   return successMessage;
 };
 
+const extractExchangeMessage = (
+  payload: {
+    response?: {
+      data?: {
+        statuses?: Array<{
+          error?: string;
+          filled?: unknown;
+          resting?: unknown;
+          success?: string;
+        }>;
+      };
+    };
+  },
+  successMessage: string
+): string => {
+  const firstStatus = payload.response?.data?.statuses?.[0];
+
+  if (firstStatus?.error) {
+    return firstStatus.error;
+  }
+
+  return successMessage;
+};
+
+const toOid = (orderId: string): number => {
+  const numericPart = Number(orderId.replace(/^ord_/, ""));
+  return Number.isFinite(numericPart) ? numericPart : 0;
+};
+
+const canonicalStringify = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalStringify(entry)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalStringify(entry)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+};
+
+const toHex = (value: string): string =>
+  Array.from(new TextEncoder().encode(value)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+const signBotPayload = async (apiSecret: string, payload: Record<string, unknown>): Promise<string> => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(apiSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonicalStringify(payload)));
+  return `0x${toHex(String.fromCharCode(...new Uint8Array(signature)))}`;
+};
+
 export function TradingDashboard({
   apiBaseUrl,
   authToken,
@@ -189,6 +256,7 @@ export function TradingDashboard({
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
   const [message, setMessage] = useState("");
   const [fillHistoryEvents, setFillHistoryEvents] = useState<AnyEventEnvelope[]>([]);
+  const [botCredentials, setBotCredentials] = useState<BotCredentials | null>(null);
   const [tab, setTab] = useState<"market" | "limit">("market");
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
   const [accountTab, setAccountTab] = useState<"balances" | "positions" | "openOrders" | "fills">("balances");
@@ -768,12 +836,13 @@ export function TradingDashboard({
 
   const refresh = async () => {
     try {
-      const [stateResponse, fillHistoryResponse] = await Promise.all([
+      const [stateResponse, fillHistoryResponse, botCredentialsResponse] = await Promise.all([
         fetch(buildApiUrl(apiBaseUrl, "/api/state"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
-        fetch(buildApiUrl(apiBaseUrl, "/api/fill-history"), { cache: "no-store", headers: authHeaders(authToken, locale) })
+        fetch(buildApiUrl(apiBaseUrl, "/api/fill-history"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
+        fetch(buildApiUrl(apiBaseUrl, "/api/bot-credentials"), { cache: "no-store", headers: authHeaders(authToken, locale) })
       ]);
 
-      if (stateResponse.status === 401 || fillHistoryResponse.status === 401) {
+      if (stateResponse.status === 401 || fillHistoryResponse.status === 401 || botCredentialsResponse.status === 401) {
         setMessage(ui.trader.sessionExpired);
         onLogout();
         return;
@@ -781,8 +850,10 @@ export function TradingDashboard({
 
       const payload = await stateResponse.json() as State;
       const fillHistoryPayload = await fillHistoryResponse.json() as FillHistoryResponse;
+      const credentialsPayload = await botCredentialsResponse?.json().catch(() => null) as BotCredentials | null;
       setState(payload);
       setFillHistoryEvents(fillHistoryPayload.events ?? []);
+      setBotCredentials(credentialsPayload);
       setMessage("");
     } catch {
       setMessage(ui.trader.failedLoad);
@@ -790,9 +861,52 @@ export function TradingDashboard({
   };
 
   const submitOrder = async () => {
-    const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders"), { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, symbol: orderForm.symbol, side, orderType: tab, quantity: Number(orderForm.quantity), limitPrice: tab === "limit" ? Number(orderForm.limitPrice) : undefined }) });
-    const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
-    setMessage(response.ok ? extractResponseMessage(payload, "Order submitted.") : ui.trader.orderRejected);
+    if (!botCredentials) {
+      setMessage("Bot credentials are not available.");
+      return;
+    }
+
+    const body = {
+      action: {
+        type: "order",
+        orders: [{
+          a: 0,
+          b: side === "buy",
+          p: String(tab === "limit" ? Number(orderForm.limitPrice) : (side === "buy" ? state.latestTick?.ask ?? 0 : state.latestTick?.bid ?? 0)),
+          s: String(Number(orderForm.quantity)),
+          r: false,
+          t: {
+            limit: {
+              tif: tab === "limit" ? "Gtc" as const : "Ioc" as const
+            }
+          }
+        }],
+        grouping: "na"
+      },
+      nonce: Date.now(),
+      vaultAddress: botCredentials.vaultAddress
+    };
+    const signature = await signBotPayload(botCredentials.apiSecret, body);
+    const response = await fetch(buildApiUrl(apiBaseUrl, "/exchange"), {
+      method: "POST",
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        ...body,
+        signature: {
+          r: botCredentials.signerAddress,
+          s: signature,
+          v: 27
+        }
+      })
+    });
+    const payload = await response.json().catch(() => ({}) as {
+      response?: {
+        data?: {
+          statuses?: Array<{ error?: string }>;
+        };
+      };
+    });
+    setMessage(response.ok ? extractExchangeMessage(payload, "Order submitted.") : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
       setAccountTab("fills");
@@ -800,8 +914,43 @@ export function TradingDashboard({
   };
 
   const cancelOrder = async (orderId: string) => {
-    const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders/cancel"), { method: "POST", headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }), body: JSON.stringify({ accountId: tradingAccountId, orderId }) });
-    setMessage(response.ok ? `Order ${orderId} canceled.` : ui.trader.orderRejected);
+    if (!botCredentials) {
+      setMessage("Bot credentials are not available.");
+      return;
+    }
+
+    const body = {
+      action: {
+        type: "cancel",
+        cancels: [{
+          a: 0,
+          o: toOid(orderId)
+        }]
+      },
+      nonce: Date.now(),
+      vaultAddress: botCredentials.vaultAddress
+    };
+    const signature = await signBotPayload(botCredentials.apiSecret, body);
+    const response = await fetch(buildApiUrl(apiBaseUrl, "/exchange"), {
+      method: "POST",
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        ...body,
+        signature: {
+          r: botCredentials.signerAddress,
+          s: signature,
+          v: 27
+        }
+      })
+    });
+    const payload = await response.json().catch(() => ({}) as {
+      response?: {
+        data?: {
+          statuses?: Array<{ error?: string }>;
+        };
+      };
+    });
+    setMessage(response.ok ? extractExchangeMessage(payload, `Order ${orderId} canceled.`) : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
       setAccountTab("openOrders");
@@ -814,21 +963,54 @@ export function TradingDashboard({
       return;
     }
 
+    if (!botCredentials) {
+      setMessage("Bot credentials are not available.");
+      return;
+    }
+
     const closingSide = state.position.side === "long" ? "sell" : "buy";
-      const response = await fetch(buildApiUrl(apiBaseUrl, "/api/orders"), {
+    const body = {
+      action: {
+        type: "order",
+        orders: [{
+          a: 0,
+          b: closingSide === "buy",
+          p: String(closingSide === "buy" ? state.latestTick?.ask ?? 0 : state.latestTick?.bid ?? 0),
+          s: String(state.position.quantity),
+          r: false,
+          t: {
+            limit: {
+              tif: "Ioc" as const
+            }
+          }
+        }],
+        grouping: "na"
+      },
+      nonce: Date.now(),
+      vaultAddress: botCredentials.vaultAddress
+    };
+    const signature = await signBotPayload(botCredentials.apiSecret, body);
+    const response = await fetch(buildApiUrl(apiBaseUrl, "/exchange"), {
       method: "POST",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
       body: JSON.stringify({
-        accountId: tradingAccountId,
-        symbol: state.position.symbol,
-        side: closingSide,
-        orderType: "market",
-        quantity: state.position.quantity
+        ...body,
+        signature: {
+          r: botCredentials.signerAddress,
+          s: signature,
+          v: 27
+        }
       })
     });
 
-    const payload = await response.json().catch(() => ({}) as { events?: AnyEventEnvelope[] });
-    setMessage(response.ok ? extractResponseMessage(payload, "Position close order submitted.") : ui.trader.orderRejected);
+    const payload = await response.json().catch(() => ({}) as {
+      response?: {
+        data?: {
+          statuses?: Array<{ error?: string }>;
+        };
+      };
+    });
+    setMessage(response.ok ? extractExchangeMessage(payload, "Position close order submitted.") : ui.trader.orderRejected);
 
     if (response.ok) {
       await refresh();

@@ -27,7 +27,7 @@ services:
     container_name: stratium-job-runner
     restart: unless-stopped
     working_dir: /workspace
-    command: sh -lc "pnpm install --frozen-lockfile && pnpm --filter @stratium/job-runner build && pnpm --filter @stratium/job-runner start"
+    command: sh -lc "pnpm --filter @stratium/job-runner build && pnpm --filter @stratium/job-runner start"
     environment:
       NODE_ENV: production
       JOB_RUNNER_PORT: 4300
@@ -58,7 +58,7 @@ services:
     container_name: stratium-api
     restart: unless-stopped
     working_dir: /workspace
-    command: sh -lc "pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm --filter @stratium/shared build && pnpm --filter @stratium/trading-core build && pnpm --filter @stratium/api build && pnpm --filter @stratium/api start"
+    command: sh -lc "pnpm exec prisma generate && pnpm --filter @stratium/shared build && pnpm --filter @stratium/trading-core build && pnpm --filter @stratium/api build && pnpm --filter @stratium/api start"
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/stratium?schema=public}
@@ -86,7 +86,7 @@ services:
     container_name: stratium-web
     restart: unless-stopped
     working_dir: /workspace
-    command: sh -lc "pnpm install --frozen-lockfile && pnpm --filter @stratium/web build && pnpm --filter @stratium/web start"
+    command: sh -lc "pnpm --filter @stratium/web build && pnpm --filter @stratium/web start"
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
