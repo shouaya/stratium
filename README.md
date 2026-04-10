@@ -15,34 +15,81 @@ Stratium is a PH1 trading simulation platform focused on a deterministic trading
 
 ## Architecture
 
-```text
-                    +----------------------+
-                    |   Hyperliquid /      |
-                    |   Simulator Feed     |
-                    +----------+-----------+
-                               |
-                               v
-                    +----------+-----------+
-                    |   apps/api           |
-                    | runtime coordinator  |
-                    | trading-runtime      |
-                    | market-runtime       |
-                    | websocket-hub        |
-                    +----+------------+----+
-                         |            |
-             REST / WS   |            | persist / load
-                         v            v
-                  +------+----+   +---+----------------+
-                  | apps/web  |   | PostgreSQL         |
-                  | Next.js UI|   | events + snapshots |
-                  +-----------+   +---+----------------+
-                                       ^
-                                       |
-                            +----------+-----------+
-                            | packages/trading-core|
-                            | deterministic engine |
-                            +----------------------+
+```mermaid
+flowchart LR
+    subgraph Clients[Clients]
+        Human[Human Trader]
+        Web[Web UI\nNext.js]
+        Bot[Bot / Strategy Client]
+        MCP[MCP Client / AI Agent]
+    end
+
+    subgraph Edge[API Edge]
+        REST[HTTP API\n/info /exchange /api/*]
+        WS[WebSocket Layer\n/ws today\nHL-style user WS next]
+        Auth[Session + Bot Signer Auth\nnonce + signature checks]
+    end
+
+    subgraph App[apps/api]
+        Runtime[Runtime Coordinator]
+        Trading[Trading Runtime]
+        Market[Market Runtime]
+        Compat[Hyperliquid Compatibility Layer]
+    end
+
+    subgraph Core[packages/trading-core]
+        Engine[Deterministic Trading Engine]
+        Replay[Replay / Event Application]
+        Rules[Order / Fill / Margin Rules]
+    end
+
+    subgraph Data[Persistence]
+        DB[(PostgreSQL)]
+        Events[Simulation Events]
+        Snapshots[Orders / Positions / Market Snapshots]
+    end
+
+    subgraph Feeds[Market Sources]
+        HL[Hyperliquid Market Data]
+        Sim[Local Simulator]
+    end
+
+    Human --> Web
+    Web --> REST
+    Web --> WS
+    Bot --> REST
+    MCP --> REST
+
+    REST --> Auth
+    WS --> Auth
+    Auth --> Compat
+    Compat --> Runtime
+
+    Runtime --> Trading
+    Runtime --> Market
+    Trading --> Engine
+    Engine --> Replay
+    Engine --> Rules
+
+    HL --> Market
+    Sim --> Market
+    Market --> Runtime
+
+    Trading --> DB
+    Market --> DB
+    DB --> Events
+    DB --> Snapshots
+    DB --> Runtime
 ```
+
+Interaction summary:
+
+- Human users operate through the Web UI.
+- Bots and future MCP clients use the Hyperliquid-compatible API surface.
+- The API layer handles session auth for humans and signer + nonce auth for bot-style flows.
+- `apps/api` coordinates trading state, market state, compatibility behavior, and websocket delivery.
+- `packages/trading-core` remains the deterministic source of trading behavior.
+- PostgreSQL stores event history and query-oriented snapshots for replay and state hydration.
 
 ## Key Make Commands
 
@@ -138,3 +185,6 @@ Batch is docker-job only:
 - [Event Spec](docs/event-spec.md)
 - [Order Rules](docs/order-rules.md)
 - [Margin Rules](docs/margin-rules.md)
+- [Hyperliquid API Compatibility](docs/hyperliquid-api-compatibility.md)
+- [MCP Feasibility](docs/mcp-feasibility.md)
+- [Hyperliquid + MCP Roadmap](docs/roadmap-hyperliquid-mcp.md)
