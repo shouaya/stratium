@@ -15,26 +15,64 @@ Stratium is a PH1 trading simulation platform focused on a deterministic trading
 
 ## Architecture
 
+### External Interaction
+
 ```mermaid
 flowchart LR
-    subgraph Clients[Clients]
+    subgraph Clients[Actors]
         Human[Human Trader]
         Web[Web UI\nNext.js]
-        Bot[Bot / Strategy Client]
-        MCP[MCP Client / AI Agent]
+        Agent[AI Agent]
     end
 
-    subgraph Edge[API Edge]
+    subgraph AIStack[AI Tooling]
+        StrategyMCP[Strategy MCP\nanalysis / planning / signals]
+        TraderMCP[Trader MCP\nexecution / account / market tools]
+    end
+
+    subgraph Edge[Access Layer]
         REST[HTTP API\n/info /exchange /api/*]
         WS[WebSocket Layer\n/ws today\nHL-style user WS next]
         Auth[Session + Bot Signer Auth\nnonce + signature checks]
     end
 
-    subgraph App[apps/api]
+    Compat[Hyperliquid Compatibility Layer]
+    Runtime[Runtime Coordinator]
+    DB[(PostgreSQL)]
+    Market[Hyperliquid Feed / Simulator]
+
+    Human --> Web
+    Web --> REST
+    Web --> WS
+    Agent --> StrategyMCP
+    Agent --> TraderMCP
+    TraderMCP --> REST
+
+    REST --> Auth
+    WS --> Auth
+    Auth --> Compat
+    Compat --> Runtime
+    Market --> Runtime
+    DB --> Runtime
+    Runtime --> DB
+```
+
+### Internal Runtime and Data Flow
+
+```mermaid
+flowchart LR
+    subgraph Feeds[Market Sources]
+        HL[Hyperliquid Market Data]
+        Sim[Local Simulator]
+    end
+
+    subgraph API[apps/api]
+        Compat[Hyperliquid Compatibility Layer]
         Runtime[Runtime Coordinator]
         Trading[Trading Runtime]
         Market[Market Runtime]
-        Compat[Hyperliquid Compatibility Layer]
+        WS[WebSocket Hub]
+        Auth[Auth / Bot Signer / Nonce]
     end
 
     subgraph Core[packages/trading-core]
@@ -46,38 +84,27 @@ flowchart LR
     subgraph Data[Persistence]
         DB[(PostgreSQL)]
         Events[Simulation Events]
-        Snapshots[Orders / Positions / Market Snapshots]
+        Views[Orders / Positions / Accounts]
+        Snapshots[Market Snapshots / Candles]
     end
 
-    subgraph Feeds[Market Sources]
-        HL[Hyperliquid Market Data]
-        Sim[Local Simulator]
-    end
-
-    Human --> Web
-    Web --> REST
-    Web --> WS
-    Bot --> REST
-    MCP --> REST
-
-    REST --> Auth
-    WS --> Auth
     Auth --> Compat
     Compat --> Runtime
-
     Runtime --> Trading
     Runtime --> Market
+    Runtime --> WS
+
     Trading --> Engine
     Engine --> Replay
     Engine --> Rules
 
     HL --> Market
     Sim --> Market
-    Market --> Runtime
 
     Trading --> DB
     Market --> DB
     DB --> Events
+    DB --> Views
     DB --> Snapshots
     DB --> Runtime
 ```
@@ -85,7 +112,8 @@ flowchart LR
 Interaction summary:
 
 - Human users operate through the Web UI.
-- Bots and future MCP clients use the Hyperliquid-compatible API surface.
+- AI agents are expected to reason through a separate strategy-oriented MCP layer and call the trader-facing MCP for execution.
+- The trader-facing MCP is the execution boundary over the Hyperliquid-compatible API surface.
 - The API layer handles session auth for humans and signer + nonce auth for bot-style flows.
 - `apps/api` coordinates trading state, market state, compatibility behavior, and websocket delivery.
 - `packages/trading-core` remains the deterministic source of trading behavior.
