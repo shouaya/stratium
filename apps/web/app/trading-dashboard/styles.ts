@@ -30,8 +30,23 @@ export const tabIdle: CSSProperties = {
 export const tabActive: CSSProperties = { ...tabIdle, color: "#f8fafc", borderBottomColor: "#2dd4bf" };
 export const btnGhost: CSSProperties = { border: "1px solid #253740", background: "#111d24", color: "#dce7ee", padding: "10px 14px", borderRadius: 10, cursor: "pointer" };
 export const btnInline: CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", cursor: "pointer" };
-export const btnModeIdle: CSSProperties = { border: "1px solid #24353d", background: "#101b22", color: "#8fa3af", padding: "9px 12px", borderRadius: 10, cursor: "pointer", fontWeight: 700 };
-export const btnModeActive: CSSProperties = { ...btnModeIdle, background: "#15333a", borderColor: "#2a5964", color: "#f8fafc" };
+export const btnModeIdle: CSSProperties = {
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#24353d",
+  background: "#101b22",
+  color: "#8fa3af",
+  padding: "9px 12px",
+  borderRadius: 10,
+  cursor: "pointer",
+  fontWeight: 700
+};
+export const btnModeActive: CSSProperties = {
+  ...btnModeIdle,
+  background: "#15333a",
+  borderColor: "#2a5964",
+  color: "#f8fafc"
+};
 export const selectStyle: CSSProperties = { border: "1px solid #394d56", background: "#122028", color: "#dce7ee", borderRadius: 8, padding: "6px 10px", outline: "none" };
 export const btnSide: CSSProperties = {
   borderWidth: 1,

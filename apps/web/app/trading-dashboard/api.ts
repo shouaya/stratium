@@ -88,6 +88,40 @@ export const fetchDashboardSnapshot = async (
   };
 };
 
+export const fetchOrderActivity = async (
+  apiBaseUrl: string,
+  authToken: string,
+  locale: AppLocale,
+  tradingAccountId?: string | null
+): Promise<{
+  openOrdersResponse: Response;
+  orderHistoryResponse: Response;
+  openOrdersPayload: FrontendOpenOrder[];
+  orderHistoryPayload: HistoricalOrder[];
+}> => {
+  const [openOrdersResponse, orderHistoryResponse] = await Promise.all([
+    fetch(buildApiUrl(apiBaseUrl, "/info"), {
+      method: "POST",
+      cache: "no-store",
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ type: "frontendOpenOrders", user: tradingAccountId ?? undefined })
+    }),
+    fetch(buildApiUrl(apiBaseUrl, "/api/order-history"), { cache: "no-store", headers: authHeaders(authToken, locale) })
+  ]);
+
+  const openOrdersRaw = await openOrdersResponse.json().catch(() => []) as unknown;
+  const openOrdersPayload = Array.isArray(openOrdersRaw) ? openOrdersRaw as FrontendOpenOrder[] : [];
+  const orderHistoryRaw = await orderHistoryResponse.json().catch(() => []) as unknown;
+  const orderHistoryPayload = Array.isArray(orderHistoryRaw) ? orderHistoryRaw as HistoricalOrder[] : [];
+
+  return {
+    openOrdersResponse,
+    orderHistoryResponse,
+    openOrdersPayload,
+    orderHistoryPayload
+  };
+};
+
 export const submitSignedExchangeRequest = async (input: {
   apiBaseUrl: string;
   authToken: string;

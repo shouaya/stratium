@@ -396,6 +396,58 @@ describe("HyperliquidExchangeCompat", () => {
     expect(cancelRejected.response.data.statuses[0]).toEqual({ error: "Cancel rejected" });
   });
 
+  it("cancels the opposite TP/SL trigger when one side triggers", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime } = makeRuntime();
+
+    runtime.getEngineState.mockReturnValue({ position: { side: "long", quantity: 1 } });
+
+    const tpPlaced = await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 24,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        orders: [{
+          a: 0,
+          b: false,
+          p: "73200",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "73200", tpsl: "tp" } },
+          c: "0xtp-oco"
+        }]
+      }
+    });
+    const slPlaced = await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 25,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        orders: [{
+          a: 0,
+          b: false,
+          p: "73100",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "73100", tpsl: "sl" } },
+          c: "0xsl-oco"
+        }]
+      }
+    });
+
+    const tpOid = tpPlaced.response.data.statuses[0]?.resting?.oid as number;
+    const slOid = slPlaced.response.data.statuses[0]?.resting?.oid as number;
+
+    runtime.getMarketData.mockReturnValue({ markPrice: 73092, bestBid: 73091, bestAsk: 73093 });
+    await (compat as any).processTriggerOrders(runtime);
+
+    const history = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(history.find((order: any) => order.oid === slOid)?.status).toBe("filled");
+    expect(history.find((order: any) => order.oid === tpOid)?.status).toBe("canceled");
+
+    compat.shutdown();
+  });
+
   it("covers trigger modify edge cases and resolves orders by cloid and pending oid", async () => {
     const compat = new HyperliquidExchangeCompat();
     const { runtime, orders } = makeRuntime();

@@ -563,6 +563,10 @@ export class HyperliquidExchangeCompat {
 
     for (const order of pendingOrders) {
       const oid = order.oid;
+      const currentOrder = await this.store.findTriggerOrder(order.accountId, oid);
+      if (!currentOrder || currentOrder.status !== "triggerPending") {
+        continue;
+      }
       const shouldTrigger = this.shouldTriggerOrder(order, referencePrice);
 
       if (!shouldTrigger) {
@@ -602,8 +606,33 @@ export class HyperliquidExchangeCompat {
           actualTriggerPx: referencePrice,
           updatedAt: Date.now()
         });
+        await this.cancelOpposingTriggerOrders(history);
       }
     }
+  }
+
+  private async cancelOpposingTriggerOrders(triggeredOrder: TriggerOrderHistoryRecord) {
+    const pendingOrders = await this.store.listPendingTriggerOrders();
+    const opposingOrders = pendingOrders.filter((order) =>
+      order.accountId === triggeredOrder.accountId
+      && order.asset === triggeredOrder.asset
+      && order.isBuy === triggeredOrder.isBuy
+      && order.reduceOnly === triggeredOrder.reduceOnly
+      && order.oid !== triggeredOrder.oid
+    );
+
+    await Promise.all(opposingOrders.map(async (order) => {
+      const history = await this.store.findTriggerOrder(order.accountId, order.oid);
+      if (!history || history.status !== "triggerPending") {
+        return;
+      }
+
+      await this.store.upsertTriggerOrderHistory({
+        ...history,
+        status: "canceled",
+        updatedAt: Date.now()
+      });
+    }));
   }
 
   private shouldTriggerOrder(order: PendingTriggerOrder, referencePrice: number) {

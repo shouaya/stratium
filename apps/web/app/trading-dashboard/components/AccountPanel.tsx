@@ -27,6 +27,10 @@ export function AccountPanel({ vm }: { vm: any }) {
   };
 
   const renderHistoricalTpsl = (order: any) => {
+    if (order.kind !== "trigger") {
+      return "--";
+    }
+
     const displayPrice = order.averageFillPrice != null && Number.isFinite(order.averageFillPrice)
       ? fmt(Number(order.averageFillPrice), vm.priceDigits)
       : order.limitPrice != null && Number.isFinite(order.limitPrice)

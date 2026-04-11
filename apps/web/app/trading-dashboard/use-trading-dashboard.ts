@@ -6,7 +6,7 @@ import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-c
 import { buildWebSocketUrl } from "../api-base-url";
 import { filterCandlesToRecent24Hours } from "../market-window";
 import { getUiText } from "../i18n";
-import { fetchDashboardSnapshot, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
+import { fetchDashboardSnapshot, fetchOrderActivity, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
 import { createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createSimpleOrderBody } from "./model";
 import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
@@ -44,6 +44,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   });
   const [leverageDraft, setLeverageDraft] = useState(10);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activityRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const priceDigits = useMemo(() => priceDigitsForSymbol(orderForm.symbol), [orderForm.symbol]);
   const contractCoin = useMemo(() => state.market?.coin ?? coinFromSymbol(orderForm.symbol), [orderForm.symbol, state.market?.coin]);
@@ -442,6 +443,21 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     }
   };
 
+  const refreshOrderActivity = async () => {
+    try {
+      const activity = await fetchOrderActivity(apiBaseUrl, authToken, locale, viewer.tradingAccountId);
+      if (activity.openOrdersResponse.status === 401 || activity.orderHistoryResponse.status === 401) {
+        setMessage(ui.trader.sessionExpired);
+        onLogout();
+        return;
+      }
+      setFrontendOpenOrders(activity.openOrdersPayload);
+      setHistoricalOrders(activity.orderHistoryPayload);
+    } catch {
+      // Keep the current view and let the next refresh retry.
+    }
+  };
+
   useEffect(() => {
     void refresh();
     let active = true;
@@ -470,6 +486,13 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
         if (payload.events?.length) {
           const fillEvents = payload.events.filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
           setFillHistoryEvents((current) => mergeEvents(current, fillEvents));
+          const requiresActivityRefresh = payload.events.some((event) => event.eventType !== "MarketTickReceived");
+          if (requiresActivityRefresh && !activityRefreshTimerRef.current) {
+            activityRefreshTimerRef.current = setTimeout(() => {
+              activityRefreshTimerRef.current = null;
+              void refreshOrderActivity();
+            }, 150);
+          }
         }
       });
 
@@ -492,6 +515,10 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
+      }
+      if (activityRefreshTimerRef.current) {
+        clearTimeout(activityRefreshTimerRef.current);
+        activityRefreshTimerRef.current = null;
       }
       socket?.close();
     };
