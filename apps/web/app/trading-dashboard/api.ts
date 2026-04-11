@@ -3,7 +3,7 @@
 import { authHeaders } from "../auth-client";
 import { buildApiUrl } from "../api-base-url";
 import type { AppLocale } from "../auth-client";
-import type { BotCredentials, ExchangeResponsePayload, FillHistoryResponse, State } from "./types";
+import type { BotCredentials, ExchangeResponsePayload, FillHistoryResponse, FrontendOpenOrder, HistoricalOrder, State } from "./types";
 
 const canonicalStringify = (value: unknown): string => {
   if (Array.isArray(value)) {
@@ -39,32 +39,52 @@ export const signBotPayload = async (apiSecret: string, payload: Record<string, 
 export const fetchDashboardSnapshot = async (
   apiBaseUrl: string,
   authToken: string,
-  locale: AppLocale
+  locale: AppLocale,
+  tradingAccountId?: string | null
 ): Promise<{
   stateResponse: Response;
   fillHistoryResponse: Response;
   botCredentialsResponse: Response;
+  openOrdersResponse: Response;
+  orderHistoryResponse: Response;
   statePayload: State;
   fillHistoryPayload: FillHistoryResponse;
   credentialsPayload: BotCredentials | null;
+  openOrdersPayload: FrontendOpenOrder[];
+  orderHistoryPayload: HistoricalOrder[];
 }> => {
-  const [stateResponse, fillHistoryResponse, botCredentialsResponse] = await Promise.all([
+  const [stateResponse, fillHistoryResponse, botCredentialsResponse, openOrdersResponse, orderHistoryResponse] = await Promise.all([
     fetch(buildApiUrl(apiBaseUrl, "/api/state"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
     fetch(buildApiUrl(apiBaseUrl, "/api/fill-history"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
-    fetch(buildApiUrl(apiBaseUrl, "/api/bot-credentials"), { cache: "no-store", headers: authHeaders(authToken, locale) })
+    fetch(buildApiUrl(apiBaseUrl, "/api/bot-credentials"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
+    fetch(buildApiUrl(apiBaseUrl, "/info"), {
+      method: "POST",
+      cache: "no-store",
+      headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ type: "frontendOpenOrders", user: tradingAccountId ?? undefined })
+    }),
+    fetch(buildApiUrl(apiBaseUrl, "/api/order-history"), { cache: "no-store", headers: authHeaders(authToken, locale) })
   ]);
 
   const statePayload = await stateResponse.json() as State;
   const fillHistoryPayload = await fillHistoryResponse.json() as FillHistoryResponse;
   const credentialsPayload = await botCredentialsResponse.json().catch(() => null) as BotCredentials | null;
+  const openOrdersRaw = await openOrdersResponse.json().catch(() => []) as unknown;
+  const openOrdersPayload = Array.isArray(openOrdersRaw) ? openOrdersRaw as FrontendOpenOrder[] : [];
+  const orderHistoryRaw = await orderHistoryResponse.json().catch(() => []) as unknown;
+  const orderHistoryPayload = Array.isArray(orderHistoryRaw) ? orderHistoryRaw as HistoricalOrder[] : [];
 
   return {
     stateResponse,
     fillHistoryResponse,
     botCredentialsResponse,
+    openOrdersResponse,
+    orderHistoryResponse,
     statePayload,
     fillHistoryPayload,
-    credentialsPayload
+    credentialsPayload,
+    openOrdersPayload,
+    orderHistoryPayload
   };
 };
 

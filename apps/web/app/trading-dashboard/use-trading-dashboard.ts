@@ -7,11 +7,11 @@ import { buildWebSocketUrl } from "../api-base-url";
 import { filterCandlesToRecent24Hours } from "../market-window";
 import { getUiText } from "../i18n";
 import { fetchDashboardSnapshot, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
-import { createAdvancedOrdersBody, createCancelOrderBody, createClosePositionBody, createSimpleOrderBody } from "./model";
-import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, PersonalFill, State, TickPayload } from "./types";
+import { createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createSimpleOrderBody } from "./model";
+import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
 
-export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }: DashboardViewProps) => {
+export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, viewer }: DashboardViewProps) => {
   const ui = getUiText(locale);
   const t = ui.trader;
   const [state, setState] = useState<State>({ account: null, orders: [], position: null, latestTick: null, events: [] });
@@ -19,13 +19,17 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
   const [fillHistoryEvents, setFillHistoryEvents] = useState<AnyEventEnvelope[]>([]);
   const [botCredentials, setBotCredentials] = useState<any>(null);
   const [tab, setTab] = useState<"market" | "limit">("market");
-  const [orderPanelMode, setOrderPanelMode] = useState<"simple" | "advanced">("simple");
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
-  const [accountTab, setAccountTab] = useState<"positions" | "openOrders" | "fills">("positions");
+  const [accountTab, setAccountTab] = useState<"positions" | "openOrders" | "orderHistory" | "fills">("positions");
   const [tradePanelOpen, setTradePanelOpen] = useState(false);
+  const [positionTpslPanelOpen, setPositionTpslPanelOpen] = useState(false);
   const [timeframe, setTimeframe] = useState<"1m" | "5m" | "15m" | "1h">("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderForm, setOrderForm] = useState({ symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
+  const [frontendOpenOrders, setFrontendOpenOrders] = useState<FrontendOpenOrder[]>([]);
+  const [historicalOrders, setHistoricalOrders] = useState<HistoricalOrder[]>([]);
+  const [orderHistoryPage, setOrderHistoryPage] = useState(1);
+  const [fillsPage, setFillsPage] = useState(1);
   const [advancedForm, setAdvancedForm] = useState<AdvancedOrderForm>({
     takeProfitEnabled: false,
     takeProfitQuantity: "",
@@ -266,6 +270,15 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
   const marginUsageRatio = pricingPreview && availableBalance > 0 ? Math.min(pricingPreview.estimatedMargin / availableBalance, 1) : 0;
   const postTradeAvailableRatio = pricingPreview && state.account?.equity ? Math.max(Math.min((pricingPreview.remainingAvailable / state.account.equity) * 100, 100), -100) : 0;
   const referenceTriggerPrice = state.market?.markPrice ?? state.latestTick?.last;
+  const latestReferencePrice = side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
+  const activePositionTpslOrders = useMemo(
+    () => (Array.isArray(frontendOpenOrders) ? frontendOpenOrders : []).filter((order) => Boolean(order.triggerCondition)),
+    [frontendOpenOrders]
+  );
+  const hasPositionTpsl = activePositionTpslOrders.length > 0;
+  const takeProfitOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "tp"), [activePositionTpslOrders]);
+  const stopLossOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "sl"), [activePositionTpslOrders]);
+  const historyPageSize = 30;
 
   const advancedOrderError = useMemo(() => {
     const position = state.position;
@@ -373,6 +386,17 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     return fills.sort((left, right) => new Date(right.filledAt).getTime() - new Date(left.filledAt).getTime());
   }, [fillHistoryEvents, state.orders]);
 
+  const orderHistoryPageCount = Math.max(1, Math.ceil(historicalOrders.length / historyPageSize));
+  const fillsPageCount = Math.max(1, Math.ceil(personalFills.length / historyPageSize));
+  const pagedHistoricalOrders = useMemo(
+    () => historicalOrders.slice((orderHistoryPage - 1) * historyPageSize, orderHistoryPage * historyPageSize),
+    [historicalOrders, orderHistoryPage]
+  );
+  const pagedPersonalFills = useMemo(
+    () => personalFills.slice((fillsPage - 1) * historyPageSize, fillsPage * historyPageSize),
+    [fillsPage, personalFills]
+  );
+
   useEffect(() => {
     if (state.symbolConfig?.leverage) {
       setLeverageDraft(state.symbolConfig.leverage);
@@ -385,10 +409,24 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     }
   }, [orderForm.symbol, state.symbolConfig?.symbol]);
 
+  useEffect(() => {
+    if (!state.position || state.position.side === "flat" || state.position.quantity <= 0) {
+      setPositionTpslPanelOpen(false);
+    }
+  }, [state.position]);
+
+  useEffect(() => {
+    setOrderHistoryPage((current) => Math.min(current, orderHistoryPageCount));
+  }, [orderHistoryPageCount]);
+
+  useEffect(() => {
+    setFillsPage((current) => Math.min(current, fillsPageCount));
+  }, [fillsPageCount]);
+
   const refresh = async () => {
     try {
-      const snapshot = await fetchDashboardSnapshot(apiBaseUrl, authToken, locale);
-      if (snapshot.stateResponse.status === 401 || snapshot.fillHistoryResponse.status === 401 || snapshot.botCredentialsResponse.status === 401) {
+      const snapshot = await fetchDashboardSnapshot(apiBaseUrl, authToken, locale, viewer.tradingAccountId);
+      if (snapshot.stateResponse.status === 401 || snapshot.fillHistoryResponse.status === 401 || snapshot.botCredentialsResponse.status === 401 || snapshot.openOrdersResponse.status === 401 || snapshot.orderHistoryResponse.status === 401) {
         setMessage(ui.trader.sessionExpired);
         onLogout();
         return;
@@ -396,6 +434,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
       setState(snapshot.statePayload);
       setFillHistoryEvents(snapshot.fillHistoryPayload.events ?? []);
       setBotCredentials(snapshot.credentialsPayload);
+      setFrontendOpenOrders(snapshot.openOrdersPayload);
+      setHistoricalOrders(snapshot.orderHistoryPayload);
       setMessage("");
     } catch {
       setMessage(ui.trader.failedLoad);
@@ -455,7 +495,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
       }
       socket?.close();
     };
-  }, [apiBaseUrl, authToken, locale]);
+  }, [apiBaseUrl, authToken, locale, viewer.tradingAccountId]);
 
   const submitOrder = async () => {
     if (!botCredentials) {
@@ -558,6 +598,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     if (response.ok) {
       await refresh();
       setAccountTab("openOrders");
+      setPositionTpslPanelOpen(false);
     }
   };
 
@@ -571,6 +612,152 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     await refresh();
   };
 
+  const selectOrderType = (nextTab: "market" | "limit") => {
+    setTab(nextTab);
+    if (nextTab !== "limit" || !latestReferencePrice || !Number.isFinite(latestReferencePrice)) {
+      return;
+    }
+    setOrderForm((current) => ({
+      ...current,
+      limitPrice: latestReferencePrice.toFixed(priceDigits)
+    }));
+  };
+
+  const openPositionTpslPanel = () => {
+    if (!state.position || state.position.side === "flat" || state.position.quantity <= 0) {
+      setMessage(t.advancedPositionRequired);
+      return;
+    }
+    const quantityText = fmt(state.position.quantity, quantityDecimals);
+    setAdvancedForm({
+      takeProfitEnabled: Boolean(takeProfitOrder),
+      takeProfitQuantity: takeProfitOrder?.origSz ?? quantityText,
+      takeProfitTriggerPrice: takeProfitOrder?.triggerCondition?.triggerPx ?? "",
+      takeProfitExecution: takeProfitOrder?.triggerCondition?.isMarket ? "market" : "limit",
+      takeProfitLimitPrice: takeProfitOrder && !takeProfitOrder.triggerCondition?.isMarket ? takeProfitOrder.limitPx : "",
+      stopLossEnabled: Boolean(stopLossOrder),
+      stopLossQuantity: stopLossOrder?.origSz ?? quantityText,
+      stopLossTriggerPrice: stopLossOrder?.triggerCondition?.triggerPx ?? "",
+      stopLossExecution: stopLossOrder?.triggerCondition?.isMarket ? "market" : "limit",
+      stopLossLimitPrice: stopLossOrder && !stopLossOrder.triggerCondition?.isMarket ? stopLossOrder.limitPx : ""
+    });
+    setPositionTpslPanelOpen(true);
+  };
+
+  const cancelPositionTpsl = async (kind: "tp" | "sl") => {
+    const target = kind === "tp" ? takeProfitOrder : stopLossOrder;
+    if (!botCredentials || !target) {
+      return;
+    }
+    const { response, payload } = await submitSignedExchangeRequest({
+      apiBaseUrl,
+      authToken,
+      locale,
+      botCredentials,
+      body: createCancelOrderBody({ oid: target.oid, botCredentials })
+    });
+    if (response.status === 401) {
+      setMessage(ui.trader.sessionExpired);
+      onLogout();
+      return;
+    }
+    setMessage(response.ok ? extractExchangeMessage(payload, `${kind.toUpperCase()} canceled.`) : ui.trader.orderRejected);
+    if (response.ok) {
+      await refresh();
+    }
+  };
+
+  const submitPositionTpsl = async () => {
+    if (!botCredentials) {
+      setMessage("Bot credentials are not available.");
+      return;
+    }
+    if (advancedOrderError || !state.position || state.position.side === "flat") {
+      setMessage(advancedOrderError ?? t.advancedPositionRequired);
+      return;
+    }
+
+    const requests: Array<Record<string, unknown>> = [];
+    const nextTakeProfitOrder = createAdvancedTriggerWireOrder({
+      kind: "tp",
+      enabled: advancedForm.takeProfitEnabled,
+      quantity: advancedForm.takeProfitQuantity,
+      triggerPrice: advancedForm.takeProfitTriggerPrice,
+      execution: advancedForm.takeProfitExecution,
+      limitPrice: advancedForm.takeProfitLimitPrice,
+      positionSide: state.position.side,
+      clientOrderId: takeProfitOrder?.cloid
+    });
+    const nextStopLossOrder = createAdvancedTriggerWireOrder({
+      kind: "sl",
+      enabled: advancedForm.stopLossEnabled,
+      quantity: advancedForm.stopLossQuantity,
+      triggerPrice: advancedForm.stopLossTriggerPrice,
+      execution: advancedForm.stopLossExecution,
+      limitPrice: advancedForm.stopLossLimitPrice,
+      positionSide: state.position.side,
+      clientOrderId: stopLossOrder?.cloid
+    });
+
+    if (takeProfitOrder && !advancedForm.takeProfitEnabled) {
+      requests.push(createCancelOrderBody({ oid: takeProfitOrder.oid, botCredentials }));
+    } else if (nextTakeProfitOrder) {
+      requests.push(takeProfitOrder
+        ? createModifyTriggerOrderBody({ oid: takeProfitOrder.oid, order: nextTakeProfitOrder, botCredentials })
+        : {
+          action: { type: "order", orders: [nextTakeProfitOrder], grouping: "na" },
+          nonce: Date.now(),
+          vaultAddress: botCredentials.vaultAddress
+        });
+    }
+
+    if (stopLossOrder && !advancedForm.stopLossEnabled) {
+      requests.push(createCancelOrderBody({ oid: stopLossOrder.oid, botCredentials }));
+    } else if (nextStopLossOrder) {
+      requests.push(stopLossOrder
+        ? createModifyTriggerOrderBody({ oid: stopLossOrder.oid, order: nextStopLossOrder, botCredentials })
+        : {
+          action: { type: "order", orders: [nextStopLossOrder], grouping: "na" },
+          nonce: Date.now() + 1,
+          vaultAddress: botCredentials.vaultAddress
+        });
+    }
+
+    if (requests.length === 0) {
+      setMessage(t.advancedSelectOne);
+      return;
+    }
+
+    for (const body of requests) {
+      const { response, payload } = await submitSignedExchangeRequest({
+        apiBaseUrl,
+        authToken,
+        locale,
+        botCredentials,
+        body
+      });
+      if (response.status === 401) {
+        setMessage(ui.trader.sessionExpired);
+        onLogout();
+        return;
+      }
+      if (!response.ok) {
+        setMessage(ui.trader.orderRejected);
+        return;
+      }
+      const messageText = extractExchangeMessage(payload, t.advancedOrdersPlaced);
+      if (messageText && messageText !== t.advancedOrdersPlaced) {
+        setMessage(messageText);
+        return;
+      }
+    }
+
+    setMessage(t.advancedOrdersPlaced);
+    await refresh();
+    setAccountTab("openOrders");
+    setPositionTpslPanelOpen(false);
+  };
+
   return {
     ui,
     t,
@@ -579,14 +766,15 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     message,
     tab,
     setTab,
-    orderPanelMode,
-    setOrderPanelMode,
+    selectOrderType,
     bookTab,
     setBookTab,
     accountTab,
     setAccountTab,
     tradePanelOpen,
     setTradePanelOpen,
+    positionTpslPanelOpen,
+    setPositionTpslPanelOpen,
     timeframe,
     setTimeframe,
     side,
@@ -595,6 +783,16 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     setOrderForm,
     advancedForm,
     setAdvancedForm,
+    frontendOpenOrders,
+    historicalOrders,
+    pagedHistoricalOrders,
+    orderHistoryPage,
+    setOrderHistoryPage,
+    orderHistoryPageCount,
+    pagedPersonalFills,
+    fillsPage,
+    setFillsPage,
+    fillsPageCount,
     leverageDraft,
     setLeverageDraft,
     priceDigits,
@@ -618,11 +816,18 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout }:
     postTradeAvailableRatio,
     referenceTriggerPrice,
     advancedOrderError,
+    activePositionTpslOrders,
+    hasPositionTpsl,
+    takeProfitOrder,
+    stopLossOrder,
     personalFills,
     submitOrder,
     cancelOrder,
     closePosition,
     submitAdvancedOrders,
-    updateLeverage
+    submitPositionTpsl,
+    updateLeverage,
+    openPositionTpslPanel,
+    cancelPositionTpsl
   };
 };

@@ -4,38 +4,40 @@ import { box, btnBuyActive, btnBuySubmit, btnGhost, btnModeActive, btnModeIdle, 
 import { Field, Line } from "./primitives";
 import { fmt } from "../utils";
 
-function SelectionCard({
-  label,
-  checked,
-  onClick
-}: {
-  label: string;
-  checked: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <label
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        padding: "11px 12px",
-        borderRadius: 10,
-        background: "#0f1c23",
-        border: checked ? "1px solid #2a5964" : "1px solid #24353d",
-        cursor: "pointer"
-      }}
-      onClick={onClick}
-    >
-      <strong style={{ color: checked ? "#f8fafc" : "#8fa3af", fontSize: 13 }}>{label}</strong>
-      <input type="checkbox" checked={checked} readOnly />
-    </label>
-  );
-}
-
 export function OrderEntryPanel({ vm, popup, open, onClose }: { vm: any; popup?: boolean; open?: boolean; onClose?: () => void }) {
   const { state, t, ui } = vm;
+  const advancedOrdersSection = (
+    <>
+      <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e" }}>
+        <Line label={t.currentPosition} value={!state.position || state.position.side === "flat" ? t.noPosition : `${state.position.side} · ${fmt(state.position.quantity, 4)} ${vm.contractCoin}`} />
+        <Line label={t.referencePrice} value={fmt(vm.referenceTriggerPrice, vm.priceDigits)} />
+      </div>
+      {[
+        ["takeProfit", t.takeProfit, "takeProfitEnabled", "takeProfitQuantity", "takeProfitTriggerPrice", "takeProfitExecution", "takeProfitLimitPrice", t.takeProfitQuantity],
+        ["stopLoss", t.stopLoss, "stopLossEnabled", "stopLossQuantity", "stopLossTriggerPrice", "stopLossExecution", "stopLossLimitPrice", t.stopLossQuantity]
+      ].map(([key, label, enabledKey, quantityKey, triggerKey, executionKey, limitKey, quantityLabel]) => (
+        <label key={key} style={{ display: "grid", gap: 8, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <strong>{label}</strong>
+            <input type="checkbox" checked={vm.advancedForm[enabledKey]} onChange={(event) => vm.setAdvancedForm((current: any) => ({ ...current, [enabledKey]: event.target.checked }))} />
+          </div>
+          {vm.advancedForm[enabledKey] ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <Field label={quantityLabel} value={vm.advancedForm[quantityKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [quantityKey]: value }))} inputMode="decimal" hint={t.advancedContractsHint.replace("{quantity}", fmt(state.position?.quantity, vm.quantityDecimals))} />
+              <Field label={t.triggerPrice} value={vm.advancedForm[triggerKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [triggerKey]: value }))} inputMode="decimal" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button onClick={() => vm.setAdvancedForm((current: any) => ({ ...current, [executionKey]: "market" }))} style={vm.advancedForm[executionKey] === "market" ? btnModeActive : btnModeIdle}>{t.marketExecution}</button>
+                <button onClick={() => vm.setAdvancedForm((current: any) => ({ ...current, [executionKey]: "limit" }))} style={vm.advancedForm[executionKey] === "limit" ? btnModeActive : btnModeIdle}>{t.limitExecution}</button>
+              </div>
+              {vm.advancedForm[executionKey] === "limit" ? <Field label={t.limitPrice} value={vm.advancedForm[limitKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [limitKey]: value }))} inputMode="decimal" /> : null}
+            </div>
+          ) : null}
+        </label>
+      ))}
+      <div style={{ color: vm.advancedOrderError ? "#f87171" : "#7e97a5", fontSize: 12 }}>{vm.advancedOrderError ?? t.advancedReady}</div>
+      <button disabled={Boolean(vm.advancedOrderError)} onClick={() => void vm.submitAdvancedOrders()} style={{ ...btnGhost, opacity: vm.advancedOrderError ? 0.5 : 1, cursor: vm.advancedOrderError ? "not-allowed" : "pointer" }}>{t.placeAdvancedOrders}</button>
+    </>
+  );
 
   const panel = (
     <div
@@ -55,14 +57,7 @@ export function OrderEntryPanel({ vm, popup, open, onClose }: { vm: any; popup?:
           <button onClick={onClose} style={btnGhost}>{t.closeTradePanel}</button>
         </div>
       ) : null}
-      <div style={{ display: "grid", gap: 10, padding: "14px 14px 0", borderBottom: "1px solid #16262f" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <SelectionCard label={t.simplePanel} checked={vm.orderPanelMode === "simple"} onClick={() => vm.setOrderPanelMode("simple")} />
-          <SelectionCard label={t.advancedPanel} checked={vm.orderPanelMode === "advanced"} onClick={() => vm.setOrderPanelMode("advanced")} />
-        </div>
-        <div style={{ paddingBottom: 14 }} />
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "0 14px 14px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "14px" }}>
         <button onClick={() => vm.setSide("buy")} style={vm.side === "buy" ? btnBuyActive : btnSide}>{t.buy}</button>
         <button onClick={() => vm.setSide("sell")} style={vm.side === "sell" ? btnSellActive : btnSide}>{t.sell}</button>
       </div>
@@ -78,41 +73,26 @@ export function OrderEntryPanel({ vm, popup, open, onClose }: { vm: any; popup?:
         <div style={{ display: "grid", gap: 6 }}>
           <span style={{ color: "#7e97a5", fontSize: 12 }}>{t.type}</span>
           <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 13 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-              <input type="radio" name="trade-order-type" checked={vm.tab === "market"} onChange={() => vm.setTab("market")} />
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }} onClick={() => vm.selectOrderType("market")}>
+              <input type="radio" name="trade-order-type" checked={vm.tab === "market"} readOnly />
               <span>{t.market}</span>
             </label>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-              <input type="radio" name="trade-order-type" checked={vm.tab === "limit"} onChange={() => vm.setTab("limit")} />
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }} onClick={() => vm.selectOrderType("limit")}>
+              <input type="radio" name="trade-order-type" checked={vm.tab === "limit"} readOnly />
               <span>{t.limit}</span>
             </label>
           </div>
         </div>
         <Field label={t.contracts} value={vm.orderForm.quantity} onChange={(value) => vm.setOrderForm((current: any) => ({ ...current, quantity: value }))} inputMode="decimal" error={vm.quantityFieldError ?? undefined} hint={!vm.quantityFieldError ? t.marginPreviewHint.replace("{decimals}", String(vm.quantityDecimals)) : undefined} />
+        {vm.tab === "market" ? advancedOrdersSection : null}
         {vm.tab === "limit" ? <Field label={t.limitPrice} value={vm.orderForm.limitPrice} onChange={(value) => vm.setOrderForm((current: any) => ({ ...current, limitPrice: value }))} inputMode="decimal" error={vm.limitPriceFieldError ?? undefined} hint={!vm.limitPriceFieldError ? `${t.referencePrice} ${vm.side === "buy" ? ui.admin.ask.toLowerCase() : ui.admin.bid.toLowerCase()} ${fmt(vm.side === "buy" ? state.latestTick?.ask : state.latestTick?.bid, vm.priceDigits)}` : undefined} /> : null}
+        {vm.tab === "limit" ? advancedOrdersSection : null}
         <div style={{ color: "#7e97a5", fontSize: 12 }}>{t.oneContract.replace("{coin}", vm.contractCoin)}</div>
         <div style={{ display: "grid", gap: 8 }}>{vm.orderCheckItems.map((item: any) => <div key={item.label} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "9px 10px", borderRadius: 10, border: item.ok ? "1px solid #17433c" : "1px solid #4a2424", background: item.ok ? "rgba(19, 78, 74, 0.2)" : "rgba(127, 29, 29, 0.16)", fontSize: 12 }}><strong style={{ color: item.ok ? "#86efac" : "#fda4af" }}>{item.label}</strong><span style={{ color: item.ok ? "#d1fae5" : "#fecdd3", textAlign: "right" }}>{item.detail}</span></div>)}</div>
         {vm.pricingPreview ? <div style={{ display: "grid", gap: 6, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e", fontSize: 12 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.estimatedPrice}</span><strong>{fmt(vm.pricingPreview.referencePrice, vm.priceDigits)}</strong></div><div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.notional}</span><strong>{fmt(vm.pricingPreview.notional, 2)} USDC</strong></div><div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.requiredMargin}</span><strong>{fmt(vm.pricingPreview.estimatedMargin, 2)} USDC</strong></div><div style={{ display: "grid", gap: 6, marginTop: 4 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.marginUsage}</span><strong>{fmt(vm.marginUsageRatio * 100, 1)}%</strong></div><div style={{ height: 8, borderRadius: 999, background: "#0b151b", overflow: "hidden" }}><div style={{ width: `${vm.marginUsageRatio * 100}%`, height: "100%", background: vm.marginUsageRatio > 0.85 ? "#ef4444" : vm.marginUsageRatio > 0.6 ? "#f59e0b" : "#22c55e" }} /></div></div><div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}><span style={{ color: "#7e97a5" }}>{t.availableAfter}</span><strong style={{ color: vm.pricingPreview.remainingAvailable < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(vm.pricingPreview.remainingAvailable, 2)} USDC</strong></div><div style={{ color: "#7e97a5" }}>{t.postTradeFreeMargin.replace("{ratio}", fmt(vm.postTradeAvailableRatio, 1))}</div></div> : null}
         {vm.orderError ? <div style={{ color: "#f87171", fontSize: 12 }}>{vm.orderError}</div> : <div style={{ color: "#7e97a5", fontSize: 12 }}>{t.checksPassed}</div>}
         <button disabled={Boolean(vm.orderError)} onClick={() => void vm.submitOrder()} style={{ ...(vm.side === "buy" ? btnBuySubmit : btnSellSubmit), opacity: vm.orderError ? 0.5 : 1, cursor: vm.orderError ? "not-allowed" : "pointer" }}>{vm.side === "buy" ? t.buy : t.sell} {vm.contractCoin} Perp</button>
       </div>
-      {vm.orderPanelMode === "advanced" ? (
-        <div style={{ display: "grid", gap: 12, padding: "0 14px 14px", borderTop: "1px solid #16262f" }}>
-          <div style={{ display: "grid", gap: 4, paddingTop: 14 }}><strong style={{ fontSize: 14 }}>{t.advancedPanel}</strong><div style={{ color: "#7e97a5", fontSize: 12 }}>{t.advancedHint}</div></div>
-          <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e" }}><Line label={t.currentPosition} value={!state.position || state.position.side === "flat" ? t.noPosition : `${state.position.side} · ${fmt(state.position.quantity, 4)} ${vm.contractCoin}`} /><Line label={t.referencePrice} value={fmt(vm.referenceTriggerPrice, vm.priceDigits)} /></div>
-          {[
-            ["takeProfit", t.takeProfit, "takeProfitEnabled", "takeProfitQuantity", "takeProfitTriggerPrice", "takeProfitExecution", "takeProfitLimitPrice", t.takeProfitQuantity],
-            ["stopLoss", t.stopLoss, "stopLossEnabled", "stopLossQuantity", "stopLossTriggerPrice", "stopLossExecution", "stopLossLimitPrice", t.stopLossQuantity]
-          ].map(([key, label, enabledKey, quantityKey, triggerKey, executionKey, limitKey, quantityLabel]) => (
-            <label key={key} style={{ display: "grid", gap: 8, padding: 12, borderRadius: 10, background: "#0f1c23", border: "1px solid #15262e" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}><strong>{label}</strong><input type="checkbox" checked={vm.advancedForm[enabledKey]} onChange={(event) => vm.setAdvancedForm((current: any) => ({ ...current, [enabledKey]: event.target.checked }))} /></div>
-              {vm.advancedForm[enabledKey] ? <div style={{ display: "grid", gap: 8 }}><Field label={quantityLabel} value={vm.advancedForm[quantityKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [quantityKey]: value }))} inputMode="decimal" hint={t.advancedContractsHint.replace("{quantity}", fmt(state.position?.quantity, vm.quantityDecimals))} /><Field label={t.triggerPrice} value={vm.advancedForm[triggerKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [triggerKey]: value }))} inputMode="decimal" /><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}><button onClick={() => vm.setAdvancedForm((current: any) => ({ ...current, [executionKey]: "market" }))} style={vm.advancedForm[executionKey] === "market" ? btnModeActive : btnModeIdle}>{t.marketExecution}</button><button onClick={() => vm.setAdvancedForm((current: any) => ({ ...current, [executionKey]: "limit" }))} style={vm.advancedForm[executionKey] === "limit" ? btnModeActive : btnModeIdle}>{t.limitExecution}</button></div>{vm.advancedForm[executionKey] === "limit" ? <Field label={t.limitPrice} value={vm.advancedForm[limitKey]} onChange={(value) => vm.setAdvancedForm((current: any) => ({ ...current, [limitKey]: value }))} inputMode="decimal" /> : null}</div> : null}
-            </label>
-          ))}
-          <div style={{ color: vm.advancedOrderError ? "#f87171" : "#7e97a5", fontSize: 12 }}>{vm.advancedOrderError ?? t.advancedReady}</div>
-          <button disabled={Boolean(vm.advancedOrderError)} onClick={() => void vm.submitAdvancedOrders()} style={{ ...btnGhost, opacity: vm.advancedOrderError ? 0.5 : 1, cursor: vm.advancedOrderError ? "not-allowed" : "pointer" }}>{t.placeAdvancedOrders}</button>
-        </div>
-      ) : null}
     </div>
   );
 

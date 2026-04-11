@@ -107,6 +107,44 @@ export type BotCredentials = {
   apiSecret: string;
 };
 
+export type FrontendOpenOrder = {
+  coin: string;
+  side: "B" | "A";
+  limitPx: string;
+  sz: string;
+  oid: number;
+  timestamp: number;
+  origSz: string;
+  cloid?: string;
+  triggerCondition?: {
+    triggerPx: string;
+    isMarket: boolean;
+    tpsl: "tp" | "sl";
+  };
+};
+
+export type HistoricalOrder = {
+  kind: "order" | "trigger";
+  orderId: string;
+  clientOrderId?: string;
+  symbol: string;
+  side: "buy" | "sell";
+  orderType: "market" | "limit";
+  quantity: number;
+  filledQuantity: number;
+  limitPrice?: number;
+  averageFillPrice?: number;
+  reduceOnly: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  triggerCondition?: {
+    triggerPx: string;
+    isMarket: boolean;
+    tpsl: "tp" | "sl";
+  };
+};
+
 export type TimeframeId = "1m" | "5m" | "15m" | "1h";
 
 export type EnrichedTick = TickPayload & {

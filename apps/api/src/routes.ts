@@ -302,6 +302,71 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
     return runtime.getReplayPayload(session.user.tradingAccountId as string, (request.params as { sessionId: string }).sessionId);
   });
+
+  app.get("/api/order-history", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    const accountId = session.user.tradingAccountId as string;
+    const triggerHistory = exchangeCompat.getVirtualOrderHistory(accountId);
+    const triggerHistoryByCloid = new Map(triggerHistory.filter((order) => order.cloid).map((order) => [order.cloid as string, order]));
+    const orders = runtime.getOrders(accountId)
+      .slice()
+      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+      .map((order) => {
+        const linkedTrigger = order.clientOrderId ? triggerHistoryByCloid.get(order.clientOrderId) : undefined;
+        const inferredTpsl = !linkedTrigger && order.clientOrderId?.startsWith("0xtp-")
+          ? "tp"
+          : !linkedTrigger && order.clientOrderId?.startsWith("0xsl-")
+            ? "sl"
+            : undefined;
+
+        return {
+          kind: "order",
+          orderId: order.id,
+          clientOrderId: order.clientOrderId,
+          symbol: order.symbol,
+          side: order.side,
+          orderType: order.orderType,
+          quantity: order.quantity,
+          filledQuantity: order.filledQuantity,
+          limitPrice: order.limitPrice,
+          averageFillPrice: order.averageFillPrice,
+          reduceOnly: Boolean(linkedTrigger),
+          status: order.status,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+          triggerCondition: linkedTrigger?.triggerCondition ?? (inferredTpsl ? {
+            triggerPx: "",
+            isMarket: order.orderType === "market",
+            tpsl: inferredTpsl
+          } : undefined)
+        };
+      });
+
+    const triggerOrders = triggerHistory.map((order) => ({
+      kind: "trigger",
+      orderId: String(order.oid),
+      clientOrderId: order.cloid,
+      symbol: `${order.coin}-USD`,
+      side: order.side === "B" ? "buy" : "sell",
+      orderType: order.triggerCondition.isMarket ? "market" : "limit",
+      quantity: Number(order.origSz),
+      filledQuantity: order.status === "filled" ? Number(order.origSz) : 0,
+      limitPrice: Number(order.limitPx),
+      averageFillPrice: order.status === "filled" ? Number(order.limitPx) : undefined,
+      reduceOnly: order.reduceOnly,
+      status: order.status,
+      createdAt: new Date(order.timestamp).toISOString(),
+      updatedAt: new Date(order.statusTimestamp).toISOString(),
+      triggerCondition: order.triggerCondition
+    }));
+
+    return [...orders, ...triggerOrders]
+      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+  });
   app.get("/api/market-simulator", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;

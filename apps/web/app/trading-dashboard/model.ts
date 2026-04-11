@@ -136,3 +136,53 @@ export const createAdvancedOrdersBody = (input: {
     vaultAddress: input.botCredentials.vaultAddress
   };
 };
+
+export const createAdvancedTriggerWireOrder = (input: {
+  kind: "tp" | "sl";
+  enabled: boolean;
+  quantity: string;
+  triggerPrice: string;
+  execution: "market" | "limit";
+  limitPrice: string;
+  positionSide: "long" | "short";
+  clientOrderId?: string;
+}) => {
+  if (!input.enabled) {
+    return null;
+  }
+
+  const exitIsBuy = input.positionSide === "short";
+  return {
+    a: 0,
+    b: exitIsBuy,
+    p: String(
+      input.execution === "limit"
+        ? Number(input.limitPrice)
+        : Number(input.triggerPrice)
+    ),
+    s: String(Number(input.quantity)),
+    r: true,
+    t: {
+      trigger: {
+        isMarket: input.execution === "market",
+        triggerPx: String(Number(input.triggerPrice)),
+        tpsl: input.kind
+      }
+    },
+    c: input.clientOrderId ?? createClientOrderId(input.kind)
+  };
+};
+
+export const createModifyTriggerOrderBody = (input: {
+  oid: number;
+  order: ReturnType<typeof createAdvancedTriggerWireOrder>;
+  botCredentials: BotCredentials;
+}) => ({
+  action: {
+    type: "modify" as const,
+    oid: input.oid,
+    order: input.order
+  },
+  nonce: Date.now(),
+  vaultAddress: input.botCredentials.vaultAddress
+});

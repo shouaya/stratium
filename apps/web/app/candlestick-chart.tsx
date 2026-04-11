@@ -16,6 +16,7 @@ import {
   type UTCTimestamp
 } from "lightweight-charts";
 import type { PositionView } from "@stratium/shared";
+import type { FrontendOpenOrder } from "./trading-dashboard/types";
 
 const TOKYO_TIMEZONE = "Asia/Tokyo";
 
@@ -33,13 +34,15 @@ export function CandlestickChart({
   volumeData = [],
   dark = false,
   priceDigits = 4,
-  position
+  position,
+  triggerOrders = []
 }: {
   data: CandlestickData<UTCTimestamp>[];
   volumeData?: HistogramData<UTCTimestamp>[];
   dark?: boolean;
   priceDigits?: number;
   position?: PositionView | null;
+  triggerOrders?: FrontendOpenOrder[];
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
@@ -259,7 +262,24 @@ export function CandlestickChart({
         title: line.title
       }));
     }
-  }, [dark, position]);
+
+    for (const order of triggerOrders) {
+      const triggerPx = Number(order.triggerCondition?.triggerPx);
+      if (!Number.isFinite(triggerPx) || triggerPx <= 0) {
+        continue;
+      }
+
+      const isTakeProfit = order.triggerCondition?.tpsl === "tp";
+      priceLinesRef.current.push(candles.createPriceLine({
+        price: triggerPx,
+        color: isTakeProfit ? "#22c55e" : "#f59e0b",
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: isTakeProfit ? "TP Trigger" : "SL Trigger"
+      }));
+    }
+  }, [dark, position, triggerOrders]);
 
   return (
     <div style={{ position: "relative" }}>

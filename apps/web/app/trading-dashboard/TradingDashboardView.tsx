@@ -6,6 +6,7 @@ import { MarketPanel } from "./components/MarketPanel";
 import { AccountPanel } from "./components/AccountPanel";
 import { BalancePanel } from "./components/BalancePanel";
 import { OrderEntryPanel } from "./components/OrderEntryPanel";
+import { PositionTpslPanel } from "./components/PositionTpslPanel";
 
 export function TradingDashboardView({
   locale,
@@ -22,7 +23,7 @@ export function TradingDashboardView({
 }) {
   return (
     <main style={{ minHeight: "100dvh", width: "100%", background: "#071116", color: "#dbe7ef", padding: 0, fontFamily: "\"Segoe UI\", sans-serif" }}>
-      <div style={{ display: "grid", gap: 8, padding: 0, boxSizing: "border-box" }}>
+      <div style={{ display: "grid", gap: 8, padding: 0, boxSizing: "border-box", position: "relative" }}>
         <HeaderBar locale={locale} viewer={viewer} onLocaleChange={onLocaleChange} onLogout={onLogout} vm={vm} />
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(300px,360px)", gap: 8, minHeight: 0, padding: "0 8px 8px", alignItems: "stretch" }}>
@@ -41,6 +42,7 @@ export function TradingDashboardView({
             </div>
           </div>
         </div>
+        <PositionTpslPanel vm={vm} open={vm.positionTpslPanelOpen} onClose={() => vm.setPositionTpslPanelOpen(false)} />
       </div>
     </main>
   );

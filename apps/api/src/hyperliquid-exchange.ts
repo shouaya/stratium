@@ -129,6 +129,11 @@ interface PendingTriggerOrder {
   createdAt: number;
 }
 
+interface TriggerOrderHistoryRecord extends PendingTriggerOrder {
+  status: "triggerPending" | "triggered" | "filled" | "canceled";
+  updatedAt: number;
+}
+
 export class HyperliquidExchangeCompat {
   private static readonly TRIGGER_OID_BASE = 1_000_000_000;
 
@@ -137,6 +142,8 @@ export class HyperliquidExchangeCompat {
   private readonly scheduledCancelTimes = new Map<string, number | null>();
 
   private readonly pendingTriggerOrders = new Map<number, PendingTriggerOrder>();
+
+  private readonly triggerOrderHistory = new Map<number, TriggerOrderHistoryRecord>();
 
   private triggerOrderSequence = 1;
 
@@ -180,6 +187,7 @@ export class HyperliquidExchangeCompat {
       this.triggerLoop = undefined;
     }
     this.pendingTriggerOrders.clear();
+    this.triggerOrderHistory.clear();
   }
 
   getVirtualOpenOrders(accountId: string) {
@@ -230,6 +238,30 @@ export class HyperliquidExchangeCompat {
       status: "triggerPending",
       statusTimestamp: order.createdAt
     };
+  }
+
+  getVirtualOrderHistory(accountId: string) {
+    return [...this.triggerOrderHistory.values()]
+      .filter((order) => order.accountId === accountId)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((order) => ({
+        coin: "BTC",
+        side: order.isBuy ? "B" as const : "A" as const,
+        limitPx: String(order.limitPx ?? order.triggerPx),
+        sz: String(order.size),
+        oid: order.oid,
+        timestamp: order.createdAt,
+        origSz: String(order.size),
+        cloid: order.cloid,
+        reduceOnly: order.reduceOnly,
+        status: order.status,
+        statusTimestamp: order.updatedAt,
+        triggerCondition: {
+          triggerPx: String(order.triggerPx),
+          isMarket: order.isMarket,
+          tpsl: order.tpsl
+        }
+      }));
   }
 
   private validateEnvelope(request: HyperliquidExchangeRequest) {
@@ -374,6 +406,11 @@ export class HyperliquidExchangeCompat {
       const triggerOrder = this.pendingTriggerOrders.get(cancel.o);
       if (triggerOrder && triggerOrder.accountId === accountId) {
         this.pendingTriggerOrders.delete(cancel.o);
+        const history = this.triggerOrderHistory.get(cancel.o);
+        if (history) {
+          history.status = "canceled";
+          history.updatedAt = Date.now();
+        }
         statuses.push({ success: "ok" });
         continue;
       }
@@ -406,6 +443,11 @@ export class HyperliquidExchangeCompat {
       const triggerOrder = [...this.pendingTriggerOrders.values()].find((entry) => entry.accountId === accountId && entry.cloid === cancel.cloid);
       if (triggerOrder) {
         this.pendingTriggerOrders.delete(triggerOrder.oid);
+        const history = this.triggerOrderHistory.get(triggerOrder.oid);
+        if (history) {
+          history.status = "canceled";
+          history.updatedAt = Date.now();
+        }
         statuses.push({ success: "ok" });
         continue;
       }
@@ -485,9 +527,7 @@ export class HyperliquidExchangeCompat {
     }
 
     for (const [oid, order] of [...this.pendingTriggerOrders.entries()]) {
-      const shouldTrigger = order.isBuy
-        ? referencePrice >= order.triggerPx
-        : referencePrice <= order.triggerPx;
+      const shouldTrigger = this.shouldTriggerOrder(order, referencePrice);
 
       if (!shouldTrigger) {
         continue;
@@ -514,8 +554,25 @@ export class HyperliquidExchangeCompat {
         c: order.cloid
       }]);
 
+      const history = this.triggerOrderHistory.get(oid);
+      if (history) {
+        history.status = order.isMarket ? "filled" : "triggered";
+        history.updatedAt = Date.now();
+      }
       this.pendingTriggerOrders.delete(oid);
     }
+  }
+
+  private shouldTriggerOrder(order: PendingTriggerOrder, referencePrice: number) {
+    if (order.tpsl === "tp") {
+      return order.isBuy
+        ? referencePrice <= order.triggerPx
+        : referencePrice >= order.triggerPx;
+    }
+
+    return order.isBuy
+      ? referencePrice >= order.triggerPx
+      : referencePrice <= order.triggerPx;
   }
 
   private validateReduceOnly(runtime: ApiRuntime, accountId: string, isBuy: boolean, quantity: number) {
@@ -560,6 +617,22 @@ export class HyperliquidExchangeCompat {
       cloid: order.c,
       createdAt: Date.now()
     });
+    this.triggerOrderHistory.set(oid, {
+      oid,
+      accountId,
+      asset: order.a,
+      isBuy: order.b,
+      triggerPx: Number(order.t.trigger.triggerPx),
+      isMarket: order.t.trigger.isMarket,
+      tpsl: order.t.trigger.tpsl,
+      size: Number(order.s),
+      limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
+      reduceOnly: order.r,
+      cloid: order.c,
+      createdAt: Date.now(),
+      status: "triggerPending",
+      updatedAt: Date.now()
+    });
 
     return {
       resting: {
@@ -598,6 +671,21 @@ export class HyperliquidExchangeCompat {
       reduceOnly: order.r,
       cloid: order.c ?? existing.cloid
     });
+    const history = this.triggerOrderHistory.get(oid);
+    if (history) {
+      this.triggerOrderHistory.set(oid, {
+        ...history,
+        isBuy: order.b,
+        triggerPx: Number(order.t.trigger.triggerPx),
+        isMarket: order.t.trigger.isMarket,
+        tpsl: order.t.trigger.tpsl,
+        size: Number(order.s),
+        limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
+        reduceOnly: order.r,
+        cloid: order.c ?? existing.cloid,
+        updatedAt: Date.now()
+      });
+    }
 
     return {
       resting: {

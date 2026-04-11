@@ -698,6 +698,16 @@ describe("registerRoutes", () => {
     });
     expect(triggerOpenOrdersResponse.statusCode).toBe(200);
     expect(triggerOpenOrdersResponse.json().some((entry: { triggerCondition?: unknown }) => Boolean(entry.triggerCondition))).toBe(true);
+
+    const frontendOpenOrdersResponse = await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "frontendOpenOrders", user: "paper-account-1" }
+    });
+    expect(frontendOpenOrdersResponse.statusCode).toBe(200);
+    expect(Array.isArray(frontendOpenOrdersResponse.json())).toBe(true);
+    expect(frontendOpenOrdersResponse.json().some((entry: { triggerCondition?: unknown }) => Boolean(entry.triggerCondition))).toBe(true);
   });
 
   it("validates leverage updates and handles success", async () => {

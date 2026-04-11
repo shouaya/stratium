@@ -357,6 +357,10 @@ describe("HyperliquidExchangeCompat", () => {
 
     runtime.getMarketData.mockReturnValue({ markPrice: 70000, bestBid: 69999, bestAsk: 70001 });
     await (compat as any).processTriggerOrders(runtime);
+    expect(runtime.submitOrder).not.toHaveBeenCalled();
+
+    runtime.getMarketData.mockReturnValue({ markPrice: 69940, bestBid: 69939, bestAsk: 69941 });
+    await (compat as any).processTriggerOrders(runtime);
     expect(runtime.submitOrder).toHaveBeenCalled();
 
     runtime.cancelOrder.mockResolvedValueOnce({
@@ -579,6 +583,56 @@ describe("HyperliquidExchangeCompat", () => {
       r: false,
       t: { trigger: { isMarket: true, triggerPx: "70110", tpsl: "tp" } }
     })).toEqual({ error: "Order does not exist." });
+
+    compat.shutdown();
+  });
+
+  it("evaluates tp/sl trigger directions correctly for long and short exits", () => {
+    const compat = new HyperliquidExchangeCompat() as any;
+
+    expect(compat.shouldTriggerOrder({
+      isBuy: false,
+      tpsl: "tp",
+      triggerPx: 71000
+    }, 70000)).toBe(false);
+    expect(compat.shouldTriggerOrder({
+      isBuy: false,
+      tpsl: "tp",
+      triggerPx: 71000
+    }, 71000)).toBe(true);
+
+    expect(compat.shouldTriggerOrder({
+      isBuy: false,
+      tpsl: "sl",
+      triggerPx: 69000
+    }, 70000)).toBe(false);
+    expect(compat.shouldTriggerOrder({
+      isBuy: false,
+      tpsl: "sl",
+      triggerPx: 69000
+    }, 68999)).toBe(true);
+
+    expect(compat.shouldTriggerOrder({
+      isBuy: true,
+      tpsl: "tp",
+      triggerPx: 69000
+    }, 70000)).toBe(false);
+    expect(compat.shouldTriggerOrder({
+      isBuy: true,
+      tpsl: "tp",
+      triggerPx: 69000
+    }, 68999)).toBe(true);
+
+    expect(compat.shouldTriggerOrder({
+      isBuy: true,
+      tpsl: "sl",
+      triggerPx: 71000
+    }, 70000)).toBe(false);
+    expect(compat.shouldTriggerOrder({
+      isBuy: true,
+      tpsl: "sl",
+      triggerPx: 71000
+    }, 71000)).toBe(true);
 
     compat.shutdown();
   });
