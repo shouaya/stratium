@@ -113,6 +113,28 @@ model LiquidationEvent {
   createdAt          DateTime @default(now())
 }
 
+model TriggerOrderHistory {
+  id              String   @id
+  oid             Int      @unique
+  accountId       String
+  asset           Int
+  isBuy           Boolean
+  triggerPx       Decimal  @db.Decimal(20, 8)
+  actualTriggerPx Decimal? @db.Decimal(20, 8)
+  isMarket        Boolean
+  tpsl            String
+  size            Decimal  @db.Decimal(20, 8)
+  limitPx         Decimal? @db.Decimal(20, 8)
+  reduceOnly      Boolean
+  cloid           String?
+  status          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([accountId, status, updatedAt])
+  @@index([accountId, cloid])
+}
+
 model MarketTick {
   id            String   @id
   symbol        String

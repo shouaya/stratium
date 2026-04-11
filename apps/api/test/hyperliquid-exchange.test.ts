@@ -195,7 +195,7 @@ describe("HyperliquidExchangeCompat", () => {
     expect(triggerResponse.response.data.statuses[0]).toMatchObject({
       resting: { cloid: "0xtrigger" }
     });
-    expect(compat.getVirtualOpenOrders("paper-account-1")).toHaveLength(1);
+    await expect(compat.getVirtualOpenOrders("paper-account-1")).resolves.toHaveLength(1);
 
     const modifyMissing = await compat.handle(runtime as never, "paper-account-1", {
       nonce: 4,
@@ -351,9 +351,9 @@ describe("HyperliquidExchangeCompat", () => {
       }
     });
     const triggerOid = triggerPlaced.response.data.statuses[0]?.resting?.oid;
-    expect(compat.getVirtualOrderStatus("paper-account-1", triggerOid)).toBeDefined();
-    expect(compat.getVirtualOrderStatus("paper-account-1", "0xtrigger2")).toBeDefined();
-    expect(compat.getVirtualOrderStatus("paper-account-2", triggerOid)).toBeUndefined();
+    await expect(compat.getVirtualOrderStatus("paper-account-1", triggerOid)).resolves.toBeDefined();
+    await expect(compat.getVirtualOrderStatus("paper-account-1", "0xtrigger2")).resolves.toBeDefined();
+    await expect(compat.getVirtualOrderStatus("paper-account-2", triggerOid)).resolves.toBeUndefined();
 
     runtime.getMarketData.mockReturnValue({ markPrice: 70000, bestBid: 69999, bestAsk: 70001 });
     await (compat as any).processTriggerOrders(runtime);
@@ -456,7 +456,16 @@ describe("HyperliquidExchangeCompat", () => {
     expect(invalidTriggerPayload.response.data.statuses[0]).toEqual({
       error: "Trigger order can only be modified with another trigger payload"
     });
-    expect(compat.getVirtualOrderStatus("paper-account-1", triggerOid)).toBeUndefined();
+    await expect(compat.getVirtualOrderStatus("paper-account-1", triggerOid)).resolves.toMatchObject({
+      order: {
+        oid: triggerOid,
+        triggerCondition: {
+          triggerPx: "69950",
+          tpsl: "sl"
+        }
+      },
+      status: "triggerPending"
+    });
 
     runtime.getEngineState.mockReturnValueOnce({ position: null });
     const triggerPlacedAgain = await compat.handle(runtime as never, "paper-account-1", {
@@ -549,11 +558,11 @@ describe("HyperliquidExchangeCompat", () => {
     compat.shutdown();
   });
 
-  it("covers remaining private trigger helper branches", () => {
+  it("covers remaining private trigger helper branches", async () => {
     const compat = new HyperliquidExchangeCompat() as any;
     const { runtime } = makeRuntime();
 
-    expect(compat.createTriggerOrder("paper-account-1", {
+    await expect(compat.createTriggerOrder("paper-account-1", {
       a: 0,
       b: true,
       p: "70000",
@@ -561,9 +570,9 @@ describe("HyperliquidExchangeCompat", () => {
       r: false,
       t: {},
       c: "0xmissing-trigger"
-    })).toEqual({ error: "Trigger order payload missing" });
+    })).resolves.toEqual({ error: "Trigger order payload missing" });
 
-    const created = compat.createTriggerOrder("paper-account-1", {
+    const created = await compat.createTriggerOrder("paper-account-1", {
       a: 0,
       b: true,
       p: "not-a-number",
@@ -573,16 +582,16 @@ describe("HyperliquidExchangeCompat", () => {
       c: "0xhelper-trigger"
     });
     const oid = created.resting.oid as number;
-    expect(compat.getVirtualOrderStatus("paper-account-1", oid)?.order.limitPx).toBe("70100");
+    await expect(compat.getVirtualOrderStatus("paper-account-1", oid)).resolves.toMatchObject({ order: { limitPx: "70100" } });
 
-    expect(compat.modifyTriggerOrder(runtime, "paper-account-2", oid, {
+    await expect(compat.modifyTriggerOrder(runtime, "paper-account-2", oid, {
       a: 0,
       b: true,
       p: "70000",
       s: "1",
       r: false,
       t: { trigger: { isMarket: true, triggerPx: "70110", tpsl: "tp" } }
-    })).toEqual({ error: "Order does not exist." });
+    })).resolves.toEqual({ error: "Order does not exist." });
 
     compat.shutdown();
   });

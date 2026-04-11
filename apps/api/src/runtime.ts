@@ -399,6 +399,26 @@ export class ApiRuntime {
     return this.marketRuntime.getMarketVolume(limit, interval, coin);
   }
 
+  async getNextTriggerOrderOid(base?: number) {
+    return this.repository.getNextTriggerOrderOid(base);
+  }
+
+  async upsertTriggerOrderHistory(input: Parameters<TradingRepository["upsertTriggerOrderHistory"]>[0]) {
+    return this.repository.upsertTriggerOrderHistory(input);
+  }
+
+  async listTriggerOrderHistory(accountId: string) {
+    return this.repository.listTriggerOrderHistory(accountId);
+  }
+
+  async listPendingTriggerOrders() {
+    return this.repository.listPendingTriggerOrders();
+  }
+
+  async findTriggerOrder(accountId: string, oidOrCloid: number | string) {
+    return this.repository.findTriggerOrder(accountId, oidOrCloid);
+  }
+
   startMarketSimulator(
     payload: Partial<Pick<MarketSimulatorState, "intervalMs" | "driftBps" | "volatilityBps" | "anchorPrice">> = {}
   ): MarketSimulatorState {

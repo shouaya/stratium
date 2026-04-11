@@ -131,6 +131,7 @@ interface PendingTriggerOrder {
 
 interface TriggerOrderHistoryRecord extends PendingTriggerOrder {
   status: "triggerPending" | "triggered" | "filled" | "canceled";
+  actualTriggerPx?: number;
   updatedAt: number;
 }
 
@@ -141,13 +142,47 @@ export class HyperliquidExchangeCompat {
 
   private readonly scheduledCancelTimes = new Map<string, number | null>();
 
-  private readonly pendingTriggerOrders = new Map<number, PendingTriggerOrder>();
+  private readonly fallbackPendingTriggerOrders = new Map<number, PendingTriggerOrder>();
 
-  private readonly triggerOrderHistory = new Map<number, TriggerOrderHistoryRecord>();
+  private readonly fallbackTriggerOrderHistory = new Map<number, TriggerOrderHistoryRecord>();
 
   private triggerOrderSequence = 1;
 
   private triggerLoop?: NodeJS.Timeout;
+
+  private readonly store: {
+    getNextTriggerOrderOid(base?: number): Promise<number>;
+    upsertTriggerOrderHistory(input: TriggerOrderHistoryRecord): Promise<void>;
+    listTriggerOrderHistory(accountId: string): Promise<TriggerOrderHistoryRecord[]>;
+    listPendingTriggerOrders(): Promise<PendingTriggerOrder[]>;
+    findTriggerOrder(accountId: string, oidOrCloid: number | string): Promise<TriggerOrderHistoryRecord | null>;
+  };
+
+  constructor(store?: {
+    getNextTriggerOrderOid(base?: number): Promise<number>;
+    upsertTriggerOrderHistory(input: TriggerOrderHistoryRecord): Promise<void>;
+    listTriggerOrderHistory(accountId: string): Promise<TriggerOrderHistoryRecord[]>;
+    listPendingTriggerOrders(): Promise<PendingTriggerOrder[]>;
+    findTriggerOrder(accountId: string, oidOrCloid: number | string): Promise<TriggerOrderHistoryRecord | null>;
+  }) {
+    this.store = store ?? {
+      getNextTriggerOrderOid: async (base = HyperliquidExchangeCompat.TRIGGER_OID_BASE) =>
+        Math.max(base, ...[...this.fallbackTriggerOrderHistory.keys(), base]) + 1,
+      upsertTriggerOrderHistory: async (input) => {
+        this.fallbackTriggerOrderHistory.set(input.oid, input);
+        if (input.status === "triggerPending") this.fallbackPendingTriggerOrders.set(input.oid, input);
+        else this.fallbackPendingTriggerOrders.delete(input.oid);
+      },
+      listTriggerOrderHistory: async (accountId) => [...this.fallbackTriggerOrderHistory.values()].filter((order) => order.accountId === accountId),
+      listPendingTriggerOrders: async () => [...this.fallbackPendingTriggerOrders.values()],
+      findTriggerOrder: async (accountId, oidOrCloid) => {
+        const order = typeof oidOrCloid === "string" && oidOrCloid.startsWith("0x")
+          ? [...this.fallbackTriggerOrderHistory.values()].find((entry) => entry.accountId === accountId && entry.cloid === oidOrCloid)
+          : this.fallbackTriggerOrderHistory.get(Number(oidOrCloid));
+        return order && order.accountId === accountId ? order : null;
+      }
+    };
+  }
 
   async handle(runtime: ApiRuntime, accountId: string, request: HyperliquidExchangeRequest) {
     this.bindRuntime(runtime);
@@ -186,12 +221,11 @@ export class HyperliquidExchangeCompat {
       clearInterval(this.triggerLoop);
       this.triggerLoop = undefined;
     }
-    this.pendingTriggerOrders.clear();
-    this.triggerOrderHistory.clear();
   }
 
-  getVirtualOpenOrders(accountId: string) {
-    return [...this.pendingTriggerOrders.values()]
+  async getVirtualOpenOrders(accountId: string) {
+    const pendingOrders = await this.store.listPendingTriggerOrders();
+    return pendingOrders
       .filter((order) => order.accountId === accountId)
       .map((order) => ({
         coin: "BTC",
@@ -210,10 +244,8 @@ export class HyperliquidExchangeCompat {
       }));
   }
 
-  getVirtualOrderStatus(accountId: string, oidOrCloid: number | string) {
-    const order = typeof oidOrCloid === "string" && oidOrCloid.startsWith("0x")
-      ? [...this.pendingTriggerOrders.values()].find((entry) => entry.accountId === accountId && entry.cloid === oidOrCloid)
-      : this.pendingTriggerOrders.get(Number(oidOrCloid));
+  async getVirtualOrderStatus(accountId: string, oidOrCloid: number | string) {
+    const order = await this.store.findTriggerOrder(accountId, oidOrCloid);
 
     if (!order || order.accountId !== accountId) {
       return undefined;
@@ -240,9 +272,9 @@ export class HyperliquidExchangeCompat {
     };
   }
 
-  getVirtualOrderHistory(accountId: string) {
-    return [...this.triggerOrderHistory.values()]
-      .filter((order) => order.accountId === accountId)
+  async getVirtualOrderHistory(accountId: string) {
+    const history = await this.store.listTriggerOrderHistory(accountId);
+    return history
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .map((order) => ({
         coin: "BTC",
@@ -257,7 +289,7 @@ export class HyperliquidExchangeCompat {
         status: order.status,
         statusTimestamp: order.updatedAt,
         triggerCondition: {
-          triggerPx: String(order.triggerPx),
+          triggerPx: order.status === "triggerPending" ? "" : String(order.actualTriggerPx ?? order.triggerPx),
           isMarket: order.isMarket,
           tpsl: order.tpsl
         }
@@ -306,7 +338,7 @@ export class HyperliquidExchangeCompat {
       }
 
       if (order.t.trigger) {
-        statuses.push(this.createTriggerOrder(accountId, order));
+        statuses.push(await this.createTriggerOrder(accountId, order));
         continue;
       }
 
@@ -351,13 +383,13 @@ export class HyperliquidExchangeCompat {
   }
 
   private async handleModify(runtime: ApiRuntime, accountId: string, oid: number | string, order: ExchangeOrderWire) {
-    const target = this.resolveExistingOrder(runtime, accountId, oid);
+    const target = await this.resolveExistingOrder(runtime, accountId, oid);
     if (!target) {
       return buildOkResponse([{ error: "Order does not exist." }]);
     }
 
     if ("triggerPx" in target) {
-      return buildOkResponse([this.modifyTriggerOrder(runtime, accountId, target.oid, order)]);
+      return buildOkResponse([await this.modifyTriggerOrder(runtime, accountId, target.oid, order)]);
     }
 
     if (!isOpenOrder(target)) {
@@ -403,14 +435,13 @@ export class HyperliquidExchangeCompat {
         continue;
       }
 
-      const triggerOrder = this.pendingTriggerOrders.get(cancel.o);
-      if (triggerOrder && triggerOrder.accountId === accountId) {
-        this.pendingTriggerOrders.delete(cancel.o);
-        const history = this.triggerOrderHistory.get(cancel.o);
-        if (history) {
-          history.status = "canceled";
-          history.updatedAt = Date.now();
-        }
+      const triggerOrder = await this.store.findTriggerOrder(accountId, cancel.o);
+      if (triggerOrder?.status === "triggerPending") {
+        await this.store.upsertTriggerOrderHistory({
+          ...triggerOrder,
+          status: "canceled",
+          updatedAt: Date.now()
+        });
         statuses.push({ success: "ok" });
         continue;
       }
@@ -440,14 +471,13 @@ export class HyperliquidExchangeCompat {
         continue;
       }
 
-      const triggerOrder = [...this.pendingTriggerOrders.values()].find((entry) => entry.accountId === accountId && entry.cloid === cancel.cloid);
-      if (triggerOrder) {
-        this.pendingTriggerOrders.delete(triggerOrder.oid);
-        const history = this.triggerOrderHistory.get(triggerOrder.oid);
-        if (history) {
-          history.status = "canceled";
-          history.updatedAt = Date.now();
-        }
+      const triggerOrder = await this.store.findTriggerOrder(accountId, cancel.cloid);
+      if (triggerOrder?.status === "triggerPending") {
+        await this.store.upsertTriggerOrderHistory({
+          ...triggerOrder,
+          status: "canceled",
+          updatedAt: Date.now()
+        });
         statuses.push({ success: "ok" });
         continue;
       }
@@ -492,11 +522,15 @@ export class HyperliquidExchangeCompat {
     const delayMs = Math.max(0, time - Date.now());
     const timer = setTimeout(() => {
       void runtime.cancelAllOpenOrders(accountId, new Date().toISOString());
-      for (const [oid, order] of this.pendingTriggerOrders.entries()) {
-        if (order.accountId === accountId) {
-          this.pendingTriggerOrders.delete(oid);
-        }
-      }
+      void this.store.listPendingTriggerOrders().then((orders) => Promise.all(
+        orders
+          .filter((order) => order.accountId === accountId)
+          .map((order) => this.store.upsertTriggerOrderHistory({
+            ...(order as TriggerOrderHistoryRecord),
+            status: "canceled",
+            updatedAt: Date.now()
+          }))
+      ));
       this.scheduleTimers.delete(accountId);
       this.scheduledCancelTimes.set(accountId, null);
     }, delayMs);
@@ -516,7 +550,8 @@ export class HyperliquidExchangeCompat {
   }
 
   private async processTriggerOrders(runtime: ApiRuntime) {
-    if (this.pendingTriggerOrders.size === 0) {
+    const pendingOrders = await this.store.listPendingTriggerOrders();
+    if (pendingOrders.length === 0) {
       return;
     }
 
@@ -526,7 +561,8 @@ export class HyperliquidExchangeCompat {
       return;
     }
 
-    for (const [oid, order] of [...this.pendingTriggerOrders.entries()]) {
+    for (const order of pendingOrders) {
+      const oid = order.oid;
       const shouldTrigger = this.shouldTriggerOrder(order, referencePrice);
 
       if (!shouldTrigger) {
@@ -538,7 +574,11 @@ export class HyperliquidExchangeCompat {
         : null;
 
       if (reduceOnlyValidation) {
-        this.pendingTriggerOrders.delete(oid);
+        await this.store.upsertTriggerOrderHistory({
+          ...(await this.store.findTriggerOrder(order.accountId, oid) as TriggerOrderHistoryRecord),
+          status: "canceled",
+          updatedAt: Date.now()
+        });
         continue;
       }
 
@@ -554,12 +594,15 @@ export class HyperliquidExchangeCompat {
         c: order.cloid
       }]);
 
-      const history = this.triggerOrderHistory.get(oid);
+      const history = await this.store.findTriggerOrder(order.accountId, oid);
       if (history) {
-        history.status = order.isMarket ? "filled" : "triggered";
-        history.updatedAt = Date.now();
+        await this.store.upsertTriggerOrderHistory({
+          ...history,
+          status: order.isMarket ? "filled" : "triggered",
+          actualTriggerPx: referencePrice,
+          updatedAt: Date.now()
+        });
       }
-      this.pendingTriggerOrders.delete(oid);
     }
   }
 
@@ -596,14 +639,15 @@ export class HyperliquidExchangeCompat {
     return null;
   }
 
-  private createTriggerOrder(accountId: string, order: ExchangeOrderWire) {
+  private async createTriggerOrder(accountId: string, order: ExchangeOrderWire) {
     if (!order.t.trigger) {
       return { error: "Trigger order payload missing" };
     }
 
-    const oid = HyperliquidExchangeCompat.TRIGGER_OID_BASE + this.triggerOrderSequence;
-    this.triggerOrderSequence += 1;
-    this.pendingTriggerOrders.set(oid, {
+    const oid = await this.store.getNextTriggerOrderOid(HyperliquidExchangeCompat.TRIGGER_OID_BASE + this.triggerOrderSequence - 1);
+    this.triggerOrderSequence = Math.max(this.triggerOrderSequence + 1, oid - HyperliquidExchangeCompat.TRIGGER_OID_BASE + 1);
+    const createdAt = Date.now();
+    await this.store.upsertTriggerOrderHistory({
       oid,
       accountId,
       asset: order.a,
@@ -615,23 +659,9 @@ export class HyperliquidExchangeCompat {
       limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
       reduceOnly: order.r,
       cloid: order.c,
-      createdAt: Date.now()
-    });
-    this.triggerOrderHistory.set(oid, {
-      oid,
-      accountId,
-      asset: order.a,
-      isBuy: order.b,
-      triggerPx: Number(order.t.trigger.triggerPx),
-      isMarket: order.t.trigger.isMarket,
-      tpsl: order.t.trigger.tpsl,
-      size: Number(order.s),
-      limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
-      reduceOnly: order.r,
-      cloid: order.c,
-      createdAt: Date.now(),
+      createdAt,
       status: "triggerPending",
-      updatedAt: Date.now()
+      updatedAt: createdAt
     });
 
     return {
@@ -642,8 +672,8 @@ export class HyperliquidExchangeCompat {
     };
   }
 
-  private modifyTriggerOrder(runtime: ApiRuntime, accountId: string, oid: number, order: ExchangeOrderWire) {
-    const existing = this.pendingTriggerOrders.get(oid);
+  private async modifyTriggerOrder(runtime: ApiRuntime, accountId: string, oid: number, order: ExchangeOrderWire) {
+    const existing = await this.store.findTriggerOrder(accountId, oid);
     if (!existing || existing.accountId !== accountId) {
       return { error: "Order does not exist." };
     }
@@ -656,11 +686,10 @@ export class HyperliquidExchangeCompat {
     }
 
     if (!order.t.trigger) {
-      this.pendingTriggerOrders.delete(oid);
       return { error: "Trigger order can only be modified with another trigger payload" };
     }
 
-    this.pendingTriggerOrders.set(oid, {
+    await this.store.upsertTriggerOrderHistory({
       ...existing,
       isBuy: order.b,
       triggerPx: Number(order.t.trigger.triggerPx),
@@ -669,23 +698,9 @@ export class HyperliquidExchangeCompat {
       size: Number(order.s),
       limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
       reduceOnly: order.r,
-      cloid: order.c ?? existing.cloid
+      cloid: order.c ?? existing.cloid,
+      updatedAt: Date.now()
     });
-    const history = this.triggerOrderHistory.get(oid);
-    if (history) {
-      this.triggerOrderHistory.set(oid, {
-        ...history,
-        isBuy: order.b,
-        triggerPx: Number(order.t.trigger.triggerPx),
-        isMarket: order.t.trigger.isMarket,
-        tpsl: order.t.trigger.tpsl,
-        size: Number(order.s),
-        limitPx: Number.isFinite(Number(order.p)) ? Number(order.p) : undefined,
-        reduceOnly: order.r,
-        cloid: order.c ?? existing.cloid,
-        updatedAt: Date.now()
-      });
-    }
 
     return {
       resting: {
@@ -695,14 +710,14 @@ export class HyperliquidExchangeCompat {
     };
   }
 
-  private resolveExistingOrder(runtime: ApiRuntime, accountId: string, oid: number | string): OrderView | PendingTriggerOrder | undefined {
+  private async resolveExistingOrder(runtime: ApiRuntime, accountId: string, oid: number | string): Promise<OrderView | PendingTriggerOrder | undefined> {
     if (typeof oid === "string" && oid.startsWith("0x")) {
       return runtime.getOrderByClientOrderId(accountId, oid)
-        ?? [...this.pendingTriggerOrders.values()].find((entry) => entry.accountId === accountId && entry.cloid === oid);
+        ?? await this.store.findTriggerOrder(accountId, oid) ?? undefined;
     }
 
     const numericOid = Number(oid);
     return runtime.getOrders(accountId).find((entry) => entry.id === orderIdFromOid(numericOid))
-      ?? this.pendingTriggerOrders.get(numericOid);
+      ?? await this.store.findTriggerOrder(accountId, numericOid) ?? undefined;
   }
 }

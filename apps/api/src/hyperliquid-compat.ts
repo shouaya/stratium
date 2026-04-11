@@ -98,7 +98,7 @@ export interface HyperliquidInfoRuntime {
     createdAt: string;
     updatedAt: string;
   } | undefined;
-  getVirtualOpenOrders?(accountId: string): Array<{
+  getVirtualOpenOrders?(accountId: string): Promise<Array<{
     coin: string;
     side: "A" | "B";
     limitPx: string;
@@ -112,8 +112,8 @@ export interface HyperliquidInfoRuntime {
       isMarket: boolean;
       tpsl: "tp" | "sl";
     };
-  }>;
-  getVirtualOrderStatus?(accountId: string, oidOrCloid: number | string): {
+  }>>;
+  getVirtualOrderStatus?(accountId: string, oidOrCloid: number | string): Promise<{
     order: {
       coin: string;
       side: "A" | "B";
@@ -131,7 +131,7 @@ export interface HyperliquidInfoRuntime {
     };
     status: string;
     statusTimestamp: number;
-  } | undefined;
+  } | undefined>;
 }
 
 const asString = (value: number | undefined): string | null =>
@@ -313,7 +313,7 @@ export const buildHyperliquidInfoResponse = async (
         origSz: String(order.quantity),
         cloid: order.clientOrderId
       })),
-      ...(runtime.getVirtualOpenOrders?.(accountId) ?? [])
+      ...((await runtime.getVirtualOpenOrders?.(accountId)) ?? [])
     ];
   }
 
@@ -328,7 +328,7 @@ export const buildHyperliquidInfoResponse = async (
       ? runtime.getOrderByClientOrderId(accountId, queryOid)
       : runtime.getOrders(accountId).find((entry) => entry.id === `ord_${queryOid}`);
 
-    const virtualOrder = runtime.getVirtualOrderStatus?.(accountId, queryOid);
+    const virtualOrder = await runtime.getVirtualOrderStatus?.(accountId, queryOid);
     if (virtualOrder) {
       return {
         order: virtualOrder

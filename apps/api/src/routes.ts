@@ -8,7 +8,15 @@ import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js"
 import type { ApiRuntime, MarketSimulatorState } from "./runtime.js";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
-  const exchangeCompat = new HyperliquidExchangeCompat();
+  const exchangeCompat = "getNextTriggerOrderOid" in runtime
+    ? new HyperliquidExchangeCompat({
+      getNextTriggerOrderOid: (base) => runtime.getNextTriggerOrderOid(base),
+      upsertTriggerOrderHistory: (input) => runtime.upsertTriggerOrderHistory(input),
+      listTriggerOrderHistory: (accountId) => runtime.listTriggerOrderHistory(accountId),
+      listPendingTriggerOrders: () => runtime.listPendingTriggerOrders(),
+      findTriggerOrder: (accountId, oidOrCloid) => runtime.findTriggerOrder(accountId, oidOrCloid)
+    })
+    : new HyperliquidExchangeCompat();
   const botAuth = new HyperliquidBotAuth();
   const privateWsHub = new HyperliquidPrivateWsHub({
     getOrders: (accountId) => runtime.getOrders(accountId),
@@ -310,7 +318,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
 
     const accountId = session.user.tradingAccountId as string;
-    const triggerHistory = exchangeCompat.getVirtualOrderHistory(accountId);
+    const triggerHistory = await exchangeCompat.getVirtualOrderHistory(accountId);
     const triggerHistoryByCloid = new Map(triggerHistory.filter((order) => order.cloid).map((order) => [order.cloid as string, order]));
     const orders = runtime.getOrders(accountId)
       .slice()

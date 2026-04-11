@@ -7,28 +7,50 @@ import { dateTime, fmt } from "../utils";
 export function AccountPanel({ vm }: { vm: any }) {
   const { state, t } = vm;
   const renderHistoricalTriggerPrice = (order: any) => {
+    if (order.status === "triggerPending") {
+      return "";
+    }
+
     if (order.triggerCondition?.triggerPx) {
       return fmt(Number(order.triggerCondition.triggerPx), vm.priceDigits);
+    }
+
+    if (order.averageFillPrice != null && Number.isFinite(order.averageFillPrice)) {
+      return fmt(Number(order.averageFillPrice), vm.priceDigits);
     }
 
     if (order.limitPrice != null && Number.isFinite(order.limitPrice)) {
       return fmt(Number(order.limitPrice), vm.priceDigits);
     }
 
-    return "N/A";
+    return "";
   };
 
   const renderHistoricalTpsl = (order: any) => {
+    const displayPrice = order.averageFillPrice != null && Number.isFinite(order.averageFillPrice)
+      ? fmt(Number(order.averageFillPrice), vm.priceDigits)
+      : order.limitPrice != null && Number.isFinite(order.limitPrice)
+        ? fmt(Number(order.limitPrice), vm.priceDigits)
+        : "";
+
     if (order.triggerCondition?.tpsl === "tp") {
-      return `${t.takeProfitShort}${order.limitPrice != null ? ` (${fmt(Number(order.limitPrice), vm.priceDigits)})` : ""}`;
+      return `${t.takeProfitShort}${displayPrice ? ` (${displayPrice})` : ""}`;
     }
 
     if (order.triggerCondition?.tpsl === "sl") {
-      return `${t.stopLossShort}${order.limitPrice != null ? ` (${fmt(Number(order.limitPrice), vm.priceDigits)})` : ""}`;
+      return `${t.stopLossShort}${displayPrice ? ` (${displayPrice})` : ""}`;
     }
 
     return "--";
   };
+
+  const pagination = (page: number, total: number, onChange: (page: number) => void) => (
+    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, padding: "10px 12px", borderTop: "1px solid #16262f" }}>
+      <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page <= 1} style={{ ...btnInline, opacity: page <= 1 ? 0.45 : 1 }}>{t.previousPage}</button>
+      <span style={{ color: "#7e97a5", fontSize: 12 }}>{t.pageIndicator.replace("{page}", String(page)).replace("{total}", String(total))}</span>
+      <button onClick={() => onChange(Math.min(total, page + 1))} disabled={page >= total} style={{ ...btnInline, opacity: page >= total ? 0.45 : 1 }}>{t.nextPage}</button>
+    </div>
+  );
 
   return (
     <div style={{ ...box(), display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
@@ -50,15 +72,21 @@ export function AccountPanel({ vm }: { vm: any }) {
             <tbody>{vm.activeOrders.length === 0 ? <tr><td colSpan={7} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noOpenOrders}</td></tr> : vm.activeOrders.map((order: any) => <tr key={order.id} style={{ borderTop: "1px solid #13212a" }}><td style={td}>{order.id}</td><td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td><td style={td}>{order.orderType}</td><td style={td}>{fmt(order.quantity)}</td><td style={td}>{fmt(order.filledQuantity)}</td><td style={td}>{order.status}</td><td style={td}><button onClick={() => void vm.cancelOrder(order.id)} style={btnInline}>{t.cancel}</button></td></tr>)}</tbody>
           </table>
         ) : vm.accountTab === "orderHistory" ? (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr style={{ color: "#7e97a5", textAlign: "left" }}><th style={th}>{t.time}</th><th style={th}>{t.type}</th><th style={th}>{t.side}</th><th style={th}>{t.contracts}</th><th style={th}>{t.price}</th><th style={th}>{t.triggerPrice}</th><th style={th}>{t.takeProfitShort}/{t.stopLossShort}</th><th style={th}>{t.status}</th><th style={th}>{t.order}</th></tr></thead>
-            <tbody>{vm.historicalOrders.length === 0 ? <tr><td colSpan={9} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noOrderHistory}</td></tr> : vm.historicalOrders.map((order: any) => <tr key={`${order.kind}-${order.orderId}-${order.updatedAt}`} style={{ borderTop: "1px solid #13212a" }}><td style={td}>{dateTime(order.updatedAt)}</td><td style={td}>{order.kind === "trigger" ? `${order.triggerCondition?.tpsl === "tp" ? "Take Profit" : "Stop Loss"} ${order.orderType === "market" ? "Market" : "Limit"}` : order.orderType}</td><td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td><td style={td}>{fmt(order.quantity, 4)}</td><td style={td}>{order.limitPrice != null ? fmt(order.limitPrice, vm.priceDigits) : order.orderType === "market" ? "Market" : "-"}</td><td style={{ ...td, color: order.triggerCondition?.tpsl === "tp" ? "#22c55e" : order.triggerCondition?.tpsl === "sl" ? "#f59e0b" : "#dbe7ef" }}>{renderHistoricalTriggerPrice(order)}</td><td style={{ ...td, color: order.triggerCondition?.tpsl === "tp" ? "#22c55e" : order.triggerCondition?.tpsl === "sl" ? "#f59e0b" : "#60727f" }}>{renderHistoricalTpsl(order)}</td><td style={td}>{order.status}</td><td style={td}>{order.orderId}</td></tr>)}</tbody>
-          </table>
+          <div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ color: "#7e97a5", textAlign: "left" }}><th style={th}>{t.time}</th><th style={th}>{t.type}</th><th style={th}>{t.side}</th><th style={th}>{t.contracts}</th><th style={th}>{t.price}</th><th style={th}>{t.triggerPrice}</th><th style={th}>{t.takeProfitShort}/{t.stopLossShort}</th><th style={th}>{t.status}</th><th style={th}>{t.order}</th></tr></thead>
+              <tbody>{vm.historicalOrders.length === 0 ? <tr><td colSpan={9} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noOrderHistory}</td></tr> : vm.pagedHistoricalOrders.map((order: any) => <tr key={`${order.kind}-${order.orderId}-${order.updatedAt}`} style={{ borderTop: "1px solid #13212a" }}><td style={td}>{dateTime(order.updatedAt)}</td><td style={td}>{order.kind === "trigger" ? `${order.triggerCondition?.tpsl === "tp" ? "Take Profit" : "Stop Loss"} ${order.orderType === "market" ? "Market" : "Limit"}` : order.orderType}</td><td style={{ ...td, color: order.side === "buy" ? "#2dd4bf" : "#f87171" }}>{order.side}</td><td style={td}>{fmt(order.quantity, 4)}</td><td style={td}>{order.limitPrice != null ? fmt(order.limitPrice, vm.priceDigits) : order.averageFillPrice != null ? fmt(order.averageFillPrice, vm.priceDigits) : order.orderType === "market" ? "Market" : "-"}</td><td style={{ ...td, color: order.triggerCondition?.tpsl === "tp" ? "#22c55e" : order.triggerCondition?.tpsl === "sl" ? "#f59e0b" : "#dbe7ef" }}>{renderHistoricalTriggerPrice(order)}</td><td style={{ ...td, color: order.triggerCondition?.tpsl === "tp" ? "#22c55e" : order.triggerCondition?.tpsl === "sl" ? "#f59e0b" : "#60727f" }}>{renderHistoricalTpsl(order)}</td><td style={td}>{order.status}</td><td style={td}>{order.orderId}</td></tr>)}</tbody>
+            </table>
+            {vm.historicalOrders.length > 0 ? pagination(vm.orderHistoryPage, vm.orderHistoryPageCount, vm.setOrderHistoryPage) : null}
+          </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr style={{ color: "#7e97a5", textAlign: "left" }}><th style={th}>{t.time}</th><th style={th}>{t.order}</th><th style={th}>{t.side}</th><th style={th}>{t.type}</th><th style={th}>{t.role}</th><th style={th}>{t.entryPrice}</th><th style={th}>{t.exitPrice}</th><th style={th}>{t.contracts}</th><th style={th}>{t.realizedPnl}</th><th style={th}>{t.fee}</th><th style={th}>{t.slippage}</th></tr></thead>
-            <tbody>{vm.personalFills.length === 0 ? <tr><td colSpan={11} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noFills}</td></tr> : vm.personalFills.map((fill: any) => <tr key={fill.id} style={{ borderTop: "1px solid #13212a" }}><td style={td}>{dateTime(fill.filledAt)}</td><td style={td}>{fill.orderId}</td><td style={{ ...td, color: fill.side === "buy" ? "#2dd4bf" : "#f87171" }}>{fill.side}</td><td style={td}>{fill.orderType}</td><td style={{ ...td, textTransform: "uppercase", color: fill.liquidityRole === "maker" ? "#22c55e" : "#f59e0b" }}>{fill.liquidityRole}</td><td style={td}>{fmt(fill.entryPrice, vm.priceDigits)}</td><td style={td}>{fill.exitPrice != null ? fmt(fill.exitPrice, vm.priceDigits) : "-"}</td><td style={td}>{fmt(fill.quantity, 4)}</td><td style={{ ...td, color: fill.realizedPnl > 0 ? "#2dd4bf" : fill.realizedPnl < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(fill.realizedPnl, 4)} USDC</td><td style={td}>{fmt(fill.fee, 6)} <span style={{ color: "#60727f" }}>({fmt(fill.feeRate * 100, 3)}%)</span></td><td style={td}>{fmt(fill.slippage, 6)}</td></tr>)}</tbody>
-          </table>
+          <div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ color: "#7e97a5", textAlign: "left" }}><th style={th}>{t.time}</th><th style={th}>{t.order}</th><th style={th}>{t.side}</th><th style={th}>{t.type}</th><th style={th}>{t.role}</th><th style={th}>{t.entryPrice}</th><th style={th}>{t.exitPrice}</th><th style={th}>{t.contracts}</th><th style={th}>{t.realizedPnl}</th><th style={th}>{t.fee}</th><th style={th}>{t.slippage}</th></tr></thead>
+              <tbody>{vm.personalFills.length === 0 ? <tr><td colSpan={11} style={{ padding: 18, color: "#60727f", textAlign: "center" }}>{t.noFills}</td></tr> : vm.pagedPersonalFills.map((fill: any) => <tr key={fill.id} style={{ borderTop: "1px solid #13212a" }}><td style={td}>{dateTime(fill.filledAt)}</td><td style={td}>{fill.orderId}</td><td style={{ ...td, color: fill.side === "buy" ? "#2dd4bf" : "#f87171" }}>{fill.side}</td><td style={td}>{fill.orderType}</td><td style={{ ...td, textTransform: "uppercase", color: fill.liquidityRole === "maker" ? "#22c55e" : "#f59e0b" }}>{fill.liquidityRole}</td><td style={td}>{fmt(fill.entryPrice, vm.priceDigits)}</td><td style={td}>{fill.exitPrice != null ? fmt(fill.exitPrice, vm.priceDigits) : "-"}</td><td style={td}>{fmt(fill.quantity, 4)}</td><td style={{ ...td, color: fill.realizedPnl > 0 ? "#2dd4bf" : fill.realizedPnl < 0 ? "#f87171" : "#dbe7ef" }}>{fmt(fill.realizedPnl, 4)} USDC</td><td style={td}>{fmt(fill.fee, 6)} <span style={{ color: "#60727f" }}>({fmt(fill.feeRate * 100, 3)}%)</span></td><td style={td}>{fmt(fill.slippage, 6)}</td></tr>)}</tbody>
+            </table>
+            {vm.personalFills.length > 0 ? pagination(vm.fillsPage, vm.fillsPageCount, vm.setFillsPage) : null}
+          </div>
         )}
       </div>
     </div>
