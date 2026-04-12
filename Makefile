@@ -1,16 +1,17 @@
 PNPM ?= corepack pnpm
-COMPOSE ?= docker-compose
+COMPOSE ?= docker compose
 COMPOSE_PROD ?= $(COMPOSE) -f docker-compose.prod.yml
 COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
 DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
+WORKSPACE_RUN ?= $(COMPOSE) run --rm --no-deps --workdir /workspace job-runner
 JOB_RUNNER_CONTAINER ?= stratium-job-runner
 JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
 JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
 MIGRATION_NAME ?= schema-update
 
-.PHONY: help install dev lint test build check prod-esm-check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
+.PHONY: help init bootstrap-services wait-job-runner install dev lint test build check prod-esm-check prisma-generate db-push db-migrate db-seed db-bootstrap seed-symbol-configs job-runner-start job-runner-build \
 	up up-build down down-volumes restart logs logs-api logs-web logs-db logs-adminer \
 	logs-job-runner config prod-up prod-up-build prod-down prod-logs prod-config batch-build batch-run-collector batch-import batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
@@ -22,7 +23,10 @@ help:
 	@echo Stratium make targets
 	@echo.
 	@echo Setup
-	@echo   make install              Install workspace dependencies
+	@echo   make init                 First-time setup: create .env, prepare container dependencies, start db/job-runner, and import base data
+	@echo   make bootstrap-services   Start only db, redis, and job-runner for first-time initialization
+	@echo   make wait-job-runner      Wait until the job runner is ready to accept requests
+	@echo   make install              Build workspace images and prepare container-side dependencies
 	@echo   make job-runner-start     Start the host-side job runner service
 	@echo   make job-runner-build     Build the host-side job runner app
 	@echo   make prisma-generate      Run Prisma client generation
@@ -69,8 +73,26 @@ help:
 	@echo   make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles via the job runner
 	@echo   make batch-clear-kline    Clear persisted K-line history via the job runner
 
+init:
+	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
+	$(MAKE) install
+	$(MAKE) bootstrap-services
+	$(MAKE) wait-job-runner
+	$(MAKE) db-bootstrap
+	$(MAKE) batch-refresh-hl-day
+
+bootstrap-services:
+	$(COMPOSE) up -d db redis job-runner
+
+wait-job-runner:
+	@until docker exec $(JOB_RUNNER_CONTAINER) node -e "fetch('http://127.0.0.1:4300/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))" >/dev/null 2>&1; do \
+		echo "Waiting for job-runner..."; \
+		sleep 2; \
+	done
+
 install:
-	$(PNPM) install
+	$(COMPOSE) build job-runner api web
+	$(COMPOSE_BATCH) build batch
 
 job-runner-start:
 	$(COMPOSE) up -d job-runner
@@ -79,24 +101,24 @@ job-runner-build:
 	$(COMPOSE) build job-runner
 
 dev:
-	$(PNPM) dev
+	$(COMPOSE) up db redis job-runner api web adminer
 
 lint:
-	$(PNPM) lint
+	$(WORKSPACE_RUN) pnpm lint
 
 test:
-	$(PNPM) test
+	$(WORKSPACE_RUN) pnpm test
 
 build:
-	$(PNPM) build
+	$(WORKSPACE_RUN) pnpm build
 
 prod-esm-check: build
-	node scripts/check-prod-esm.mjs
+	$(WORKSPACE_RUN) node scripts/check-prod-esm.mjs
 
 check: lint test build config
 
 prisma-generate:
-	$(PNPM) prisma:generate
+	$(WORKSPACE_RUN) pnpm prisma:generate
 
 db-migrate:
 	$(JOB_RUNNER_CLIENT) db-migrate migrationName=$(MIGRATION_NAME)

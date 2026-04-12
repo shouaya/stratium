@@ -2,219 +2,116 @@
 
 ![Stratium UI](docs/stratium.png)
 
-Stratium is a PH1 trading simulation platform focused on a deterministic trading core, a Fastify API, and a basic Web trading UI.
+Stratium 是一个本地交易模拟平台。
 
-## What It Does
+如果你是第一次接触这个项目，可以把它理解成：
 
-- simulates a single-account, single-symbol trading session
-- accepts manual ticks, market orders, limit orders, and cancel requests
-- updates orders, position, account, margin, and replayable event history
-- exposes state through REST and WebSocket
-- supports simulator market data and Hyperliquid-backed market data
-- stores trading state and market snapshots in PostgreSQL
+- 一个可以在本地打开的交易演示站
+- 一个带默认账号的模拟环境
+- 一个适合测试下单、看账户变化、熟悉流程的工具
 
-## Architecture
+## 你只需要先安装两个东西
 
-### External Interaction
+### 1. 安装 Docker
 
-```mermaid
-flowchart LR
-    subgraph Clients[Actors]
-        Human[Human Trader]
-        Web[Web UI\nNext.js]
-        Agent[AI Agent]
-    end
+官方安装说明：
 
-    subgraph AIStack[AI Tooling]
-        StrategyMCP[Strategy MCP\nanalysis / planning / signals]
-        TraderMCP[Trader MCP\nexecution / account / market tools]
-    end
+- Docker / Docker Compose: https://docs.docker.com/get-started/get-docker/
 
-    subgraph Edge[Access Layer]
-        REST[HTTP API\n/info /exchange /api/*]
-        WS[WebSocket Layer\n/ws today\nHL-style user WS next]
-        Auth[Session + Bot Signer Auth\nnonce + signature checks]
-    end
+安装完成后，请先打开 Docker，让它保持运行状态。
 
-    Compat[Hyperliquid Compatibility Layer]
-    Runtime[Runtime Coordinator]
-    DB[(PostgreSQL)]
-    Market[Hyperliquid Feed / Simulator]
+### 2. 安装 make
 
-    Human --> Web
-    Web --> REST
-    Web --> WS
-    Agent --> StrategyMCP
-    Agent --> TraderMCP
-    TraderMCP --> REST
+官方说明：
 
-    REST --> Auth
-    WS --> Auth
-    Auth --> Compat
-    Compat --> Runtime
-    Market --> Runtime
-    DB --> Runtime
-    Runtime --> DB
-```
+- make: https://www.gnu.org/software/make/
 
-### Internal Runtime and Data Flow
+## 第一次使用
 
-```mermaid
-flowchart LR
-    subgraph Feeds[Market Sources]
-        HL[Hyperliquid Market Data]
-        Sim[Local Simulator]
-    end
+第一次使用只要执行 2 条命令。
 
-    subgraph API[apps/api]
-        Compat[Hyperliquid Compatibility Layer]
-        Runtime[Runtime Coordinator]
-        Trading[Trading Runtime]
-        Market[Market Runtime]
-        WS[WebSocket Hub]
-        Auth[Auth / Bot Signer / Nonce]
-    end
+### 第 1 条：初始化
 
-    subgraph Core[packages/trading-core]
-        Engine[Deterministic Trading Engine]
-        Replay[Replay / Event Application]
-        Rules[Order / Fill / Margin Rules]
-    end
-
-    subgraph Data[Persistence]
-        DB[(PostgreSQL)]
-        Events[Simulation Events]
-        Views[Orders / Positions / Accounts]
-        Snapshots[Market Snapshots / Candles]
-    end
-
-    Auth --> Compat
-    Compat --> Runtime
-    Runtime --> Trading
-    Runtime --> Market
-    Runtime --> WS
-
-    Trading --> Engine
-    Engine --> Replay
-    Engine --> Rules
-
-    HL --> Market
-    Sim --> Market
-
-    Trading --> DB
-    Market --> DB
-    DB --> Events
-    DB --> Views
-    DB --> Snapshots
-    DB --> Runtime
-```
-
-Interaction summary:
-
-- Human users operate through the Web UI.
-- AI agents are expected to reason through a separate strategy-oriented MCP layer and call the trader-facing MCP for execution.
-- The trader-facing MCP is the execution boundary over the Hyperliquid-compatible API surface.
-- The API layer handles session auth for humans and signer + nonce auth for bot-style flows.
-- `apps/api` coordinates trading state, market state, compatibility behavior, and websocket delivery.
-- `packages/trading-core` remains the deterministic source of trading behavior.
-- PostgreSQL stores event history and query-oriented snapshots for replay and state hydration.
-
-## Key Make Commands
+先进入项目目录，然后执行：
 
 ```bash
-make help
-make install
-make db-migrate MIGRATION_NAME=add-auth-access
-make db-seed
-make db-bootstrap
-make dev
+make init
+```
+
+这一步会自动帮你完成：
+
+- 创建本地配置文件
+- 准备项目运行需要的环境
+- 启动数据库和初始化工具
+- 等待初始化工具准备完成
+- 导入默认账号和基础数据
+- 导入最近一段 Hyperliquid 市场数据
+
+第一次执行会比较慢，这是正常的。
+
+### 第 2 条：启动
+
+初始化完成后，执行：
+
+```bash
 make up
-make up-build
+```
+
+看到服务启动后，就可以打开浏览器使用了。
+
+## 以后每次启动
+
+第一次初始化成功之后，以后每次只需要执行这一条：
+
+```bash
+make up
+```
+
+如果你要停止项目：
+
+```bash
 make down
-make logs
-make check
 ```
 
-## Production Deployment
+## 打开哪个地址
 
-Use the production compose stack instead of the dev stack.
+- 普通用户页面：http://localhost:3000
+- 管理员页面：http://localhost:3000/admin
+- 数据库查看页面：http://localhost:8080
 
-```bash
-make prod-esm-check
-make prod-up-build
-```
+大多数用户只需要打开第一个地址。
 
-If this is the first production boot on a new database, run:
-
-```bash
-make db-push
-make db-bootstrap
-```
-
-Useful production commands:
-
-```bash
-make prod-logs
-make prod-down
-```
-
-Production validation:
-
-- Web should run with `next start`, not `next dev`
-- API should run from compiled `dist` output, not `tsx watch`
-- the Next.js dev `N` indicator should not appear in the UI
-
-Production API routing:
-
-- if Web and API are served behind the same domain / reverse proxy, leave `NEXT_PUBLIC_API_BASE_URL` empty
-- if API is served on a separate public domain, set `NEXT_PUBLIC_API_BASE_URL` explicitly, for example `https://api.example.com`
-- production public ports can be overridden with `WEB_PORT` and `API_PORT` in `.env`
-
-## Demo Accounts
-
-Run `make db-seed` or `make db-bootstrap` before first login. Database setup commands run inside the batch container.
-
-Online demo:
-- https://stratium.weget.jp
+## 默认账号
 
 ```text
-Frontend login
-  username: demo
-  password: demo123456
+普通用户
+username: demo
+password: demo123456
 
-Admin login
-  username: admin
-  password: admin123456
+交易所管理员
+username: admin
+password: admin123456
 ```
 
-### Batch / Market Data
+## 在线体验
 
-```bash
-make batch-build
-make batch-run-collector
-make batch-clear-kline COIN=BTC INTERVAL=1m
-make batch-import-hl-day COIN=BTC DATE=2026-04-08
-make batch-refresh-hl-day COIN=BTC DATE=2026-04-08
-```
+- https://stratium.weget.jp/
 
-Batch is docker-job only:
+## 常见问题
 
-- `job-runner` is part of the main compose stack and stays resident
-- `batch` itself is not part of the main `api/web/db/job-runner` stack
-- it does not auto-start
-- run every batch task through the host-side `job-runner`
-- `admin -> api -> job-runner -> docker-compose batch`
-- `make -> job-runner -> docker-compose batch`
+- 第一次启动比较慢是正常的，因为系统要先把运行环境准备好
+- 如果浏览器打不开页面，先确认 Docker 还在运行
+- 如果 `3000` 或 `8080` 端口被别的软件占用，页面可能打不开
+- 关闭当前终端后，`make up` 启动的服务也会一起停止
 
-## Main Docs
+## 进一步阅读
 
-- [PH1 Architecture](docs/ph1-architecture.md)
-- [Data Flow](docs/data-flow.md)
-- [Event Spec](docs/event-spec.md)
-- [Order Rules](docs/order-rules.md)
-- [Margin Rules](docs/margin-rules.md)
-- [Hyperliquid API Compatibility](docs/hyperliquid-api-compatibility.md)
-- [Hyperliquid WebSocket Compatibility](docs/hyperliquid-websocket-compatibility.md)
-- [MCP Feasibility](docs/mcp-feasibility.md)
-- [Trader MCP](docs/trader-mcp.md)
-- [Hyperliquid + MCP Roadmap](docs/roadmap-hyperliquid-mcp.md)
+如果你已经成功跑起来，后面想再了解更详细的设计和规则，可以继续看这些文档：
+
+- [PH1 架构说明](docs/ph1-architecture.md)
+- [数据流](docs/data-flow.md)
+- [事件规范](docs/event-spec.md)
+- [订单规则](docs/order-rules.md)
+- [保证金规则](docs/margin-rules.md)
+- [Hyperliquid API 兼容说明](docs/hyperliquid-api-compatibility.md)
+- [Hyperliquid WebSocket 兼容说明](docs/hyperliquid-websocket-compatibility.md)

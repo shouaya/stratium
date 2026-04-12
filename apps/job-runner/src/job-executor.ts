@@ -219,6 +219,22 @@ const runMainCompose = (args: string[]) =>
 const runDocker = (args: string[]) =>
   runCommand("docker", args);
 
+const getContainerRunningState = async (containerName: string): Promise<boolean> => {
+  const result = await runDocker(["inspect", "-f", "{{.State.Running}}", containerName]);
+
+  if (!result.ok) {
+    const missingContainer = result.stderr.includes("No such object") || result.stderr.includes("No such container");
+
+    if (missingContainer) {
+      return false;
+    }
+
+    throw new Error(`Failed to inspect container ${containerName}: ${result.stderr || result.message || "unknown error"}`);
+  }
+
+  return result.stdout.trim() === "true";
+};
+
 export class JobExecutor {
   listJobs(): JobDefinition[] {
     return definitions.filter((job) => job.adminVisible);
@@ -272,9 +288,14 @@ export class JobExecutor {
         const until = new Date();
         const since = new Date(until.getTime() - (24 * 60 * 60 * 1000));
         const interval = "1m";
+        const apiWasRunning = await getContainerRunningState(apiContainerName);
+        const steps: JobRunResult[] = [];
 
-        return combineResults([
-          await runDocker(["stop", apiContainerName]),
+        if (apiWasRunning) {
+          steps.push(await runDocker(["stop", apiContainerName]));
+        }
+
+        steps.push(
           await runBatchNode([
             "dist/jobs/clear-market-history.js",
             "--coin",
@@ -287,7 +308,10 @@ export class JobExecutor {
             since.toISOString(),
             "--before",
             until.toISOString()
-          ]),
+          ])
+        );
+
+        steps.push(
           await runBatchNode([
             "dist/jobs/import-hyperliquid-day.js",
             "--coin",
@@ -298,9 +322,14 @@ export class JobExecutor {
             since.toISOString(),
             "--until",
             until.toISOString()
-          ]),
-          await runDocker(["start", apiContainerName])
-        ]);
+          ])
+        );
+
+        if (apiWasRunning) {
+          steps.push(await runDocker(["start", apiContainerName]));
+        }
+
+        return combineResults(steps);
       }
       default:
         throw new Error(`Unsupported job: ${String(jobId)}`);
