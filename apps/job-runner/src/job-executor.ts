@@ -220,7 +220,9 @@ const runDocker = (args: string[]) =>
   runCommand("docker", args);
 
 const getContainerRunningState = async (containerName: string): Promise<boolean> => {
-  const result = await runDocker(["inspect", "-f", "{{.State.Running}}", containerName]);
+  // Use `docker container inspect` so a same-named image does not match when
+  // the API container has not been created yet.
+  const result = await runDocker(["container", "inspect", "-f", "{{.State.Running}}", containerName]);
 
   if (!result.ok) {
     const missingContainer = result.stderr.includes("No such object") || result.stderr.includes("No such container");
