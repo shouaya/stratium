@@ -1,11 +1,11 @@
 import { createHmac } from "node:crypto";
-
-export interface StratiumBotCredentials {
-  accountId: string;
-  vaultAddress: string;
-  signerAddress: string;
-  apiSecret: string;
-}
+import type {
+  BatchModifyOrderInput,
+  ModifyOrderInput,
+  OrderGrouping,
+  PlaceOrderInput,
+  StratiumBotCredentials
+} from "./types.js";
 
 interface LoginResponse {
   token: string;
@@ -13,44 +13,12 @@ interface LoginResponse {
 
 interface StratiumClientConfig {
   apiBaseUrl: string;
+  authToken?: string;
   frontendUsername?: string;
   frontendPassword?: string;
   frontendRole?: "frontend";
   botCredentials?: StratiumBotCredentials;
 }
-
-export interface PlaceOrderInput {
-  asset?: number;
-  isBuy: boolean;
-  price: string;
-  size: string;
-  reduceOnly?: boolean;
-  tif?: "Gtc" | "Ioc";
-  cloid?: string;
-  trigger?: {
-    isMarket: boolean;
-    triggerPx: string;
-    tpsl: "tp" | "sl";
-  };
-}
-
-export interface ModifyOrderInput {
-  oid: number;
-  asset?: number;
-  isBuy: boolean;
-  price: string;
-  size: string;
-  reduceOnly?: boolean;
-  tif?: "Gtc" | "Ioc";
-  cloid?: string;
-  trigger?: {
-    isMarket: boolean;
-    triggerPx: string;
-    tpsl: "tp" | "sl";
-  };
-}
-
-export interface BatchModifyOrderInput extends ModifyOrderInput {}
 
 const canonicalStringify = (value: unknown): string => {
   if (Array.isArray(value)) {
@@ -84,6 +52,10 @@ export class StratiumHttpClient {
 
   async getMeta() {
     return this.info({ type: "meta" });
+  }
+
+  async getMetaAndAssetCtxs() {
+    return this.info({ type: "metaAndAssetCtxs" });
   }
 
   async getAllMids() {
@@ -126,6 +98,14 @@ export class StratiumHttpClient {
     }, true);
   }
 
+  async getFrontendOpenOrders() {
+    const credentials = await this.getBotCredentials();
+    return this.info({
+      type: "frontendOpenOrders",
+      user: credentials.accountId
+    }, true);
+  }
+
   async getOrderStatus(oidOrCloid: number | string) {
     const credentials = await this.getBotCredentials();
     return this.info({
@@ -135,11 +115,19 @@ export class StratiumHttpClient {
     }, true);
   }
 
+  async getExchangeStatus() {
+    return this.info({ type: "exchangeStatus" });
+  }
+
   async placeOrder(input: PlaceOrderInput) {
+    return this.placeOrders([input], input.grouping ?? "na");
+  }
+
+  async placeOrders(inputs: PlaceOrderInput[], grouping: OrderGrouping = "na") {
     return this.exchange({
       type: "order",
-      orders: [this.toOrderWire(input)],
-      grouping: "na"
+      orders: inputs.map((entry) => this.toOrderWire(entry)),
+      grouping
     });
   }
 
@@ -207,10 +195,12 @@ export class StratiumHttpClient {
   }
 
   private async request(path: string, body: Record<string, unknown>) {
+    const token = await this.getOptionalFrontendToken();
     const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
       method: "POST",
       headers: {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {})
       },
       body: JSON.stringify(body)
     });
@@ -287,13 +277,17 @@ export class StratiumHttpClient {
     return this.credentials;
   }
 
-  private async getFrontendToken() {
+  private async getOptionalFrontendToken() {
+    if (this.config.authToken?.trim()) {
+      return this.config.authToken.trim();
+    }
+
     if (this.token) {
       return this.token;
     }
 
     if (!this.config.frontendUsername || !this.config.frontendPassword) {
-      throw new Error("Missing frontend login credentials for trader MCP bootstrap");
+      return null;
     }
 
     const response = await fetch(`${this.config.apiBaseUrl}/api/auth/login`, {
@@ -314,6 +308,14 @@ export class StratiumHttpClient {
 
     this.token = data.token;
     return this.token;
+  }
+
+  private async getFrontendToken() {
+    const token = await this.getOptionalFrontendToken();
+    if (!token) {
+      throw new Error("Missing platform bearer token or frontend login credentials for trader MCP bootstrap");
+    }
+    return token;
   }
 }
 
@@ -370,3 +372,11 @@ export const summarizeExchangeStatuses = (response: unknown) => {
     return entry;
   });
 };
+
+export type {
+  BatchModifyOrderInput,
+  ModifyOrderInput,
+  OrderGrouping,
+  PlaceOrderInput,
+  StratiumBotCredentials
+} from "./types.js";

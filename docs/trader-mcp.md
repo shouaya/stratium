@@ -1,218 +1,321 @@
 # Trader MCP
 
-Last updated: 2026-04-10
+最后更新：2026-04-14
 
-## Goal
+## 目标
 
-Provide an AI-friendly trader MCP on top of Stratium's Hyperliquid-compatible API surface.
+在 Stratium 的 Hyperliquid 兼容 API 之上，提供一个适合 AI Agent 调用的 Trader MCP。
 
-This MCP is execution-oriented. It hides signer credentials, owns nonce generation, and exposes typed tools instead of forcing the model to build raw `/info` and `/exchange` envelopes.
+这个 MCP 以执行为中心：
 
-## Runtime Model
+- 不把 signer 密钥暴露给模型
+- 由 MCP 自己管理 nonce
+- 对模型暴露 typed tools，而不是要求模型自己拼原始 `/info` 和 `/exchange` 请求
 
-Current implementation lives in:
+## 运行模型
+
+当前实现位于：
 
 - `apps/trader-mcp/src/index.ts`
 - `apps/trader-mcp/src/client.ts`
+- `apps/trader-mcp/src/http-server.ts`
+- `apps/trader-mcp/src/tools.ts`
 
-Current transport:
+当前传输方式：
 
-- stdio MCP server
+- 默认使用 streamable HTTP MCP server
+- `stdio` 仅作为本地开发回退模式保留
 
-Current backend target:
+当前后端目标：
 
 - Stratium Fastify API
 
-Current auth bootstrap modes:
+当前认证引导方式：
 
-1. frontend login bootstrap
+1. 推荐方式：平台 Bearer Token 透传
+   - MCP 客户端直接发送 `Authorization: Bearer <platform-token>`
+   - trader-mcp 通过 `GET /api/bot-credentials` 复用现有 Stratium 登录态与 bot/account 绑定
+2. 回退方式：前端账号登录引导
    - `STRATIUM_FRONTEND_USERNAME`
    - `STRATIUM_FRONTEND_PASSWORD`
-   - then fetch `GET /api/bot-credentials`
-2. direct bot credentials
+   - 然后请求 `GET /api/bot-credentials`
+3. 回退方式：直接注入 bot 凭证
    - `STRATIUM_BOT_ACCOUNT_ID`
    - `STRATIUM_BOT_VAULT_ADDRESS`
    - `STRATIUM_BOT_SIGNER_ADDRESS`
    - `STRATIUM_BOT_API_SECRET`
 
-Common base URL:
+通用后端地址：
 
 - `STRATIUM_API_BASE_URL`
-  defaults to `http://127.0.0.1:4000`
+  默认值为 `http://127.0.0.1:4000`
 
-## Security Model
+默认 MCP 地址：
 
-The model never receives:
+- `http://127.0.0.1:4600/mcp`
+
+## 安全模型
+
+模型不会接触到以下内容：
 
 - bot `apiSecret`
-- raw signer bootstrap flow
-- nonce control
+- 原始 signer 引导流程
+- nonce 控制权
 
-The MCP server owns:
+MCP 服务自己负责：
 
-- bot credential loading
-- HMAC signing
-- nonce generation
-- request submission to Stratium
+- 加载 bot 凭证
+- HMAC 签名
+- nonce 生成
+- 请求发送到 Stratium
 
-This matches the roadmap requirement that the MCP, not the model, manages signer usage and nonce policy.
+这与路线图要求一致，也就是 signer 使用和 nonce 策略必须由 MCP 管理，而不是由模型管理。
 
-## Tool List
+## 部署模型
 
-### Market tools
+当前主形态是远端 MCP 服务。
+
+也就是说，一个 bot 或 AI 客户端理论上只需要：
+
+1. 一个 MCP URL
+2. 一个 Stratium 平台 Bearer Token
+
+客户端不需要自己处理：
+
+- bot signer 密钥
+- nonce 管理
+- 直接调用 `/api/auth/login` 做引导
+
+本地开发时，`docker compose up` 会暴露：
+
+- Web UI：`http://localhost:3000`
+- API：`http://localhost:4000`
+- Trader MCP：`http://localhost:4600/mcp`
+
+生产环境 compose 也采用同样的远端 MCP 形态。
+
+## 客户端接入模型
+
+推荐客户端流程：
+
+1. 先通过现有登录流程拿到普通 Stratium frontend token
+2. 连接 MCP URL：`http://<host>:4600/mcp`
+3. 在 MCP HTTP 请求上附带 `Authorization: Bearer <token>`
+4. 正常调用 trader tools
+
+MCP 服务内部会：
+
+1. 复用 Stratium API 的现有认证判断访问权限
+2. 通过 `GET /api/bot-credentials` 拉取当前 session 绑定的 bot 凭证
+3. 代表该 session 所属账户对私有 `/info` 与 `/exchange` 请求进行签名
+
+这样 MCP 的认证方式就和现在的 `web -> api` 用户与账户体系保持一致。
+
+## 工具列表
+
+### 市场工具
 
 - `stratium_get_meta`
-  returns Hyperliquid-compatible `meta`
+  返回 Hyperliquid 兼容的 `meta`
+- `stratium_get_meta_and_asset_ctxs`
+  返回 Hyperliquid 兼容的 `metaAndAssetCtxs`
 - `stratium_get_all_mids`
-  returns Hyperliquid-compatible `allMids`
+  返回 Hyperliquid 兼容的 `allMids`
 - `stratium_get_l2_book`
-  inputs:
+  输入：
   `coin`
 - `stratium_get_candles`
-  inputs:
+  输入：
   `coin`, `interval`, `startTime`, `endTime`
 - `stratium_get_recent_trades`
-  inputs:
+  输入：
   `coin`
 
-### Account tools
+### 账户工具
 
 - `stratium_get_clearinghouse_state`
-  returns private account state for the MCP-authenticated account
+  返回当前 MCP 认证账户的私有账户状态
 - `stratium_get_open_orders`
-  returns private open orders for the MCP-authenticated account
+  返回当前 MCP 认证账户的开放订单
+- `stratium_get_frontend_open_orders`
+  返回带 trigger/group 元信息的开放订单，适合交易前端使用
 - `stratium_get_order_status`
-  inputs:
+  输入：
   `oid`
-  accepts either numeric oid or string cloid
+  支持数值 oid 或字符串 cloid
+- `stratium_get_exchange_status`
+  返回交易所健康状态 / 可用状态
 
-### Trading tools
+### 交易工具
 
 - `stratium_place_order`
-  inputs:
-  `asset?`, `isBuy`, `price`, `size`, `reduceOnly?`, `tif?`, `cloid?`, `trigger?`
+  输入：
+  `asset?`, `isBuy`, `price`, `size`, `reduceOnly?`, `tif?`, `cloid?`, `grouping?`, `trigger?`
+- `stratium_place_orders`
+  输入：
+  `grouping`, `orders[]`
+  支持 `normalTpsl` 和 `positionTpsl` 分组下单
 - `stratium_cancel_order`
-  inputs:
+  输入：
   `oid`, `asset?`
 - `stratium_cancel_order_by_cloid`
-  inputs:
+  输入：
   `cloid`, `asset?`
 - `stratium_modify_order`
-  inputs:
+  输入：
   `oid`, `asset?`, `isBuy`, `price`, `size`, `reduceOnly?`, `tif?`, `cloid?`, `trigger?`
 - `stratium_batch_modify`
-  inputs:
+  输入：
   `modifies[]`
 - `stratium_schedule_cancel`
-  inputs:
+  输入：
   `time`
 
-## Output Shape
+当前支持的 grouping 值：
 
-Each tool returns:
+- `na`
+- `normalTpsl`
+- `positionTpsl`
+
+## 输出结构
+
+每个工具都会返回：
 
 1. `structuredContent`
-   machine-friendly payload containing:
+   给程序消费的结构化结果，包含：
    - `operation`
    - `summary`
    - `raw`
 2. `content`
-   text copy of the same payload for broad MCP client compatibility
+   对同一份结果的文本化拷贝，便于更广泛的 MCP 客户端兼容
 
-Summary behavior:
+`summary` 的语义：
 
-- read tools usually mirror the raw API response
-- trading tools normalize Hyperliquid-style `statuses[]` into simpler model-readable summaries such as:
+- 查询类工具通常直接镜像原始 API 响应
+- 交易类工具会把 Hyperliquid 风格的 `statuses[]` 归一化成更适合模型理解的摘要，例如：
   - accepted / rejected
   - resting / filled
   - `oid`
   - `cloid`
   - error string
 
-## Nonce Behavior
+## Nonce 行为
 
-Nonce is not a tool input.
+Nonce 不是工具输入项。
 
-Current policy:
+当前策略：
 
-- the MCP client keeps an internal monotonically increasing millisecond-based nonce cursor
-- each signed private request gets a fresh nonce
-- nonce reuse is prevented inside the MCP process
+- MCP client 内部维护一个按毫秒递增的 nonce 游标
+- 每次私有签名请求都会分配新的 nonce
+- MCP 进程内部会避免 nonce 重复
 
-This is aligned with the current Stratium API behavior, which rejects replayed nonces.
+这与当前 Stratium API 的行为一致，因为 Stratium 会拒绝 replay nonce。
 
-## Tool Calling Guidance For AI Agents
+## AI Agent 调用建议
 
-Recommended usage pattern:
+推荐调用顺序：
 
-1. inspect market with:
+1. 先查看市场：
    - `stratium_get_meta`
+   - `stratium_get_meta_and_asset_ctxs`
    - `stratium_get_all_mids`
    - `stratium_get_l2_book`
-2. inspect account with:
+2. 再查看账户：
    - `stratium_get_clearinghouse_state`
-   - `stratium_get_open_orders`
-3. execute with:
-   - `stratium_place_order`
+   - `stratium_get_frontend_open_orders`
+3. 再执行交易：
+   - `stratium_place_order` 或 `stratium_place_orders`
    - `stratium_modify_order`
    - `stratium_cancel_order`
-4. confirm with:
+4. 最后确认结果：
    - `stratium_get_order_status`
-   - `stratium_get_open_orders`
+   - `stratium_get_frontend_open_orders`
 
-Recommended reasoning rule for the model:
+给模型的推荐推理规则：
 
-- prefer typed tools over reasoning about raw `/exchange` payloads
-- use `summary` first
-- inspect `raw` only when the summary is insufficient
+- 优先调用 typed tools，不要让模型自己推导底层 `/exchange` payload
+- 先看 `summary`
+- 只有在 `summary` 不够时再看 `raw`
 
-## Safety Boundaries
+## 安全边界
 
-Current implementation protects secrets, but it does not yet enforce higher-level policy controls such as:
+当前实现已经保护了密钥，但还没有加入更高层的策略控制，例如：
 
-- max order size guardrails
-- max leverage guardrails
-- symbol allowlists
-- strategy approval workflow
-- dry-run vs live-execute policy split
+- 最大下单数量限制
+- 最大杠杆限制
+- 交易品种白名单
+- 策略审批流程
+- dry-run 与 live-execute 的策略隔离
 
-For AI-facing deployment, these should be added before broad autonomous use.
+如果要对 AI 做更广泛的自动化放权，这些控制建议在前面先补齐。
 
-## Validation Status
+## 当前验证状态
 
-Current validation completed:
+当前已经完成：
 
 - `pnpm --filter @stratium/trader-mcp lint`
 - `pnpm --filter @stratium/trader-mcp test`
+- `pnpm --filter @stratium/trader-mcp build`
 
-Test coverage currently includes:
+当前测试覆盖包括：
 
-- frontend-login bootstrap to bot credentials
-- signed private request generation
-- direct bot-credential mode
-- normalized exchange status summarization
+- streamable HTTP MCP server 启动
+- bearer token 透传认证
+- frontend 登录引导到 bot 凭证
+- 私有请求签名生成
+- 直接 bot 凭证模式
+- 交易状态摘要归一化
+- MCP client 对 HTTP endpoint 的集成调用
+- MCP tool 对 mocked Stratium API 的真实链路执行
 
-## Known Limits
+## 当前限制
 
-1. This MCP currently targets request/response tools only.
-   It does not expose websocket subscriptions yet.
-2. It follows Stratium's current local signer model.
-   It does not implement real Hyperliquid signature recovery.
-3. It is execution-oriented.
-   Replay, PnL analysis, and strategy feedback tools are not in this first version yet.
+1. 当前 MCP 还是以 request/response 工具为主。
+   还没有暴露 websocket 订阅能力。
+2. 它遵循的是 Stratium 当前本地 signer 模型。
+   还没有实现真实 Hyperliquid 签名恢复逻辑。
+3. 当前重点是执行。
+   replay、PnL 分析、策略反馈工具还不在这一版里。
 
-## Minimal Launch Example
+## 本地启动示例
 
-Example environment:
-
-```bash
-STRATIUM_API_BASE_URL=http://127.0.0.1:4000
-STRATIUM_FRONTEND_USERNAME=demo
-STRATIUM_FRONTEND_PASSWORD=demo123456
-```
-
-Example run:
+示例环境变量：
 
 ```bash
-pnpm --filter @stratium/trader-mcp dev
+STRATIUM_MCP_API_BASE_URL=http://localhost:4000
+TRADER_MCP_PORT=4600
 ```
+
+启动命令：
+
+```bash
+docker compose up trader-mcp
+```
+
+然后让 MCP 客户端连接：
+
+```text
+http://localhost:4600/mcp
+```
+
+并附带：
+
+```text
+Authorization: Bearer <你的 Stratium frontend token>
+```
+
+## 最小接入结论
+
+任何支持 streamable HTTP 的 MCP 客户端，都可以直接接这个服务。
+
+客户端真正需要提供的只有：
+
+1. MCP URL
+2. Stratium bearer token
+
+MCP 服务会自己处理：
+
+- bot 凭证读取
+- 请求签名
+- nonce 生成
+- 请求归一化

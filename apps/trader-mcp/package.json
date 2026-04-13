@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && pnpm exec tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
-    "start": "node --experimental-specifier-resolution=node dist/index.js",
+    "start": "node --experimental-specifier-resolution=node dist/src/index.js",
     "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
     "test": "pnpm exec vitest run --passWithNoTests",
     "test:coverage": "pnpm exec vitest run --coverage"

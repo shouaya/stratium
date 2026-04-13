@@ -129,6 +129,35 @@ services:
     depends_on:
       - api
 
+  trader-mcp:
+    build:
+      context: .
+      dockerfile: apps/trader-mcp/Dockerfile
+    container_name: stratium-trader-mcp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    working_dir: /workspace
+    command: sh -lc "pnpm --filter @stratium/trader-mcp dev"
+    environment:
+      STRATIUM_API_BASE_URL: ${STRATIUM_MCP_API_BASE_URL:-http://api:4000}
+      STRATIUM_MCP_HOST: 0.0.0.0
+      STRATIUM_MCP_PORT: 4600
+      STRATIUM_MCP_PATH: /mcp
+      STRATIUM_MCP_CORS_ORIGIN: ${STRATIUM_MCP_CORS_ORIGIN:-*}
+    ports:
+      - "${TRADER_MCP_PORT:-4600}:4600"
+    volumes:
+      - .:/workspace
+      - trader-mcp-node_modules:/workspace/node_modules
+      - trader-mcp-app-node_modules:/workspace/apps/trader-mcp/node_modules
+      - shared-node_modules:/workspace/packages/shared/node_modules
+      - trading-core-node_modules:/workspace/packages/trading-core/node_modules
+    depends_on:
+      - api
+
   adminer:
     image: adminer:4-standalone
     container_name: stratium-adminer
@@ -150,5 +179,7 @@ volumes:
   web-app-node_modules:
   batch-app-node_modules:
   job-runner-app-node_modules:
+  trader-mcp-node_modules:
+  trader-mcp-app-node_modules:
   shared-node_modules:
   trading-core-node_modules:

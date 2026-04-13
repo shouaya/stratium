@@ -89,11 +89,12 @@ describe("StratiumHttpClient", () => {
 
     const exchangeRequest = fetchMock.mock.calls[3]?.[1] as RequestInit;
     const exchangeBody = JSON.parse(String(exchangeRequest.body)) as {
-      action: { type: string; orders: Array<{ b: boolean; p: string; s: string }> };
+      action: { type: string; grouping: string; orders: Array<{ b: boolean; p: string; s: string }> };
       nonce: number;
       signature: { r: string; s: string; v: number };
     };
     expect(exchangeBody.action.type).toBe("order");
+    expect(exchangeBody.action.grouping).toBe("na");
     expect(exchangeBody.action.orders[0]).toMatchObject({
       b: true,
       p: "70000",
@@ -123,18 +124,53 @@ describe("StratiumHttpClient", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4000/info");
   });
 
+  it("reuses an injected platform bearer token for bot bootstrap and downstream requests", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          accountId: "paper-account-1",
+          vaultAddress: "0xvault",
+          signerAddress: "0xsigner",
+          apiSecret: "secret"
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([{ oid: 9 }])
+      });
+
+    const client = new StratiumHttpClient({
+      apiBaseUrl: "http://127.0.0.1:4000",
+      authToken: "platform-token"
+    });
+
+    expect(await client.getOpenOrders()).toEqual([{ oid: 9 }]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const credentialRequest = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect((credentialRequest.headers as Record<string, string>).authorization).toBe("Bearer platform-token");
+
+    const infoRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect((infoRequest.headers as Record<string, string>).authorization).toBe("Bearer platform-token");
+  });
+
   it("covers all tool-facing client methods and normalized MCP results", async () => {
     fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ([{ universe: [] }, [{ markPx: "70000" }]]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ mids: { BTC: "70000" } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ coin: "BTC" }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([{ T: 1 }]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ([{ tid: 1 }]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ marginSummary: {} }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ([{ oid: 3, grouping: "normalTpsl" }]) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ order: { status: "open" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ("ok") })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { data: { statuses: [{ success: "ok" }] } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { data: { statuses: [{ error: "bad" }] } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { data: { statuses: [{ filled: { oid: 9, totalSz: "1", avgPx: "70001" } }] } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { data: { statuses: [{ resting: { oid: 5 } }] } } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { data: { statuses: [{ resting: { oid: 11 } }, { resting: { oid: 12 } }] } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "ok", response: { type: "scheduleCancel" } }) });
 
     const client = new StratiumHttpClient({
@@ -147,12 +183,15 @@ describe("StratiumHttpClient", () => {
       }
     });
 
+    expect(await client.getMetaAndAssetCtxs()).toEqual([{ universe: [] }, [{ markPx: "70000" }]]);
     expect(await client.getAllMids()).toEqual({ mids: { BTC: "70000" } });
     expect(await client.getL2Book("BTC")).toEqual({ coin: "BTC" });
     expect(await client.getCandles("BTC", "1m", 1, 2)).toEqual([{ T: 1 }]);
     expect(await client.getRecentTrades("BTC")).toEqual([{ tid: 1 }]);
     expect(await client.getClearinghouseState()).toEqual({ marginSummary: {} });
+    expect(await client.getFrontendOpenOrders()).toEqual([{ oid: 3, grouping: "normalTpsl" }]);
     expect(await client.getOrderStatus("0xabc")).toEqual({ order: { status: "open" } });
+    expect(await client.getExchangeStatus()).toEqual("ok");
     expect(summarizeExchangeStatuses(await client.cancelOrder(7))).toEqual([{ accepted: true, status: "ok" }]);
     expect(summarizeExchangeStatuses(await client.cancelOrderByCloid("0xabc"))).toEqual([{ accepted: false, error: "bad" }]);
     expect(summarizeExchangeStatuses(await client.modifyOrder({
@@ -173,7 +212,42 @@ describe("StratiumHttpClient", () => {
         tpsl: "sl"
       }
     }]))).toEqual([{ accepted: true, state: "resting", oid: 5, cloid: undefined }]);
+    expect(summarizeExchangeStatuses(await client.placeOrders([{
+      isBuy: true,
+      price: "70010",
+      size: "1",
+      tif: "Gtc",
+      cloid: "0xparent"
+    }, {
+      isBuy: false,
+      price: "71000",
+      size: "1",
+      reduceOnly: true,
+      cloid: "0xtp",
+      trigger: {
+        isMarket: true,
+        triggerPx: "71000",
+        tpsl: "tp"
+      }
+    }], "normalTpsl"))).toEqual([
+      { accepted: true, state: "resting", oid: 11, cloid: undefined },
+      { accepted: true, state: "resting", oid: 12, cloid: undefined }
+    ]);
     expect(await client.scheduleCancel(123456)).toEqual({ status: "ok", response: { type: "scheduleCancel" } });
+
+    const groupedExchangeRequest = fetchMock.mock.calls[13]?.[1] as RequestInit;
+    const groupedExchangeBody = JSON.parse(String(groupedExchangeRequest.body)) as {
+      action: {
+        type: string;
+        grouping: string;
+        orders: Array<{ c?: string; r: boolean }>;
+      };
+    };
+    expect(groupedExchangeBody.action.type).toBe("order");
+    expect(groupedExchangeBody.action.grouping).toBe("normalTpsl");
+    expect(groupedExchangeBody.action.orders).toHaveLength(2);
+    expect(groupedExchangeBody.action.orders[0]?.c).toBe("0xparent");
+    expect(groupedExchangeBody.action.orders[1]?.r).toBe(true);
 
     const mcpResult = await client.toMcpResult("demo", { foo: "bar" }, { simple: true });
     expect(mcpResult.structuredContent).toEqual({
@@ -188,7 +262,7 @@ describe("StratiumHttpClient", () => {
     const noCredsClient = new StratiumHttpClient({
       apiBaseUrl: "http://127.0.0.1:4000"
     });
-    await expect(noCredsClient.getOpenOrders()).rejects.toThrow("Missing frontend login credentials for trader MCP bootstrap");
+    await expect(noCredsClient.getOpenOrders()).rejects.toThrow("Missing platform bearer token or frontend login credentials for trader MCP bootstrap");
 
     fetchMock.mockResolvedValueOnce({
       ok: false,

@@ -10,6 +10,7 @@ COPY prisma ./prisma
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/batch/package.json ./apps/batch/package.json
 COPY apps/job-runner/package.json ./apps/job-runner/package.json
+COPY apps/trader-mcp/package.json ./apps/trader-mcp/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/shared/package.json ./packages/shared/package.json
 COPY packages/trading-core/package.json ./packages/trading-core/package.json

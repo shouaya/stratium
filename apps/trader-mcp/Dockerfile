@@ -7,6 +7,8 @@ RUN npm install -g pnpm@10.6.2
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY prisma ./prisma
 COPY apps/api/package.json ./apps/api/package.json
+COPY apps/batch/package.json ./apps/batch/package.json
+COPY apps/job-runner/package.json ./apps/job-runner/package.json
 COPY apps/trader-mcp/package.json ./apps/trader-mcp/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/shared/package.json ./packages/shared/package.json
@@ -16,8 +18,6 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-RUN pnpm exec prisma generate
+EXPOSE 4600
 
-EXPOSE 3000
-
-CMD ["sh", "-lc", "pnpm --filter @stratium/web dev"]
+CMD ["sh", "-lc", "pnpm --filter @stratium/trader-mcp dev"]

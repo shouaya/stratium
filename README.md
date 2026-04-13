@@ -115,3 +115,4 @@ password: admin123456
 - [保证金规则](docs/margin-rules.md)
 - [Hyperliquid API 兼容说明](docs/hyperliquid-api-compatibility.md)
 - [Hyperliquid WebSocket 兼容说明](docs/hyperliquid-websocket-compatibility.md)
+- [Trader MCP 接入说明](docs/trader-mcp.md)
