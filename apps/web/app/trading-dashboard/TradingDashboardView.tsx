@@ -7,6 +7,7 @@ import { AccountPanel } from "./components/AccountPanel";
 import { BalancePanel } from "./components/BalancePanel";
 import { OrderEntryPanel } from "./components/OrderEntryPanel";
 import { PositionTpslPanel } from "./components/PositionTpslPanel";
+import { OcoOrderPanel } from "./components/OcoOrderPanel";
 
 export function TradingDashboardView({
   locale,
@@ -39,6 +40,7 @@ export function TradingDashboardView({
             <div style={{ position: "relative", height: "100%" }}>
               <BalancePanel vm={vm} />
               <OrderEntryPanel vm={vm} popup open={vm.tradePanelOpen} onClose={() => vm.setTradePanelOpen(false)} />
+              <OcoOrderPanel vm={vm} open={vm.ocoPanelOpen} onClose={() => vm.setOcoPanelOpen(false)} />
             </div>
           </div>
         </div>

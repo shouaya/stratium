@@ -805,7 +805,7 @@ export class TradingRepository {
     limitPx?: number;
     reduceOnly: boolean;
     cloid?: string;
-    status: string;
+    status: "waitingForParent" | "triggerPending" | "triggered" | "filled" | "canceled";
     createdAt: number;
     updatedAt: number;
   }>> {
@@ -827,7 +827,7 @@ export class TradingRepository {
       limitPx: row.limitPx == null ? undefined : toNumber(row.limitPx),
       reduceOnly: row.reduceOnly,
       cloid: row.cloid ?? undefined,
-      status: row.status,
+      status: row.status as "waitingForParent" | "triggerPending" | "triggered" | "filled" | "canceled",
       createdAt: row.createdAt.getTime(),
       updatedAt: row.updatedAt.getTime()
     }));
@@ -881,7 +881,7 @@ export class TradingRepository {
     limitPx?: number;
     reduceOnly: boolean;
     cloid?: string;
-    status: string;
+    status: "waitingForParent" | "triggerPending" | "triggered" | "filled" | "canceled";
     createdAt: number;
     updatedAt: number;
   }> {
@@ -906,7 +906,7 @@ export class TradingRepository {
       limitPx: row.limitPx == null ? undefined : toNumber(row.limitPx),
       reduceOnly: row.reduceOnly,
       cloid: row.cloid ?? undefined,
-      status: row.status,
+      status: row.status as "waitingForParent" | "triggerPending" | "triggered" | "filled" | "canceled",
       createdAt: row.createdAt.getTime(),
       updatedAt: row.updatedAt.getTime()
     };

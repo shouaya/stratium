@@ -1,6 +1,6 @@
 "use client";
 
-import { box, btnGhost } from "../styles";
+import { box, btnGhost, btnModeIdle } from "../styles";
 import { Line } from "./primitives";
 import { fmt } from "../utils";
 
@@ -71,9 +71,14 @@ export function BalancePanel({ vm }: { vm: any }) {
         </div>
       ) : null}
 
-      <button onClick={() => vm.setTradePanelOpen(true)} style={{ ...btnGhost, padding: "12px 14px", fontWeight: 700 }}>
-        {t.openTradePanel}
-      </button>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <button onClick={() => vm.setTradePanelOpen(true)} style={{ ...btnGhost, padding: "12px 14px", fontWeight: 700 }}>
+          {t.simplePanel}
+        </button>
+        <button onClick={() => vm.openOcoPanel()} style={{ ...btnModeIdle, padding: "12px 14px" }}>
+          {t.advancedPanel}
+        </button>
+      </div>
     </div>
   );
 }

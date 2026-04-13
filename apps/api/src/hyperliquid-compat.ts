@@ -107,6 +107,7 @@ export interface HyperliquidInfoRuntime {
     timestamp: number;
     origSz: string;
     cloid?: string;
+    grouping?: "normalTpsl" | "positionTpsl";
     triggerCondition?: {
       triggerPx: string;
       isMarket: boolean;

@@ -62,6 +62,7 @@ describe("HyperliquidExchangeCompat", () => {
           bestAsk: 70001
         })),
         getOrders: vi.fn(() => orders),
+        getAccountIds: vi.fn(() => ["paper-account-1"]),
         getOrderByClientOrderId: vi.fn((_accountId: string, cloid: string) =>
           orders.find((entry) => entry.clientOrderId === cloid)
         ),
@@ -186,7 +187,7 @@ describe("HyperliquidExchangeCompat", () => {
           b: false,
           p: "69900",
           s: "0.5",
-          r: false,
+          r: true,
           t: { trigger: { isMarket: false, triggerPx: "69950", tpsl: "sl" } },
           c: "0xtrigger"
         }]
@@ -407,6 +408,7 @@ describe("HyperliquidExchangeCompat", () => {
       signature: { r: "0x1", s: "0x2", v: 27 },
       action: {
         type: "order",
+        grouping: "positionTpsl",
         orders: [{
           a: 0,
           b: false,
@@ -415,15 +417,7 @@ describe("HyperliquidExchangeCompat", () => {
           r: true,
           t: { trigger: { isMarket: true, triggerPx: "73200", tpsl: "tp" } },
           c: "0xtp-oco"
-        }]
-      }
-    });
-    const slPlaced = await compat.handle(runtime as never, "paper-account-1", {
-      nonce: 25,
-      signature: { r: "0x1", s: "0x2", v: 27 },
-      action: {
-        type: "order",
-        orders: [{
+        }, {
           a: 0,
           b: false,
           p: "73100",
@@ -434,9 +428,8 @@ describe("HyperliquidExchangeCompat", () => {
         }]
       }
     });
-
     const tpOid = tpPlaced.response.data.statuses[0]?.resting?.oid as number;
-    const slOid = slPlaced.response.data.statuses[0]?.resting?.oid as number;
+    const slOid = tpPlaced.response.data.statuses[1]?.resting?.oid as number;
 
     runtime.getMarketData.mockReturnValue({ markPrice: 73092, bestBid: 73091, bestAsk: 73093 });
     await (compat as any).processTriggerOrders(runtime);
@@ -519,7 +512,7 @@ describe("HyperliquidExchangeCompat", () => {
       status: "triggerPending"
     });
 
-    runtime.getEngineState.mockReturnValueOnce({ position: null });
+    runtime.getEngineState.mockReturnValueOnce({ position: { side: "long", quantity: 0.25 } });
     const triggerPlacedAgain = await compat.handle(runtime as never, "paper-account-1", {
       nonce: 33,
       signature: { r: "0x1", s: "0x2", v: 27 },
@@ -530,7 +523,7 @@ describe("HyperliquidExchangeCompat", () => {
           b: false,
           p: "69900",
           s: "0.25",
-          r: false,
+          r: true,
           t: { trigger: { isMarket: true, triggerPx: "69950", tpsl: "sl" } },
           c: "0xpending-cloid"
         }]
@@ -550,7 +543,7 @@ describe("HyperliquidExchangeCompat", () => {
           b: false,
           p: "69890",
           s: "0.25",
-          r: false,
+          r: true,
           t: { trigger: { isMarket: true, triggerPx: "69940", tpsl: "sl" } }
         }
       }
@@ -580,7 +573,7 @@ describe("HyperliquidExchangeCompat", () => {
       }
     });
     expect(reduceOnlyTriggerModify.response.data.statuses[0]).toEqual({
-      error: "reduceOnly order requires an open position"
+      error: "reduceOnly sell order can only reduce a long position"
     });
 
     orders[0]!.status = "ACCEPTED";
@@ -606,6 +599,191 @@ describe("HyperliquidExchangeCompat", () => {
         cloid: "0xabc"
       }
     });
+
+    compat.shutdown();
+  });
+
+  it("keeps normalTpsl children waiting until the parent order lifecycle allows activation", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime, orders } = makeRuntime();
+
+    const result = await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 37,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        grouping: "normalTpsl",
+        orders: [{
+          a: 0,
+          b: true,
+          p: "70000",
+          s: "1",
+          r: false,
+          t: { limit: { tif: "Gtc" } },
+          c: "0xparent-normal"
+        }, {
+          a: 0,
+          b: false,
+          p: "71000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "71000", tpsl: "tp" } },
+          c: "0xntp-normal"
+        }, {
+          a: 0,
+          b: false,
+          p: "69000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "69000", tpsl: "sl" } },
+          c: "0xnsl-normal"
+        }]
+      }
+    });
+
+    expect(result.response.data.statuses).toHaveLength(3);
+    await expect(compat.getVirtualOpenOrders("paper-account-1")).resolves.toHaveLength(0);
+
+    const waitingHistory = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(waitingHistory.filter((order: any) => order.status === "waitingForParent")).toHaveLength(2);
+
+    orders[orders.length - 1]!.status = "FILLED";
+    await (compat as any).processDeferredNormalTpslGroups(runtime);
+
+    const pendingAfterFill = await compat.getVirtualOpenOrders("paper-account-1");
+    expect(pendingAfterFill).toHaveLength(2);
+
+    compat.shutdown();
+  });
+
+  it("cancels deferred normalTpsl children when the parent order is canceled after a partial fill", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime, orders } = makeRuntime();
+
+    await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 38,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        grouping: "normalTpsl",
+        orders: [{
+          a: 0,
+          b: true,
+          p: "70000",
+          s: "1",
+          r: false,
+          t: { limit: { tif: "Gtc" } },
+          c: "0xparent-cancel"
+        }, {
+          a: 0,
+          b: false,
+          p: "71000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "71000", tpsl: "tp" } },
+          c: "0xntp-cancel"
+        }, {
+          a: 0,
+          b: false,
+          p: "69000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "69000", tpsl: "sl" } },
+          c: "0xnsl-cancel"
+        }]
+      }
+    });
+
+    orders[orders.length - 1]!.filledQuantity = 0.4;
+    orders[orders.length - 1]!.remainingQuantity = 0.6;
+    orders[orders.length - 1]!.status = "CANCELED";
+    await (compat as any).processDeferredNormalTpslGroups(runtime);
+
+    const openOrders = await compat.getVirtualOpenOrders("paper-account-1");
+    expect(openOrders).toHaveLength(0);
+
+    const history = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(history.filter((order: any) => order.status === "canceled")).toHaveLength(2);
+
+    compat.shutdown();
+  });
+
+  it("auto-cancels pending reduce-only tp/sl orders after the position is closed", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime } = makeRuntime();
+
+    await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 39,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        grouping: "positionTpsl",
+        orders: [{
+          a: 0,
+          b: false,
+          p: "72000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: "72000", tpsl: "tp" } },
+          c: "0xtp-flat-cancel"
+        }]
+      }
+    });
+
+    runtime.getEngineState.mockReturnValue({ position: { side: "flat", quantity: 0 } });
+    await (compat as any).processInvalidReduceOnlyOrders(runtime);
+
+    const openOrders = await compat.getVirtualOpenOrders("paper-account-1");
+    expect(openOrders).toHaveLength(0);
+
+    const history = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(history.find((order: any) => order.cloid === "0xtp-flat-cancel")?.status).toBe("canceled");
+
+    compat.shutdown();
+  });
+
+  it("auto-cancels triggered reduce-only resting orders after the position is closed", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime, orders } = makeRuntime();
+
+    runtime.cancelOrder.mockImplementation(async ({ orderId }: { orderId: string }) => {
+      const target = orders.find((entry) => entry.id === orderId);
+      if (target) {
+        target.status = "CANCELED";
+      }
+      return { events: [] };
+    });
+
+    await compat.handle(runtime as never, "paper-account-1", {
+      nonce: 40,
+      signature: { r: "0x1", s: "0x2", v: 27 },
+      action: {
+        type: "order",
+        grouping: "positionTpsl",
+        orders: [{
+          a: 0,
+          b: false,
+          p: "72000",
+          s: "1",
+          r: true,
+          t: { trigger: { isMarket: false, triggerPx: "72000", tpsl: "tp" } },
+          c: "0xtp-resting-cancel"
+        }]
+      }
+    });
+
+    runtime.getMarketData.mockReturnValue({ markPrice: 72010, bestBid: 72009, bestAsk: 72011 });
+    await (compat as any).processTriggerOrders(runtime);
+
+    const linkedOrder = orders.find((order) => order.clientOrderId === "0xtp-resting-cancel");
+    expect(linkedOrder?.status).toBe("ACCEPTED");
+
+    runtime.getEngineState.mockReturnValue({ position: { side: "flat", quantity: 0 } });
+    await (compat as any).processInvalidReduceOnlyOrders(runtime);
+
+    expect(linkedOrder?.status).toBe("CANCELED");
+    const history = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(history.find((order: any) => order.cloid === "0xtp-resting-cancel")?.status).toBe("canceled");
 
     compat.shutdown();
   });

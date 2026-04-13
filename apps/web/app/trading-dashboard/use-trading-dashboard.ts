@@ -7,8 +7,8 @@ import { buildWebSocketUrl } from "../api-base-url";
 import { filterCandlesToRecent24Hours } from "../market-window";
 import { getUiText } from "../i18n";
 import { fetchDashboardSnapshot, fetchOrderActivity, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
-import { createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createSimpleOrderBody } from "./model";
-import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, PersonalFill, State, TickPayload } from "./types";
+import { calculateMarginPreview, createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createOcoOrdersBody, createSimpleOrderBody, hasInsufficientMargin } from "./model";
+import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, OcoOrderForm, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
 
 export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, viewer }: DashboardViewProps) => {
@@ -23,6 +23,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   const [accountTab, setAccountTab] = useState<"positions" | "openOrders" | "orderHistory" | "fills">("positions");
   const [tradePanelOpen, setTradePanelOpen] = useState(false);
   const [positionTpslPanelOpen, setPositionTpslPanelOpen] = useState(false);
+  const [ocoPanelOpen, setOcoPanelOpen] = useState(false);
+  const [editingOcoChildren, setEditingOcoChildren] = useState(false);
   const [timeframe, setTimeframe] = useState<"1m" | "5m" | "15m" | "1h">("1m");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderForm, setOrderForm] = useState({ symbol: "BTC-USD", quantity: "1", limitPrice: "100" });
@@ -38,6 +40,20 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     takeProfitLimitPrice: "",
     stopLossEnabled: false,
     stopLossQuantity: "",
+    stopLossTriggerPrice: "",
+    stopLossExecution: "market",
+    stopLossLimitPrice: ""
+  });
+  const [ocoForm, setOcoForm] = useState<OcoOrderForm>({
+    side: "buy",
+    parentOrderType: "market",
+    quantity: "1",
+    limitPrice: "",
+    takeProfitEnabled: true,
+    takeProfitTriggerPrice: "",
+    takeProfitExecution: "market",
+    takeProfitLimitPrice: "",
+    stopLossEnabled: true,
     stopLossTriggerPrice: "",
     stopLossExecution: "market",
     stopLossLimitPrice: ""
@@ -206,6 +222,35 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   }, [state.events, state.market, state.orders, ticks]);
 
   const activeOrders = useMemo(() => state.orders.filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED"), [state.orders]);
+  const openOrderRows = useMemo(() => {
+    const standardOrders = activeOrders.map((order) => ({
+      id: order.id,
+      cancelOid: toOid(order.id),
+      side: order.side,
+      type: order.orderType,
+      quantity: order.quantity,
+      filledQuantity: order.filledQuantity,
+      status: order.status
+    }));
+
+    const triggerOrders = frontendOpenOrders
+      .filter((order) => Boolean(order.triggerCondition))
+      .map((order) => ({
+        id: String(order.oid),
+        cancelOid: order.oid,
+        side: order.side === "B" ? "buy" : "sell",
+        type: order.grouping === "normalTpsl"
+          ? `OCO ${order.triggerCondition?.tpsl === "tp" ? t.takeProfitShort : t.stopLossShort}`
+          : order.triggerCondition?.tpsl === "tp"
+            ? t.takeProfit
+            : t.stopLoss,
+        quantity: Number(order.origSz),
+        filledQuantity: 0,
+        status: "triggerPending"
+      }));
+
+    return [...standardOrders, ...triggerOrders];
+  }, [activeOrders, frontendOpenOrders, t.stopLoss, t.takeProfit, t.takeProfitShort]);
 
   const orderValidation = useMemo(() => {
     if (!orderForm.quantity.trim()) return t.contractsRequired;
@@ -240,15 +285,31 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     const marketReferencePrice = side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
     const price = tab === "limit" ? limitPriceValue : marketReferencePrice;
     const leverage = state.symbolConfig?.leverage ?? leverageDraft;
-    if (!Number.isFinite(quantityValue) || quantityValue <= 0 || !price || !Number.isFinite(price) || leverage <= 0) return null;
-    const notional = quantityValue * price;
-    const estimatedMargin = notional / leverage;
-    return { referencePrice: price, notional, estimatedMargin, remainingAvailable: (state.account?.availableBalance ?? 0) - estimatedMargin };
+    return calculateMarginPreview({
+      quantity: quantityValue,
+      price,
+      leverage,
+      availableBalance: state.account?.availableBalance ?? 0
+    });
   }, [leverageDraft, limitPriceValue, quantityValue, side, state.account?.availableBalance, state.latestTick?.ask, state.latestTick?.bid, state.symbolConfig?.leverage, tab]);
+
+  const ocoPricingPreview = useMemo(() => {
+    const ocoQuantityValue = Number(ocoForm.quantity);
+    const marketReferencePrice = ocoForm.side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
+    const parentLimitPrice = Number(ocoForm.limitPrice);
+    const price = ocoForm.parentOrderType === "limit" ? parentLimitPrice : marketReferencePrice;
+    const leverage = state.symbolConfig?.leverage ?? leverageDraft;
+    return calculateMarginPreview({
+      quantity: ocoQuantityValue,
+      price,
+      leverage,
+      availableBalance: state.account?.availableBalance ?? 0
+    });
+  }, [leverageDraft, ocoForm.limitPrice, ocoForm.parentOrderType, ocoForm.quantity, ocoForm.side, state.account?.availableBalance, state.latestTick?.ask, state.latestTick?.bid, state.symbolConfig?.leverage]);
 
   const orderError = useMemo(() => {
     if (orderValidation) return orderValidation;
-    if (pricingPreview && pricingPreview.estimatedMargin > (state.account?.availableBalance ?? 0)) return t.estimatedMarginExceeds;
+    if (hasInsufficientMargin({ preview: pricingPreview, availableBalance: state.account?.availableBalance ?? 0 })) return t.estimatedMarginExceeds;
     return null;
   }, [orderValidation, pricingPreview, state.account?.availableBalance, t]);
 
@@ -272,13 +333,27 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   const postTradeAvailableRatio = pricingPreview && state.account?.equity ? Math.max(Math.min((pricingPreview.remainingAvailable / state.account.equity) * 100, 100), -100) : 0;
   const referenceTriggerPrice = state.market?.markPrice ?? state.latestTick?.last;
   const latestReferencePrice = side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
-  const activePositionTpslOrders = useMemo(
-    () => (Array.isArray(frontendOpenOrders) ? frontendOpenOrders : []).filter((order) => Boolean(order.triggerCondition)),
+  const ocoReferencePrice = state.market?.markPrice ?? state.latestTick?.last;
+  const activeOcoOrders = useMemo(
+    () => (Array.isArray(frontendOpenOrders) ? frontendOpenOrders : []).filter((order) =>
+      Boolean(order.triggerCondition) && order.grouping === "normalTpsl"
+    ),
     [frontendOpenOrders]
   );
+  const activePositionTpslOrders = useMemo(
+    () => (Array.isArray(frontendOpenOrders) ? frontendOpenOrders : []).filter((order) =>
+      Boolean(order.triggerCondition) && (order.grouping === "positionTpsl" || order.cloid?.startsWith("0xtp-") || order.cloid?.startsWith("0xsl-"))
+    ),
+    [frontendOpenOrders]
+  );
+  const hasActiveOcoChildren = activeOcoOrders.length > 0;
   const hasPositionTpsl = activePositionTpslOrders.length > 0;
-  const takeProfitOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "tp"), [activePositionTpslOrders]);
-  const stopLossOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "sl"), [activePositionTpslOrders]);
+  const ocoTakeProfitOrder = useMemo(() => activeOcoOrders.find((order) => order.triggerCondition?.tpsl === "tp"), [activeOcoOrders]);
+  const ocoStopLossOrder = useMemo(() => activeOcoOrders.find((order) => order.triggerCondition?.tpsl === "sl"), [activeOcoOrders]);
+  const positionTakeProfitOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "tp"), [activePositionTpslOrders]);
+  const positionStopLossOrder = useMemo(() => activePositionTpslOrders.find((order) => order.triggerCondition?.tpsl === "sl"), [activePositionTpslOrders]);
+  const takeProfitOrder = ocoTakeProfitOrder ?? positionTakeProfitOrder;
+  const stopLossOrder = ocoStopLossOrder ?? positionStopLossOrder;
   const historyPageSize = 30;
 
   const advancedOrderError = useMemo(() => {
@@ -321,6 +396,111 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     return validateTrigger(advancedForm.takeProfitEnabled, advancedForm.takeProfitQuantity, Number(advancedForm.takeProfitTriggerPrice), advancedForm.takeProfitExecution, advancedForm.takeProfitLimitPrice, "tp")
       ?? validateTrigger(advancedForm.stopLossEnabled, advancedForm.stopLossQuantity, Number(advancedForm.stopLossTriggerPrice), advancedForm.stopLossExecution, advancedForm.stopLossLimitPrice, "sl");
   }, [advancedForm, priceDigits, quantityDecimals, referenceTriggerPrice, state.position, t]);
+
+  const ocoMarginError = useMemo(() => {
+    if (hasInsufficientMargin({ preview: ocoPricingPreview, availableBalance: state.account?.availableBalance ?? 0 })) {
+      return t.estimatedMarginExceeds;
+    }
+
+    return null;
+  }, [ocoPricingPreview, state.account?.availableBalance, t]);
+
+  const ocoOrderError = useMemo(() => {
+    if (!ocoForm.quantity.trim()) return t.contractsRequired;
+
+    const ocoQuantityValue = Number(ocoForm.quantity);
+    if (!Number.isFinite(ocoQuantityValue)) return t.contractsValidNumber;
+    if (ocoQuantityValue <= 0) return t.contractsGreaterThanZero;
+
+    const decimalPart = ocoForm.quantity.trim().includes(".") ? ocoForm.quantity.trim().split(".")[1] ?? "" : "";
+    if (decimalPart.length > quantityDecimals) {
+      return t.contractsPrecision.replace("{decimals}", String(quantityDecimals)).replace("{coin}", contractCoin);
+    }
+
+    if (ocoForm.parentOrderType === "limit") {
+      const parentLimitPrice = Number(ocoForm.limitPrice);
+      if (!Number.isFinite(parentLimitPrice) || parentLimitPrice <= 0) return t.limitPriceGreaterThanZero;
+    }
+
+    if (!ocoForm.takeProfitEnabled && !ocoForm.stopLossEnabled) {
+      return t.advancedSelectOne;
+    }
+
+    const takeProfitTriggerPrice = Number(ocoForm.takeProfitTriggerPrice);
+    const stopLossTriggerPrice = Number(ocoForm.stopLossTriggerPrice);
+
+    if (ocoForm.takeProfitEnabled && (!Number.isFinite(takeProfitTriggerPrice) || takeProfitTriggerPrice <= 0)) return t.takeProfitTriggerRequired;
+    if (ocoForm.stopLossEnabled && (!Number.isFinite(stopLossTriggerPrice) || stopLossTriggerPrice <= 0)) return t.stopLossTriggerRequired;
+
+    if (ocoForm.takeProfitEnabled && ocoForm.stopLossEnabled && takeProfitTriggerPrice === stopLossTriggerPrice) {
+      return t.ocoDistinctTriggers;
+    }
+
+    if (ocoReferencePrice) {
+      if (ocoForm.side === "buy") {
+        if (ocoForm.takeProfitEnabled && takeProfitTriggerPrice <= ocoReferencePrice) return t.takeProfitLongDirection.replace("{price}", fmt(ocoReferencePrice, priceDigits));
+        if (ocoForm.stopLossEnabled && stopLossTriggerPrice >= ocoReferencePrice) return t.stopLossLongDirection.replace("{price}", fmt(ocoReferencePrice, priceDigits));
+      }
+
+      if (ocoForm.side === "sell") {
+        if (ocoForm.takeProfitEnabled && takeProfitTriggerPrice >= ocoReferencePrice) return t.takeProfitShortDirection.replace("{price}", fmt(ocoReferencePrice, priceDigits));
+        if (ocoForm.stopLossEnabled && stopLossTriggerPrice <= ocoReferencePrice) return t.stopLossShortDirection.replace("{price}", fmt(ocoReferencePrice, priceDigits));
+      }
+    }
+
+    if (ocoForm.takeProfitEnabled && ocoForm.takeProfitExecution === "limit") {
+      const takeProfitLimitPrice = Number(ocoForm.takeProfitLimitPrice);
+      if (!Number.isFinite(takeProfitLimitPrice) || takeProfitLimitPrice <= 0) return t.takeProfitLimitRequired;
+    }
+
+    if (ocoForm.stopLossEnabled && ocoForm.stopLossExecution === "limit") {
+      const stopLossLimitPrice = Number(ocoForm.stopLossLimitPrice);
+      if (!Number.isFinite(stopLossLimitPrice) || stopLossLimitPrice <= 0) return t.stopLossLimitRequired;
+    }
+
+    if (ocoMarginError) return ocoMarginError;
+
+    return null;
+  }, [contractCoin, ocoForm, ocoMarginError, ocoReferencePrice, priceDigits, quantityDecimals, t]);
+
+  const ocoCheckItems = useMemo(() => {
+    const marketReferencePrice = ocoForm.side === "buy" ? state.latestTick?.ask : state.latestTick?.bid;
+    const parentLimitPrice = Number(ocoForm.limitPrice);
+    const quantityText = ocoForm.quantity.trim();
+    const quantityNumber = Number(ocoForm.quantity);
+    const quantityDecimalPart = quantityText.includes(".") ? quantityText.split(".")[1] ?? "" : "";
+    const quantityError = !quantityText
+      ? t.enterContracts
+      : !Number.isFinite(quantityNumber)
+        ? t.contractsNumeric
+        : quantityNumber <= 0
+          ? t.contractsGreaterThanZero
+          : quantityDecimalPart.length > quantityDecimals
+            ? t.maxDecimals.replace("{decimals}", String(quantityDecimals))
+            : null;
+    const priceError = ocoForm.parentOrderType !== "limit"
+      ? null
+      : !ocoForm.limitPrice.trim()
+        ? t.enterLimitPrice
+        : !Number.isFinite(parentLimitPrice) || parentLimitPrice <= 0
+          ? t.priceGreaterThanZero
+          : null;
+
+    return [
+      { label: t.contracts, ok: !quantityError, detail: quantityError ?? t.precisionOk.replace("{decimals}", String(quantityDecimals)) },
+      {
+        label: ocoForm.parentOrderType === "limit" ? t.limitPrice : t.referencePrice,
+        ok: ocoForm.parentOrderType === "limit" ? !priceError : Boolean(marketReferencePrice),
+        detail: ocoForm.parentOrderType === "limit"
+          ? priceError ?? t.readyAt.replace("{price}", fmt(parentLimitPrice, priceDigits))
+          : marketReferencePrice ? `${ocoForm.side === "buy" ? ui.admin.ask : ui.admin.bid} ${fmt(marketReferencePrice, priceDigits)}` : t.waitingForLiveQuote
+      },
+      { label: "Margin", ok: Boolean(ocoPricingPreview) && !ocoMarginError, detail: ocoPricingPreview ? t.marginRequired.replace("{amount}", fmt(ocoPricingPreview.estimatedMargin, 2)) : t.noEstimateYet }
+    ];
+  }, [ocoForm.limitPrice, ocoForm.parentOrderType, ocoForm.quantity, ocoForm.side, ocoMarginError, ocoPricingPreview, priceDigits, quantityDecimals, state.latestTick?.ask, state.latestTick?.bid, t, ui.admin.ask, ui.admin.bid]);
+
+  const ocoMarginUsageRatio = ocoPricingPreview && availableBalance > 0 ? Math.min(ocoPricingPreview.estimatedMargin / availableBalance, 1) : 0;
+  const ocoPostTradeAvailableRatio = ocoPricingPreview && state.account?.equity ? Math.max(Math.min((ocoPricingPreview.remainingAvailable / state.account.equity) * 100, 100), -100) : 0;
 
   const personalFills = useMemo<PersonalFill[]>(() => {
     let runningPositionSide: "long" | "short" | "flat" = "flat";
@@ -548,24 +728,25 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     }
   };
 
-  const cancelOrder = async (orderId: string) => {
+  const cancelOrder = async (target: string | number) => {
     if (!botCredentials) {
       setMessage("Bot credentials are not available.");
       return;
     }
+    const oid = typeof target === "number" ? target : toOid(target);
     const { response, payload } = await submitSignedExchangeRequest({
       apiBaseUrl,
       authToken,
       locale,
       botCredentials,
-      body: createCancelOrderBody({ oid: toOid(orderId), botCredentials })
+      body: createCancelOrderBody({ oid, botCredentials })
     });
     if (response.status === 401) {
       setMessage(ui.trader.sessionExpired);
       onLogout();
       return;
     }
-    setMessage(response.ok ? extractExchangeMessage(payload, `Order ${orderId} canceled.`) : ui.trader.orderRejected);
+    setMessage(response.ok ? extractExchangeMessage(payload, `Order ${target} canceled.`) : ui.trader.orderRejected);
     if (response.ok) {
       await refresh();
       setAccountTab("openOrders");
@@ -655,24 +836,48 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       setMessage(t.advancedPositionRequired);
       return;
     }
+    const managedTakeProfitOrder = hasActiveOcoChildren ? ocoTakeProfitOrder : positionTakeProfitOrder;
+    const managedStopLossOrder = hasActiveOcoChildren ? ocoStopLossOrder : positionStopLossOrder;
     const quantityText = fmt(state.position.quantity, quantityDecimals);
+    setEditingOcoChildren(hasActiveOcoChildren);
     setAdvancedForm({
-      takeProfitEnabled: Boolean(takeProfitOrder),
-      takeProfitQuantity: takeProfitOrder?.origSz ?? quantityText,
-      takeProfitTriggerPrice: takeProfitOrder?.triggerCondition?.triggerPx ?? "",
-      takeProfitExecution: takeProfitOrder?.triggerCondition?.isMarket ? "market" : "limit",
-      takeProfitLimitPrice: takeProfitOrder && !takeProfitOrder.triggerCondition?.isMarket ? takeProfitOrder.limitPx : "",
-      stopLossEnabled: Boolean(stopLossOrder),
-      stopLossQuantity: stopLossOrder?.origSz ?? quantityText,
-      stopLossTriggerPrice: stopLossOrder?.triggerCondition?.triggerPx ?? "",
-      stopLossExecution: stopLossOrder?.triggerCondition?.isMarket ? "market" : "limit",
-      stopLossLimitPrice: stopLossOrder && !stopLossOrder.triggerCondition?.isMarket ? stopLossOrder.limitPx : ""
+      takeProfitEnabled: Boolean(managedTakeProfitOrder),
+      takeProfitQuantity: managedTakeProfitOrder?.origSz ?? quantityText,
+      takeProfitTriggerPrice: managedTakeProfitOrder?.triggerCondition?.triggerPx ?? "",
+      takeProfitExecution: managedTakeProfitOrder?.triggerCondition?.isMarket ? "market" : "limit",
+      takeProfitLimitPrice: managedTakeProfitOrder && !managedTakeProfitOrder.triggerCondition?.isMarket ? managedTakeProfitOrder.limitPx : "",
+      stopLossEnabled: Boolean(managedStopLossOrder),
+      stopLossQuantity: managedStopLossOrder?.origSz ?? quantityText,
+      stopLossTriggerPrice: managedStopLossOrder?.triggerCondition?.triggerPx ?? "",
+      stopLossExecution: managedStopLossOrder?.triggerCondition?.isMarket ? "market" : "limit",
+      stopLossLimitPrice: managedStopLossOrder && !managedStopLossOrder.triggerCondition?.isMarket ? managedStopLossOrder.limitPx : ""
     });
+    setOcoPanelOpen(false);
     setPositionTpslPanelOpen(true);
   };
 
+  const openOcoPanel = () => {
+    setOcoForm((current) => ({
+      ...current,
+      side,
+      parentOrderType: tab,
+      quantity: orderForm.quantity.trim() ? orderForm.quantity : current.quantity,
+      limitPrice: tab === "limit"
+        ? orderForm.limitPrice
+        : latestReferencePrice && Number.isFinite(latestReferencePrice)
+          ? latestReferencePrice.toFixed(priceDigits)
+          : current.limitPrice
+    }));
+    setEditingOcoChildren(false);
+    setTradePanelOpen(false);
+    setPositionTpslPanelOpen(false);
+    setOcoPanelOpen(true);
+  };
+
   const cancelPositionTpsl = async (kind: "tp" | "sl") => {
-    const target = kind === "tp" ? takeProfitOrder : stopLossOrder;
+    const target = kind === "tp"
+      ? (editingOcoChildren ? ocoTakeProfitOrder : positionTakeProfitOrder)
+      : (editingOcoChildren ? ocoStopLossOrder : positionStopLossOrder);
     if (!botCredentials || !target) {
       return;
     }
@@ -704,6 +909,16 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       return;
     }
 
+    const currentTakeProfitOrder = editingOcoChildren ? ocoTakeProfitOrder : positionTakeProfitOrder;
+    const currentStopLossOrder = editingOcoChildren ? ocoStopLossOrder : positionStopLossOrder;
+
+    if (editingOcoChildren) {
+      if ((!currentTakeProfitOrder && advancedForm.takeProfitEnabled) || (!currentStopLossOrder && advancedForm.stopLossEnabled)) {
+        setMessage(t.ocoChildCreateUnsupported);
+        return;
+      }
+    }
+
     const requests: Array<Record<string, unknown>> = [];
     const nextTakeProfitOrder = createAdvancedTriggerWireOrder({
       kind: "tp",
@@ -713,7 +928,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       execution: advancedForm.takeProfitExecution,
       limitPrice: advancedForm.takeProfitLimitPrice,
       positionSide: state.position.side,
-      clientOrderId: takeProfitOrder?.cloid
+      clientOrderId: currentTakeProfitOrder?.cloid
     });
     const nextStopLossOrder = createAdvancedTriggerWireOrder({
       kind: "sl",
@@ -723,35 +938,35 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       execution: advancedForm.stopLossExecution,
       limitPrice: advancedForm.stopLossLimitPrice,
       positionSide: state.position.side,
-      clientOrderId: stopLossOrder?.cloid
+      clientOrderId: currentStopLossOrder?.cloid
     });
 
-    if (takeProfitOrder && !advancedForm.takeProfitEnabled) {
-      requests.push(createCancelOrderBody({ oid: takeProfitOrder.oid, botCredentials }));
+    if (currentTakeProfitOrder && !advancedForm.takeProfitEnabled) {
+      requests.push(createCancelOrderBody({ oid: currentTakeProfitOrder.oid, botCredentials }));
     } else if (nextTakeProfitOrder) {
-      requests.push(takeProfitOrder
-        ? createModifyTriggerOrderBody({ oid: takeProfitOrder.oid, order: nextTakeProfitOrder, botCredentials })
+      requests.push(currentTakeProfitOrder
+        ? createModifyTriggerOrderBody({ oid: currentTakeProfitOrder.oid, order: nextTakeProfitOrder, botCredentials })
         : {
-          action: { type: "order", orders: [nextTakeProfitOrder], grouping: "na" },
+          action: { type: "order", orders: [nextTakeProfitOrder], grouping: "positionTpsl" },
           nonce: Date.now(),
           vaultAddress: botCredentials.vaultAddress
         });
     }
 
-    if (stopLossOrder && !advancedForm.stopLossEnabled) {
-      requests.push(createCancelOrderBody({ oid: stopLossOrder.oid, botCredentials }));
+    if (currentStopLossOrder && !advancedForm.stopLossEnabled) {
+      requests.push(createCancelOrderBody({ oid: currentStopLossOrder.oid, botCredentials }));
     } else if (nextStopLossOrder) {
-      requests.push(stopLossOrder
-        ? createModifyTriggerOrderBody({ oid: stopLossOrder.oid, order: nextStopLossOrder, botCredentials })
+      requests.push(currentStopLossOrder
+        ? createModifyTriggerOrderBody({ oid: currentStopLossOrder.oid, order: nextStopLossOrder, botCredentials })
         : {
-          action: { type: "order", orders: [nextStopLossOrder], grouping: "na" },
+          action: { type: "order", orders: [nextStopLossOrder], grouping: "positionTpsl" },
           nonce: Date.now() + 1,
           vaultAddress: botCredentials.vaultAddress
         });
     }
 
     if (requests.length === 0) {
-      setMessage(t.advancedSelectOne);
+      setMessage(editingOcoChildren ? t.ocoChildCreateUnsupported : t.advancedSelectOne);
       return;
     }
 
@@ -772,17 +987,55 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
         setMessage(ui.trader.orderRejected);
         return;
       }
-      const messageText = extractExchangeMessage(payload, t.advancedOrdersPlaced);
-      if (messageText && messageText !== t.advancedOrdersPlaced) {
+      const fallbackMessage = editingOcoChildren ? t.ocoChildrenUpdated : t.advancedOrdersPlaced;
+      const messageText = extractExchangeMessage(payload, fallbackMessage);
+      if (messageText && messageText !== fallbackMessage) {
         setMessage(messageText);
         return;
       }
     }
 
-    setMessage(t.advancedOrdersPlaced);
+    setMessage(editingOcoChildren ? t.ocoChildrenUpdated : t.advancedOrdersPlaced);
     await refresh();
     setAccountTab("openOrders");
     setPositionTpslPanelOpen(false);
+  };
+
+  const submitOcoOrders = async () => {
+    if (!botCredentials) {
+      setMessage("Bot credentials are not available.");
+      return;
+    }
+
+    if (ocoOrderError) {
+      setMessage(ocoOrderError);
+      return;
+    }
+
+    const { response, payload } = await submitSignedExchangeRequest({
+      apiBaseUrl,
+      authToken,
+      locale,
+      botCredentials,
+      body: createOcoOrdersBody({
+        form: ocoForm,
+        bestBid: state.latestTick?.bid,
+        bestAsk: state.latestTick?.ask,
+        botCredentials
+      })
+    });
+    if (response.status === 401) {
+      setMessage(ui.trader.sessionExpired);
+      onLogout();
+      return;
+    }
+
+    setMessage(response.ok ? extractExchangeMessage(payload, t.ocoOrdersPlaced) : ui.trader.orderRejected);
+    if (response.ok) {
+      await refresh();
+      setAccountTab("openOrders");
+      setOcoPanelOpen(false);
+    }
   };
 
   return {
@@ -802,6 +1055,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     setTradePanelOpen,
     positionTpslPanelOpen,
     setPositionTpslPanelOpen,
+    ocoPanelOpen,
+    setOcoPanelOpen,
     timeframe,
     setTimeframe,
     side,
@@ -810,6 +1065,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     setOrderForm,
     advancedForm,
     setAdvancedForm,
+    ocoForm,
+    setOcoForm,
     frontendOpenOrders,
     historicalOrders,
     pagedHistoricalOrders,
@@ -833,18 +1090,29 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     bookWithDepth,
     trades,
     activeOrders,
+    openOrderRows,
     quantityFieldError,
     limitPriceFieldError,
     pricingPreview,
+    ocoPricingPreview,
     orderError,
     orderCheckItems,
+    ocoCheckItems,
     leverageInUse,
     marginUsageRatio,
     postTradeAvailableRatio,
+    ocoMarginUsageRatio,
+    ocoPostTradeAvailableRatio,
     referenceTriggerPrice,
     advancedOrderError,
+    ocoMarginError,
+    ocoReferencePrice,
+    ocoOrderError,
     activePositionTpslOrders,
+    activeOcoOrders,
+    hasActiveOcoChildren,
     hasPositionTpsl,
+    editingOcoChildren,
     takeProfitOrder,
     stopLossOrder,
     personalFills,
@@ -853,8 +1121,10 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     closePosition,
     submitAdvancedOrders,
     submitPositionTpsl,
+    submitOcoOrders,
     updateLeverage,
     openPositionTpslPanel,
+    openOcoPanel,
     cancelPositionTpsl
   };
 };

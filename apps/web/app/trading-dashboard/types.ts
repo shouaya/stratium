@@ -116,6 +116,7 @@ export type FrontendOpenOrder = {
   timestamp: number;
   origSz: string;
   cloid?: string;
+  grouping?: "normalTpsl" | "positionTpsl";
   triggerCondition?: {
     triggerPx: string;
     isMarket: boolean;
@@ -135,6 +136,7 @@ export type HistoricalOrder = {
   limitPrice?: number;
   averageFillPrice?: number;
   reduceOnly: boolean;
+  grouping?: "normalTpsl" | "positionTpsl";
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -163,6 +165,21 @@ export type AdvancedOrderForm = {
   takeProfitLimitPrice: string;
   stopLossEnabled: boolean;
   stopLossQuantity: string;
+  stopLossTriggerPrice: string;
+  stopLossExecution: TriggerExecutionMode;
+  stopLossLimitPrice: string;
+};
+
+export type OcoOrderForm = {
+  side: "buy" | "sell";
+  parentOrderType: "market" | "limit";
+  quantity: string;
+  limitPrice: string;
+  takeProfitEnabled: boolean;
+  takeProfitTriggerPrice: string;
+  takeProfitExecution: TriggerExecutionMode;
+  takeProfitLimitPrice: string;
+  stopLossEnabled: boolean;
   stopLossTriggerPrice: string;
   stopLossExecution: TriggerExecutionMode;
   stopLossLimitPrice: string;

@@ -52,7 +52,7 @@ export function MarketPanel({
                 </div>
               </div>
             </div>
-            <CandlestickChart data={vm.candles} volumeData={vm.volume} dark priceDigits={vm.priceDigits} position={state.position} triggerOrders={vm.activePositionTpslOrders} />
+            <CandlestickChart data={vm.candles} volumeData={vm.volume} dark priceDigits={vm.priceDigits} position={state.position} triggerOrders={[...vm.activeOcoOrders, ...vm.activePositionTpslOrders]} />
           </div>
         </div>
       ) : null}

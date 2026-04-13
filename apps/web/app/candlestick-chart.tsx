@@ -270,13 +270,18 @@ export function CandlestickChart({
       }
 
       const isTakeProfit = order.triggerCondition?.tpsl === "tp";
+      const isOcoChild = order.grouping === "normalTpsl";
       priceLinesRef.current.push(candles.createPriceLine({
         price: triggerPx,
-        color: isTakeProfit ? "#22c55e" : "#f59e0b",
+        color: isOcoChild
+          ? (isTakeProfit ? "#60a5fa" : "#93c5fd")
+          : (isTakeProfit ? "#22c55e" : "#f59e0b"),
         lineWidth: 1,
-        lineStyle: 2,
+        lineStyle: isOcoChild ? 0 : 2,
         axisLabelVisible: true,
-        title: isTakeProfit ? "TP Trigger" : "SL Trigger"
+        title: isOcoChild
+          ? (isTakeProfit ? "OCO TP" : "OCO SL")
+          : (isTakeProfit ? "TP Trigger" : "SL Trigger")
       }));
     }
   }, [dark, position, triggerOrders]);

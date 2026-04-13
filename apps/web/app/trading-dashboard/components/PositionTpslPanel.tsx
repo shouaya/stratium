@@ -39,7 +39,7 @@ export function PositionTpslPanel({ vm, open, onClose }: { vm: any; open: boolea
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", padding: "12px 14px", borderBottom: "1px solid #16262f" }}>
-          <strong style={{ fontSize: 16 }}>{vm.hasPositionTpsl ? t.managePositionTpsl : t.addPositionTpsl}</strong>
+          <strong style={{ fontSize: 16 }}>{vm.editingOcoChildren ? t.editOcoChildren : vm.hasPositionTpsl ? t.managePositionTpsl : t.addPositionTpsl}</strong>
           <button onClick={onClose} style={btnGhost}>{t.closeTradePanel}</button>
         </div>
         <div style={{ display: "grid", gap: 12, padding: 14 }}>
@@ -81,7 +81,7 @@ export function PositionTpslPanel({ vm, open, onClose }: { vm: any; open: boolea
             </label>
           ))}
           <div style={{ color: vm.advancedOrderError ? "#f87171" : "#7e97a5", fontSize: 12 }}>{vm.advancedOrderError ?? t.advancedReady}</div>
-          <button disabled={Boolean(vm.advancedOrderError)} onClick={() => void vm.submitPositionTpsl()} style={{ ...btnGhost, opacity: vm.advancedOrderError ? 0.5 : 1, cursor: vm.advancedOrderError ? "not-allowed" : "pointer" }}>{vm.hasPositionTpsl ? t.savePositionTpsl : t.placeAdvancedOrders}</button>
+          <button disabled={Boolean(vm.advancedOrderError)} onClick={() => void vm.submitPositionTpsl()} style={{ ...btnGhost, opacity: vm.advancedOrderError ? 0.5 : 1, cursor: vm.advancedOrderError ? "not-allowed" : "pointer" }}>{vm.editingOcoChildren ? t.saveOcoChildren : vm.hasPositionTpsl ? t.savePositionTpsl : t.placeAdvancedOrders}</button>
         </div>
       </div>
     </div>

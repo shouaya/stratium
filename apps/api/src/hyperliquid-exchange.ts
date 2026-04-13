@@ -26,8 +26,10 @@ type ExchangeOrderWire = {
   c?: string;
 };
 
+type OrderGrouping = "na" | "normalTpsl" | "positionTpsl";
+
 type ExchangeAction =
-  | { type: "order"; orders: ExchangeOrderWire[]; grouping?: string }
+  | { type: "order"; orders: ExchangeOrderWire[]; grouping?: OrderGrouping }
   | { type: "cancel"; cancels: Array<{ a: number; o: number }> }
   | { type: "cancelByCloid"; cancels: Array<{ asset: number; cloid: string }> }
   | { type: "modify"; oid: number | string; order: ExchangeOrderWire }
@@ -130,9 +132,23 @@ interface PendingTriggerOrder {
 }
 
 interface TriggerOrderHistoryRecord extends PendingTriggerOrder {
-  status: "triggerPending" | "triggered" | "filled" | "canceled";
+  status: "waitingForParent" | "triggerPending" | "triggered" | "filled" | "canceled";
   actualTriggerPx?: number;
   updatedAt: number;
+}
+
+interface TriggerGroupMeta {
+  groupId: string;
+  grouping: "normalTpsl" | "positionTpsl";
+  parentOrderId?: string;
+  childOids: number[];
+}
+
+interface DeferredNormalTpslGroup {
+  groupId: string;
+  accountId: string;
+  parentOrderId: string;
+  childOids: number[];
 }
 
 export class HyperliquidExchangeCompat {
@@ -145,6 +161,10 @@ export class HyperliquidExchangeCompat {
   private readonly fallbackPendingTriggerOrders = new Map<number, PendingTriggerOrder>();
 
   private readonly fallbackTriggerOrderHistory = new Map<number, TriggerOrderHistoryRecord>();
+
+  private readonly triggerGroupByOid = new Map<number, TriggerGroupMeta>();
+
+  private readonly deferredNormalTpslGroups = new Map<string, DeferredNormalTpslGroup>();
 
   private triggerOrderSequence = 1;
 
@@ -195,7 +215,7 @@ export class HyperliquidExchangeCompat {
 
     switch (action.type) {
       case "order":
-        return this.handleOrder(runtime, accountId, action.orders);
+        return this.handleOrderAction(runtime, accountId, action.orders, action.grouping ?? "na");
       case "cancel":
         return this.handleCancel(runtime, accountId, action.cancels);
       case "cancelByCloid":
@@ -236,6 +256,7 @@ export class HyperliquidExchangeCompat {
         timestamp: order.createdAt,
         origSz: String(order.size),
         cloid: order.cloid,
+        grouping: this.triggerGroupByOid.get(order.oid)?.grouping,
         triggerCondition: {
           triggerPx: String(order.triggerPx),
           isMarket: order.isMarket,
@@ -286,10 +307,11 @@ export class HyperliquidExchangeCompat {
         origSz: String(order.size),
         cloid: order.cloid,
         reduceOnly: order.reduceOnly,
+        grouping: this.triggerGroupByOid.get(order.oid)?.grouping,
         status: order.status,
         statusTimestamp: order.updatedAt,
         triggerCondition: {
-          triggerPx: order.status === "triggerPending" ? "" : String(order.actualTriggerPx ?? order.triggerPx),
+          triggerPx: order.status === "triggerPending" || order.status === "waitingForParent" ? "" : String(order.actualTriggerPx ?? order.triggerPx),
           isMarket: order.isMarket,
           tpsl: order.tpsl
         }
@@ -308,6 +330,23 @@ export class HyperliquidExchangeCompat {
     if (request.expiresAfter != null && request.expiresAfter <= Date.now()) {
       throw new Error("Request expired");
     }
+  }
+
+  private async handleOrderAction(
+    runtime: ApiRuntime,
+    accountId: string,
+    orders: ExchangeOrderWire[],
+    grouping: OrderGrouping
+  ) {
+    if (grouping === "normalTpsl") {
+      return this.handleNormalTpslOrder(runtime, accountId, orders);
+    }
+
+    if (grouping === "positionTpsl") {
+      return this.handlePositionTpslOrder(runtime, accountId, orders);
+    }
+
+    return this.handleOrder(runtime, accountId, orders);
   }
 
   private async handleOrder(runtime: ApiRuntime, accountId: string, orders: ExchangeOrderWire[]) {
@@ -338,7 +377,14 @@ export class HyperliquidExchangeCompat {
       }
 
       if (order.t.trigger) {
-        statuses.push(await this.createTriggerOrder(accountId, order));
+        if (!order.r) {
+          statuses.push({ error: "TP/SL trigger orders must be reduce-only." });
+          continue;
+        }
+
+        statuses.push(await this.createTriggerOrder(accountId, order, {
+          status: "triggerPending"
+        }));
         continue;
       }
 
@@ -380,6 +426,87 @@ export class HyperliquidExchangeCompat {
     }
 
     return buildOkResponse(statuses);
+  }
+
+  private async handlePositionTpslOrder(runtime: ApiRuntime, accountId: string, orders: ExchangeOrderWire[]) {
+    if (orders.length === 0 || orders.some((order) => !order.t.trigger)) {
+      return buildOkResponse([{ error: "positionTpsl requires trigger orders only." }]);
+    }
+
+    const groupId = `positionTpsl-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const statuses = [];
+
+    for (const order of orders) {
+      if (!order.r) {
+        statuses.push({ error: "positionTpsl orders must be reduce-only." });
+        continue;
+      }
+
+      statuses.push(await this.createTriggerOrder(accountId, order, {
+        status: "triggerPending",
+        grouping: "positionTpsl",
+        groupId
+      }));
+    }
+
+    return buildOkResponse(statuses);
+  }
+
+  private async handleNormalTpslOrder(runtime: ApiRuntime, accountId: string, orders: ExchangeOrderWire[]) {
+    const parentOrders = orders.filter((order) => !order.t.trigger);
+    const childOrders = orders.filter((order) => Boolean(order.t.trigger));
+
+    if (parentOrders.length !== 1 || childOrders.length === 0) {
+      return buildOkResponse([{ error: "normalTpsl requires one parent order and at least one TP/SL child." }]);
+    }
+
+    if (childOrders.some((order) => !order.r)) {
+      return buildOkResponse([{ error: "normalTpsl child orders must be reduce-only." }]);
+    }
+
+    const parentOrder = parentOrders[0] as ExchangeOrderWire;
+    const parentResult = await this.handleOrder(runtime, accountId, [parentOrder]);
+    const parentStatus = parentResult.response.data.statuses[0] as { error?: string; resting?: { oid: number; cloid?: string }; filled?: { oid: number } };
+
+    if (parentStatus?.error) {
+      return buildOkResponse([parentStatus, ...childOrders.map(() => ({ error: "Parent order was rejected." }))]);
+    }
+
+    const parentOid = parentStatus.resting?.oid ?? parentStatus.filled?.oid;
+    const parentOrderId = parentOid != null ? orderIdFromOid(parentOid) : undefined;
+    const createdParent = parentOrderId
+      ? runtime.getOrders(accountId).find((entry) => entry.id === parentOrderId)
+      : undefined;
+
+    if (!createdParent) {
+      return buildOkResponse([{ error: "Parent order was not created." }]);
+    }
+
+    const groupId = `normalTpsl-${createdParent.id}-${Date.now()}`;
+    const childStatuses = [];
+
+    for (const childOrder of childOrders) {
+      childStatuses.push(await this.createTriggerOrder(accountId, childOrder, {
+        status: createdParent.status === "FILLED" ? "triggerPending" : "waitingForParent",
+        grouping: "normalTpsl",
+        groupId,
+        parentOrderId: createdParent.id
+      }));
+    }
+
+    const waitingForParent = createdParent.status !== "FILLED";
+    if (waitingForParent) {
+      this.deferredNormalTpslGroups.set(createdParent.id, {
+        groupId,
+        accountId,
+        parentOrderId: createdParent.id,
+        childOids: childStatuses
+          .map((status) => (status as { resting?: { oid?: number } }).resting?.oid)
+          .filter((oid): oid is number => typeof oid === "number")
+      });
+    }
+
+    return buildOkResponse([parentStatus, ...childStatuses]);
   }
 
   private async handleModify(runtime: ApiRuntime, accountId: string, oid: number | string, order: ExchangeOrderWire) {
@@ -436,7 +563,7 @@ export class HyperliquidExchangeCompat {
       }
 
       const triggerOrder = await this.store.findTriggerOrder(accountId, cancel.o);
-      if (triggerOrder?.status === "triggerPending") {
+      if (triggerOrder && (triggerOrder.status === "triggerPending" || triggerOrder.status === "waitingForParent")) {
         await this.store.upsertTriggerOrderHistory({
           ...triggerOrder,
           status: "canceled",
@@ -453,6 +580,14 @@ export class HyperliquidExchangeCompat {
         requestedAt: new Date().toISOString()
       });
       const rejected = result.events.find((event) => event.eventType === "OrderRejected");
+
+      if (!rejected) {
+        const deferredGroup = this.deferredNormalTpslGroups.get(orderId);
+        if (deferredGroup) {
+          await this.cancelDeferredNormalTpslGroup(deferredGroup);
+          this.deferredNormalTpslGroups.delete(orderId);
+        }
+      }
 
       statuses.push(rejected
         ? { error: (rejected.payload as { reasonMessage?: string }).reasonMessage ?? "Cancel rejected" }
@@ -472,7 +607,7 @@ export class HyperliquidExchangeCompat {
       }
 
       const triggerOrder = await this.store.findTriggerOrder(accountId, cancel.cloid);
-      if (triggerOrder?.status === "triggerPending") {
+      if (triggerOrder && (triggerOrder.status === "triggerPending" || triggerOrder.status === "waitingForParent")) {
         await this.store.upsertTriggerOrderHistory({
           ...triggerOrder,
           status: "canceled",
@@ -494,6 +629,15 @@ export class HyperliquidExchangeCompat {
         requestedAt: new Date().toISOString()
       });
       const rejected = result.events.find((event) => event.eventType === "OrderRejected");
+
+      if (!rejected) {
+        const deferredGroup = this.deferredNormalTpslGroups.get(order.id);
+        if (deferredGroup) {
+          await this.cancelDeferredNormalTpslGroup(deferredGroup);
+          this.deferredNormalTpslGroups.delete(order.id);
+        }
+      }
+
       statuses.push(rejected
         ? { error: (rejected.payload as { reasonMessage?: string }).reasonMessage ?? "Cancel rejected" }
         : { success: "ok" });
@@ -545,8 +689,95 @@ export class HyperliquidExchangeCompat {
     }
 
     this.triggerLoop = setInterval(() => {
+      void this.processInvalidReduceOnlyOrders(runtime);
+      void this.processDeferredNormalTpslGroups(runtime);
       void this.processTriggerOrders(runtime);
     }, 500);
+  }
+
+  private async processInvalidReduceOnlyOrders(runtime: ApiRuntime) {
+    for (const accountId of runtime.getAccountIds()) {
+      const pendingOrders = (await this.store.listPendingTriggerOrders()).filter((order) => order.accountId === accountId);
+      for (const order of pendingOrders) {
+        const currentOrder = await this.store.findTriggerOrder(order.accountId, order.oid);
+        if (!currentOrder || currentOrder.status !== "triggerPending") {
+          continue;
+        }
+
+        const reduceOnlyValidation = order.reduceOnly
+          ? this.validateReduceOnly(runtime, order.accountId, order.isBuy, order.size)
+          : null;
+
+        if (!reduceOnlyValidation) {
+          continue;
+        }
+
+        await this.store.upsertTriggerOrderHistory({
+          ...currentOrder,
+          status: "canceled",
+          updatedAt: Date.now()
+        });
+      }
+
+      const triggerHistory = await this.store.listTriggerOrderHistory(accountId);
+      const triggerHistoryByCloid = new Map(
+        triggerHistory
+          .filter((entry) => entry.cloid && entry.status === "triggered")
+          .map((entry) => [entry.cloid as string, entry] as const)
+      );
+
+      for (const order of runtime.getOrders(accountId)) {
+        if (!isOpenOrder(order) || !order.clientOrderId) {
+          continue;
+        }
+
+        const linkedTrigger = triggerHistoryByCloid.get(order.clientOrderId);
+        if (!linkedTrigger || !linkedTrigger.reduceOnly) {
+          continue;
+        }
+
+        const reduceOnlyValidation = this.validateReduceOnly(runtime, accountId, linkedTrigger.isBuy, linkedTrigger.size);
+        if (!reduceOnlyValidation) {
+          continue;
+        }
+
+        const result = await runtime.cancelOrder({
+          accountId,
+          orderId: order.id,
+          requestedAt: new Date().toISOString()
+        });
+        const rejected = result.events.find((event) => event.eventType === "OrderRejected");
+        if (rejected) {
+          continue;
+        }
+
+        await this.store.upsertTriggerOrderHistory({
+          ...linkedTrigger,
+          status: "canceled",
+          updatedAt: Date.now()
+        });
+      }
+    }
+  }
+
+  private async processDeferredNormalTpslGroups(runtime: ApiRuntime) {
+    for (const [parentOrderId, group] of this.deferredNormalTpslGroups.entries()) {
+      const parentOrder = runtime.getOrders(group.accountId).find((entry) => entry.id === parentOrderId);
+      if (!parentOrder) {
+        continue;
+      }
+
+      if (parentOrder.status === "FILLED") {
+        await this.activateDeferredNormalTpslGroup(group, parentOrder.quantity);
+        this.deferredNormalTpslGroups.delete(parentOrderId);
+        continue;
+      }
+
+      if (parentOrder.status === "CANCELED" || parentOrder.status === "REJECTED") {
+        await this.cancelDeferredNormalTpslGroup(group);
+        this.deferredNormalTpslGroups.delete(parentOrderId);
+      }
+    }
   }
 
   private async processTriggerOrders(runtime: ApiRuntime) {
@@ -612,17 +843,15 @@ export class HyperliquidExchangeCompat {
   }
 
   private async cancelOpposingTriggerOrders(triggeredOrder: TriggerOrderHistoryRecord) {
-    const pendingOrders = await this.store.listPendingTriggerOrders();
-    const opposingOrders = pendingOrders.filter((order) =>
-      order.accountId === triggeredOrder.accountId
-      && order.asset === triggeredOrder.asset
-      && order.isBuy === triggeredOrder.isBuy
-      && order.reduceOnly === triggeredOrder.reduceOnly
-      && order.oid !== triggeredOrder.oid
-    );
+    const groupMeta = this.triggerGroupByOid.get(triggeredOrder.oid);
+    if (!groupMeta) {
+      return;
+    }
 
-    await Promise.all(opposingOrders.map(async (order) => {
-      const history = await this.store.findTriggerOrder(order.accountId, order.oid);
+    await Promise.all(groupMeta.childOids
+      .filter((oid) => oid !== triggeredOrder.oid)
+      .map(async (oid) => {
+        const history = await this.store.findTriggerOrder(triggeredOrder.accountId, oid);
       if (!history || history.status !== "triggerPending") {
         return;
       }
@@ -668,7 +897,47 @@ export class HyperliquidExchangeCompat {
     return null;
   }
 
-  private async createTriggerOrder(accountId: string, order: ExchangeOrderWire) {
+  private async activateDeferredNormalTpslGroup(group: DeferredNormalTpslGroup, size: number) {
+    for (const oid of group.childOids) {
+      const order = await this.store.findTriggerOrder(group.accountId, oid);
+      if (!order || order.status !== "waitingForParent") {
+        continue;
+      }
+
+      await this.store.upsertTriggerOrderHistory({
+        ...order,
+        size,
+        status: "triggerPending",
+        updatedAt: Date.now()
+      });
+    }
+  }
+
+  private async cancelDeferredNormalTpslGroup(group: DeferredNormalTpslGroup) {
+    for (const oid of group.childOids) {
+      const order = await this.store.findTriggerOrder(group.accountId, oid);
+      if (!order || order.status !== "waitingForParent") {
+        continue;
+      }
+
+      await this.store.upsertTriggerOrderHistory({
+        ...order,
+        status: "canceled",
+        updatedAt: Date.now()
+      });
+    }
+  }
+
+  private async createTriggerOrder(
+    accountId: string,
+    order: ExchangeOrderWire,
+    options?: {
+      status?: TriggerOrderHistoryRecord["status"];
+      grouping?: "normalTpsl" | "positionTpsl";
+      groupId?: string;
+      parentOrderId?: string;
+    }
+  ) {
     if (!order.t.trigger) {
       return { error: "Trigger order payload missing" };
     }
@@ -689,9 +958,35 @@ export class HyperliquidExchangeCompat {
       reduceOnly: order.r,
       cloid: order.c,
       createdAt,
-      status: "triggerPending",
+      status: options?.status ?? "triggerPending",
       updatedAt: createdAt
     });
+
+    if (options?.grouping && options.groupId) {
+      const existingGroup = this.triggerGroupByOid.get(oid);
+      this.triggerGroupByOid.set(oid, {
+        groupId: options.groupId,
+        grouping: options.grouping,
+        parentOrderId: options.parentOrderId,
+        childOids: existingGroup?.childOids ?? []
+      });
+    }
+
+    if (options?.grouping && options.groupId) {
+      const siblingOids = [...this.triggerGroupByOid.entries()]
+        .filter(([, value]) => value.groupId === options.groupId)
+        .map(([triggerOid]) => triggerOid);
+      for (const triggerOid of siblingOids) {
+        const current = this.triggerGroupByOid.get(triggerOid);
+        if (!current) {
+          continue;
+        }
+        this.triggerGroupByOid.set(triggerOid, {
+          ...current,
+          childOids: siblingOids
+        });
+      }
+    }
 
     return {
       resting: {

@@ -21,7 +21,7 @@ export function OrderEntryPanel({ vm, popup, open, onClose }: { vm: any; popup?:
     >
       {popup ? (
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", padding: "12px 14px", borderBottom: "1px solid #16262f" }}>
-          <strong style={{ fontSize: 16 }}>{t.openTradePanel}</strong>
+          <strong style={{ fontSize: 16 }}>{t.simplePanel}</strong>
           <button onClick={onClose} style={btnGhost}>{t.closeTradePanel}</button>
         </div>
       ) : null}

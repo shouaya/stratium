@@ -1,7 +1,37 @@
-import type { AdvancedOrderForm, BotCredentials } from "./types";
+import type { AdvancedOrderForm, BotCredentials, OcoOrderForm } from "./types";
+
+export type MarginPreview = {
+  referencePrice: number;
+  notional: number;
+  estimatedMargin: number;
+  remainingAvailable: number;
+};
 
 export const createClientOrderId = (prefix: string): string =>
   `0x${prefix}-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+
+export const calculateMarginPreview = (input: {
+  quantity: number;
+  price?: number;
+  leverage: number;
+  availableBalance: number;
+}): MarginPreview | null => {
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0) return null;
+  if (!input.price || !Number.isFinite(input.price) || input.price <= 0) return null;
+  if (!Number.isFinite(input.leverage) || input.leverage <= 0) return null;
+
+  const notional = input.quantity * input.price;
+  const estimatedMargin = notional / input.leverage;
+  return {
+    referencePrice: input.price,
+    notional,
+    estimatedMargin,
+    remainingAvailable: input.availableBalance - estimatedMargin
+  };
+};
+
+export const hasInsufficientMargin = (input: { preview: MarginPreview | null; availableBalance: number }) =>
+  Boolean(input.preview && input.preview.estimatedMargin > input.availableBalance);
 
 export const createSimpleOrderBody = (input: {
   side: "buy" | "sell";
@@ -130,7 +160,7 @@ export const createAdvancedOrdersBody = (input: {
     action: {
       type: "order" as const,
       orders,
-      grouping: "na"
+      grouping: "positionTpsl"
     },
     nonce: Date.now(),
     vaultAddress: input.botCredentials.vaultAddress
@@ -170,6 +200,86 @@ export const createAdvancedTriggerWireOrder = (input: {
       }
     },
     c: input.clientOrderId ?? createClientOrderId(input.kind)
+  };
+};
+
+export const createOcoOrdersBody = (input: {
+  form: OcoOrderForm;
+  bestBid?: number;
+  bestAsk?: number;
+  botCredentials: BotCredentials;
+}) => {
+  const exitIsBuy = input.form.side === "sell";
+  const orders: Array<Record<string, unknown>> = [{
+    a: 0,
+    b: input.form.side === "buy",
+    p: String(
+      input.form.parentOrderType === "limit"
+        ? Number(input.form.limitPrice)
+        : (input.form.side === "buy" ? input.bestAsk ?? 0 : input.bestBid ?? 0)
+    ),
+    s: String(Number(input.form.quantity)),
+    r: false,
+    t: {
+      limit: {
+        tif: input.form.parentOrderType === "limit" ? "Gtc" as const : "Ioc" as const
+      }
+    },
+    c: createClientOrderId("parent")
+  }];
+
+  if (input.form.takeProfitEnabled) {
+    orders.push({
+      a: 0,
+      b: exitIsBuy,
+      p: String(
+        input.form.takeProfitExecution === "limit"
+          ? Number(input.form.takeProfitLimitPrice)
+          : Number(input.form.takeProfitTriggerPrice)
+      ),
+      s: String(Number(input.form.quantity)),
+      r: true,
+      t: {
+        trigger: {
+          isMarket: input.form.takeProfitExecution === "market",
+          triggerPx: String(Number(input.form.takeProfitTriggerPrice)),
+          tpsl: "tp" as const
+        }
+      },
+      c: createClientOrderId("ntp")
+    });
+  }
+
+  if (input.form.stopLossEnabled) {
+    orders.push({
+      a: 0,
+      b: exitIsBuy,
+      p: String(
+        input.form.stopLossExecution === "limit"
+          ? Number(input.form.stopLossLimitPrice)
+          : Number(input.form.stopLossTriggerPrice)
+      ),
+      s: String(Number(input.form.quantity)),
+      r: true,
+      t: {
+        trigger: {
+          isMarket: input.form.stopLossExecution === "market",
+          triggerPx: String(Number(input.form.stopLossTriggerPrice)),
+          tpsl: "sl" as const
+        }
+      },
+      c: createClientOrderId("nsl")
+    });
+  }
+
+  return {
+    action: {
+      type: "order" as const,
+      orders,
+      grouping: "normalTpsl"
+    },
+    nonce: Date.now(),
+    vaultAddress: input.botCredentials.vaultAddress
   };
 };
 
