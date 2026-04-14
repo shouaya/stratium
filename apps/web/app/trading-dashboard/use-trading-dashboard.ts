@@ -11,6 +11,14 @@ import { calculateMarginPreview, createAdvancedOrdersBody, createAdvancedTrigger
 import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, OcoOrderForm, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
 
+const ORDER_ACTIVITY_REFRESH_EVENT_TYPES = new Set<AnyEventEnvelope["eventType"]>([
+  "OrderAccepted",
+  "OrderRejected",
+  "OrderCanceled",
+  "OrderFilled",
+  "OrderPartiallyFilled"
+]);
+
 export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, viewer }: DashboardViewProps) => {
   const ui = getUiText(locale);
   const t = ui.trader;
@@ -666,7 +674,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
         if (payload.events?.length) {
           const fillEvents = payload.events.filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
           setFillHistoryEvents((current) => mergeEvents(current, fillEvents));
-          const requiresActivityRefresh = payload.events.some((event) => event.eventType !== "MarketTickReceived");
+          const requiresActivityRefresh = payload.events.some((event) => ORDER_ACTIVITY_REFRESH_EVENT_TYPES.has(event.eventType));
           if (requiresActivityRefresh && !activityRefreshTimerRef.current) {
             activityRefreshTimerRef.current = setTimeout(() => {
               activityRefreshTimerRef.current = null;

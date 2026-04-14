@@ -87,6 +87,8 @@ Most users only need the first URL.
 Inside Docker Compose, services should call each other through internal service DNS names and container ports, for example `http://api:4000`.
 `http://localhost:6100` is only for the browser or host-side tools.
 
+For same-origin deployments behind a reverse proxy, leave `NEXT_PUBLIC_API_BASE_URL` empty so the web app uses the current site's `/api` and `/ws`.
+
 
 ## Default Accounts
 
