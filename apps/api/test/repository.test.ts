@@ -6,7 +6,8 @@ const prismaMock = vi.hoisted(() => ({
   $disconnect: vi.fn(),
   simulationEvent: {
     findMany: vi.fn(),
-    upsert: vi.fn()
+    upsert: vi.fn(),
+    deleteMany: vi.fn()
   },
   simulationSnapshot: {
     findUnique: vi.fn(),
@@ -786,6 +787,14 @@ describe("TradingRepository", () => {
         lastSequence: 2
       })
     }));
+    expect(prismaMock.simulationEvent.deleteMany).toHaveBeenCalledWith({
+      where: {
+        simulationSessionId: "session-1",
+        sequence: {
+          lte: 2
+        }
+      }
+    });
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
     expect(prismaMock.order.upsert).toHaveBeenCalled();
@@ -875,6 +884,7 @@ describe("TradingRepository", () => {
     }, [], false);
 
     expect(prismaMock.simulationSnapshot.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.simulationEvent.deleteMany).not.toHaveBeenCalled();
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
   });

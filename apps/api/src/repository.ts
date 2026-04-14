@@ -587,6 +587,7 @@ export class TradingRepository {
 
   async persistState(state: TradingEngineState, events: AnyEventEnvelope[], persistSnapshot = true): Promise<void> {
     const operations: Promise<unknown>[] = [];
+    const snapshotLastSequence = Math.max(0, state.nextSequence - 1);
 
     for (const event of events) {
       operations.push(
@@ -678,26 +679,8 @@ export class TradingRepository {
     }
 
     if (persistSnapshot) {
-      operations.push(
-        prisma.simulationSnapshot.upsert({
-          where: {
-            simulationSessionId: state.simulationSessionId
-          },
-          update: {
-            accountId: state.account.accountId,
-            symbol: state.position.symbol,
-            lastSequence: Math.max(0, state.nextSequence - 1),
-            state: toStoredJson(state)
-          },
-          create: {
-            simulationSessionId: state.simulationSessionId,
-            accountId: state.account.accountId,
-            symbol: state.position.symbol,
-            lastSequence: Math.max(0, state.nextSequence - 1),
-            state: toStoredJson(state)
-          }
-        })
-      );
+      // Defer snapshot upsert until after the event batch is written so the
+      // snapshot becomes the source of truth before we prune old events.
     }
 
     operations.push(
@@ -780,6 +763,38 @@ export class TradingRepository {
     }
 
     await Promise.allSettled(operations);
+
+    if (!persistSnapshot) {
+      return;
+    }
+
+    await prisma.simulationSnapshot.upsert({
+      where: {
+        simulationSessionId: state.simulationSessionId
+      },
+      update: {
+        accountId: state.account.accountId,
+        symbol: state.position.symbol,
+        lastSequence: snapshotLastSequence,
+        state: toStoredJson(state)
+      },
+      create: {
+        simulationSessionId: state.simulationSessionId,
+        accountId: state.account.accountId,
+        symbol: state.position.symbol,
+        lastSequence: snapshotLastSequence,
+        state: toStoredJson(state)
+      }
+    });
+
+    await prisma.simulationEvent.deleteMany({
+      where: {
+        simulationSessionId: state.simulationSessionId,
+        sequence: {
+          lte: snapshotLastSequence
+        }
+      }
+    });
   }
 
   async loadSnapshot(accountId: string): Promise<{
