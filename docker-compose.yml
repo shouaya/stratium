@@ -51,7 +51,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       PORT: 4000
     ports:
-      - "4000:4000"
+      - "6100:4000"
     volumes:
       - .:/workspace
       - api-node_modules:/workspace/node_modules
@@ -114,9 +114,9 @@ services:
     command: sh -lc "rm -rf apps/web/.next-dev && pnpm --filter @stratium/web dev"
     environment:
       NEXT_DIST_DIR: .next-dev
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:6100}
     ports:
-      - "3000:3000"
+      - "5000:3000"
     volumes:
       - .:/workspace
       - web-node_modules:/workspace/node_modules
@@ -140,14 +140,14 @@ services:
     working_dir: /workspace
     command: sh -lc "pnpm --filter @stratium/trader-mcp dev"
     environment:
-      STRATIUM_API_BASE_URL: ${STRATIUM_MCP_API_BASE_URL:-http://api:4000}
+      STRATIUM_API_BASE_URL: ${STRATIUM_API_BASE_URL:-http://api:4000}
       STRATIUM_MCP_HOST: 0.0.0.0
       STRATIUM_MCP_PORT: 4600
       STRATIUM_MCP_PATH: /mcp
       STRATIUM_MCP_CORS_ORIGIN: ${STRATIUM_MCP_CORS_ORIGIN:-*}
       STRATIUM_MCP_DEBUG_LOG_PATH: ${STRATIUM_MCP_DEBUG_LOG_PATH:-logs/trader-mcp-http.ndjson}
     ports:
-      - "${TRADER_MCP_PORT:-4600}:4600"
+      - "4600:4600"
     volumes:
       - .:/workspace
       - trader-mcp-node_modules:/workspace/node_modules

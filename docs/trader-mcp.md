@@ -48,7 +48,8 @@ Current authentication bootstrap modes:
 Common backend base URL:
 
 - `STRATIUM_API_BASE_URL`
-  default: `http://127.0.0.1:4000`
+  default: `http://api:4000` inside Docker Compose
+  required explicitly when running `trader-mcp` outside Docker Compose, including remote standalone deployments
 
 Default MCP endpoint:
 
@@ -88,11 +89,11 @@ The client does not need to handle:
 
 For local development, `docker compose up` exposes:
 
-- Web UI: `http://localhost:3000`
-- API: `http://localhost:4000`
+- Web UI: `http://localhost:5000`
+- API: `http://localhost:6100`
 - Trader MCP: `http://localhost:4600/mcp`
 
-Production can follow the same remote MCP model.
+Remote MCP deployments should use the same model with an explicit `STRATIUM_API_BASE_URL`.
 
 ## Client Integration Model
 
@@ -282,10 +283,14 @@ Current test coverage includes:
 Example environment variables:
 
 ```bash
-STRATIUM_MCP_API_BASE_URL=http://localhost:4000
-TRADER_MCP_PORT=4600
+# Browser-facing API URL used by the web app.
+NEXT_PUBLIC_API_BASE_URL=http://localhost:6100
+# Internal service URL used by Docker Compose services.
+STRATIUM_API_BASE_URL=http://api:4000
 STRATIUM_MCP_DEBUG_LOG_PATH=logs/trader-mcp-http.ndjson
 ```
+
+If you run `trader-mcp` as a standalone process on a remote server instead of inside Docker Compose, you must set `STRATIUM_API_BASE_URL` explicitly to a server-reachable API address such as an internal load balancer URL or a loopback listener on that same server.
 
 Startup command:
 
