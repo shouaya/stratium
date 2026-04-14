@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MarketTick } from "@stratium/shared";
-import { TradingEngine, createInitialTradingState, replayEvents } from "../src";
+import { TradingEngine, createInitialTradingState, replayEvents, replayEventsFromState } from "../src";
 
 const baseTick: MarketTick = {
   symbol: "BTC-USD",
@@ -156,5 +156,36 @@ describe("TradingEngine", () => {
     expect(replay.state.nextOrderId).toBe(3);
     expect(replay.state.nextFillId).toBe(3);
     expect(replay.state.latestTick?.symbol).toBe("BTC-USD");
+  });
+
+  it("continues replay correctly from a persisted snapshot state", () => {
+    const engine = new TradingEngine(createInitialTradingState());
+    const history = [];
+
+    history.push(...engine.ingestMarketTick(baseTick).events);
+    history.push(...engine.submitOrder({
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "market",
+      quantity: 1,
+      submittedAt: "2026-03-26T00:00:02.000Z"
+    }).events);
+
+    const snapshotState = engine.getState();
+    const tailEvents = engine.ingestMarketTick({
+      ...baseTick,
+      bid: 104,
+      ask: 105,
+      last: 104.5,
+      tickTime: "2026-03-26T00:00:03.000Z"
+    }).events;
+
+    const replay = replayEventsFromState(snapshotState, tailEvents);
+
+    expect(replay.state.account).toEqual(engine.getState().account);
+    expect(replay.state.position).toEqual(engine.getState().position);
+    expect(replay.state.orders).toEqual(engine.getState().orders);
+    expect(replay.state.nextSequence).toBe(engine.getState().nextSequence);
   });
 });

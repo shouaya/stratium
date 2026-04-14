@@ -11,6 +11,7 @@ import type {
   PositionPayload
 } from "@stratium/shared";
 import type { TradingEngineState } from "../domain/state.js";
+import { computeUnrealizedPnl } from "../rules/position-math.js";
 
 const derivePositionSide = (quantity: number, side: PositionPayload["side"]): PositionPayload["side"] => {
   if (quantity === 0) {
@@ -31,14 +32,25 @@ export const applyEvent = (
         ...payload,
         symbol: event.symbol
       };
+      const unrealizedPnl = computeUnrealizedPnl(
+        currentState.position.side,
+        currentState.position.quantity,
+        currentState.position.averageEntryPrice,
+        payload.last
+      );
 
       return {
         ...currentState,
         latestTick,
+        account: {
+          ...currentState.account,
+          unrealizedPnl
+        },
         position: {
           ...currentState.position,
           symbol: event.symbol,
-          markPrice: payload.last
+          markPrice: payload.last,
+          unrealizedPnl
         },
         nextSequence: Math.max(currentState.nextSequence, event.sequence + 1)
       };

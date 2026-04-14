@@ -17,20 +17,15 @@ const parseNumericSuffix = (value: string, prefix: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-export const replayEvents = (
-  events: AnyEventEnvelope[],
-  options: TradingEngineOptions = {}
+const buildReplayResult = (
+  initialState: TradingEngineState,
+  events: AnyEventEnvelope[]
 ): ReplayResult => {
   const sortedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
-  const initialState = createInitialTradingState({
-    ...options,
-    sessionId: sortedEvents[0]?.simulationSessionId ?? options.sessionId
-  });
-
   const replayedState = sortedEvents.reduce(applyEvent, initialState);
   const nextOrderId = replayedState.orders.reduce(
     (maxValue, order) => Math.max(maxValue, parseNumericSuffix(order.id, "ord_")),
-    0
+    Math.max(0, initialState.nextOrderId - 1)
   ) + 1;
   const nextFillId = sortedEvents.reduce((maxValue, event) => {
     if (event.eventType !== "OrderFilled" && event.eventType !== "OrderPartiallyFilled") {
@@ -40,7 +35,7 @@ export const replayEvents = (
     const payload = event.payload as FillPayload;
 
     return Math.max(maxValue, parseNumericSuffix(payload.fillId, "fill_"));
-  }, 0) + 1;
+  }, Math.max(0, initialState.nextFillId - 1)) + 1;
   const latestTick = replayedState.latestTick
     ? {
       ...replayedState.latestTick,
@@ -59,3 +54,21 @@ export const replayEvents = (
     events: sortedEvents
   };
 };
+
+export const replayEvents = (
+  events: AnyEventEnvelope[],
+  options: TradingEngineOptions = {}
+): ReplayResult => {
+  const sortedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
+  const initialState = createInitialTradingState({
+    ...options,
+    sessionId: sortedEvents[0]?.simulationSessionId ?? options.sessionId
+  });
+
+  return buildReplayResult(initialState, sortedEvents);
+};
+
+export const replayEventsFromState = (
+  initialState: TradingEngineState,
+  events: AnyEventEnvelope[]
+): ReplayResult => buildReplayResult(initialState, events);

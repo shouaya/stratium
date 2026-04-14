@@ -12,9 +12,11 @@ import type {
 const prisma = new PrismaClient();
 const RECENT_MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RECENT_MARKET_CANDLE_LIMIT = 1_440;
+const EVENT_LOAD_BATCH_SIZE = 2_000;
 
 const toNumber = (value: { toString(): string } | number): number => Number(value.toString());
 const toJson = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
+const toStoredJson = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
 const isFillEvent = (eventType: string): boolean =>
   eventType === "OrderFilled" || eventType === "OrderPartiallyFilled";
@@ -23,7 +25,8 @@ const positionRowId = (accountId: string, symbol: string): string => `${accountI
 const simulationEventRowId = (sessionId: string, eventId: string): string => `${sessionId}:${eventId}`;
 const orderRowId = (accountId: string, orderId: string): string => `${accountId}:${orderId}`;
 const fillRowId = (accountId: string, fillId: string): string => `${accountId}:${fillId}`;
-const marketTickRowId = (symbol: string, tickTime: string): string => `${symbol}:${tickTime}`;
+const minuteBucketKey = (timestamp: string): string => timestamp.slice(0, 16);
+const marketTickRowId = (symbol: string, tickTime: string): string => `${symbol}:${minuteBucketKey(tickTime)}`;
 const triggerOrderRowId = (accountId: string, oid: number): string => `${accountId}:trigger:${oid}`;
 
 type AuthSeedInput = {
@@ -263,15 +266,34 @@ export class TradingRepository {
     };
   }
 
-  async loadEvents(sessionId: string): Promise<AnyEventEnvelope[]> {
-    const events = await prisma.simulationEvent.findMany({
-      where: {
-        simulationSessionId: sessionId
-      },
-      orderBy: {
-        sequence: "asc"
+  async loadEvents(sessionId: string, afterSequence?: number): Promise<AnyEventEnvelope[]> {
+    const events: Prisma.SimulationEventGetPayload<Record<string, never>>[] = [];
+    let lastSequence: number | null = null;
+
+    while (true) {
+      const minSequence = Math.max(afterSequence ?? 0, lastSequence ?? 0);
+      const batch: Prisma.SimulationEventGetPayload<Record<string, never>>[] = await prisma.simulationEvent.findMany({
+        where: {
+          simulationSessionId: sessionId,
+          ...(minSequence > 0 ? { sequence: { gt: minSequence } } : {})
+        },
+        orderBy: {
+          sequence: "asc"
+        },
+        take: EVENT_LOAD_BATCH_SIZE
+      });
+
+      if (batch.length === 0) {
+        break;
       }
-    });
+
+      events.push(...batch);
+      lastSequence = batch[batch.length - 1]?.sequence ?? null;
+
+      if (batch.length < EVENT_LOAD_BATCH_SIZE) {
+        break;
+      }
+    }
 
     return events.map((event) => ({
       eventId: event.id,
@@ -284,6 +306,39 @@ export class TradingRepository {
       source: event.source as AnyEventEnvelope["source"],
       payload: event.payload as AnyEventEnvelope["payload"]
     }) as AnyEventEnvelope);
+  }
+
+  async loadSimulationSnapshot(sessionId: string): Promise<null | {
+    lastSequence: number;
+    updatedAt: string;
+    state: TradingEngineState;
+  }> {
+    const row = await prisma.simulationSnapshot.findUnique({
+      where: { simulationSessionId: sessionId }
+    });
+
+    if (!row) {
+      return null;
+    }
+
+    const state = row.state as unknown as TradingEngineState;
+
+    return {
+      lastSequence: row.lastSequence,
+      updatedAt: row.updatedAt.toISOString(),
+      state: {
+        ...state,
+        simulationSessionId: row.simulationSessionId,
+        account: {
+          ...state.account,
+          accountId: row.accountId
+        },
+        position: {
+          ...state.position,
+          symbol: row.symbol
+        }
+      }
+    };
   }
 
   async loadSymbolConfig(symbol: string): Promise<TradingSymbolConfig | null> {
@@ -530,7 +585,7 @@ export class TradingRepository {
     }));
   }
 
-  async persistState(state: TradingEngineState, events: AnyEventEnvelope[]): Promise<void> {
+  async persistState(state: TradingEngineState, events: AnyEventEnvelope[], persistSnapshot = true): Promise<void> {
     const operations: Promise<unknown>[] = [];
 
     for (const event of events) {
@@ -620,6 +675,29 @@ export class TradingRepository {
           })
         );
       }
+    }
+
+    if (persistSnapshot) {
+      operations.push(
+        prisma.simulationSnapshot.upsert({
+          where: {
+            simulationSessionId: state.simulationSessionId
+          },
+          update: {
+            accountId: state.account.accountId,
+            symbol: state.position.symbol,
+            lastSequence: Math.max(0, state.nextSequence - 1),
+            state: toStoredJson(state)
+          },
+          create: {
+            simulationSessionId: state.simulationSessionId,
+            accountId: state.account.accountId,
+            symbol: state.position.symbol,
+            lastSequence: Math.max(0, state.nextSequence - 1),
+            state: toStoredJson(state)
+          }
+        })
+      );
     }
 
     operations.push(

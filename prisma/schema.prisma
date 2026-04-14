@@ -162,6 +162,18 @@ model SimulationEvent {
   @@unique([simulationSessionId, sequence])
 }
 
+model SimulationSnapshot {
+  simulationSessionId String   @id
+  accountId           String
+  symbol              String
+  lastSequence        Int
+  state               Json
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([accountId, updatedAt])
+}
+
 model SymbolConfig {
   id                           String   @id @default(cuid())
   source                       String

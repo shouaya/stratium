@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick, TradingSymbolConfig } from "@stratium/shared";
-import { TradingEngine, createInitialTradingState, replayEvents } from "@stratium/trading-core";
+import { TradingEngine, createInitialTradingState, replayEventsFromState } from "@stratium/trading-core";
 import type { SymbolConfigState } from "./market-runtime.js";
 import { TradingRepository } from "./repository.js";
 
@@ -59,9 +59,20 @@ interface AccountRuntimeSlot {
   engine: TradingEngine;
   eventStore: AnyEventEnvelope[];
   persistQueue: Promise<void>;
+  lastSnapshotMinuteKey: string | null;
 }
 
 const createSessionId = (accountId: string): string => `session-${accountId}`;
+const BOOTSTRAP_SNAPSHOT_MINUTE_KEY = "bootstrap";
+const toMinuteKey = (value: string): string => value.slice(0, 16);
+const resolveSnapshotMinuteKey = (
+  state: ReturnType<TradingEngine["getState"]>,
+  events: AnyEventEnvelope[]
+): string | null => {
+  const timestamp = events[events.length - 1]?.occurredAt ?? state.latestTick?.tickTime;
+
+  return timestamp ? toMinuteKey(timestamp) : null;
+};
 
 export class TradingRuntime {
   private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
@@ -122,8 +133,7 @@ export class TradingRuntime {
   }
 
   getReplayState(accountId: string) {
-    const runtime = this.getRequiredRuntime(accountId);
-    return replayEvents(runtime.eventStore, { sessionId: runtime.sessionId }).state;
+    return this.getRequiredRuntime(accountId).engine.getState();
   }
 
   async bootstrap(input: BootstrapTradingRuntimeInput): Promise<void> {
@@ -150,7 +160,7 @@ export class TradingRuntime {
       const runtime = this.getRequiredRuntime(accountId);
 
       if (runtime.eventStore.length === 0) {
-        await this.options.repository.persistState(runtime.engine.getState(), []);
+        await this.persistState(runtime, []);
       }
     }));
   }
@@ -249,7 +259,7 @@ export class TradingRuntime {
 
     for (const runtime of this.accountRuntimes.values()) {
       runtime.engine.setLeverage(leverage);
-      await this.options.repository.persistState(runtime.engine.getState(), []);
+      await this.persistState(runtime, []);
     }
 
     await this.options.repository.updateSymbolLeverage(symbolConfigState.symbol, leverage);
@@ -288,26 +298,29 @@ export class TradingRuntime {
     }
 
     const sessionId = createSessionId(accountId);
-    const persistedEvents = await this.options.repository.loadEvents(sessionId);
+    const persistedSnapshot = await this.options.repository.loadSimulationSnapshot(sessionId);
+    const persistedEvents = await this.options.repository.loadEvents(sessionId, persistedSnapshot?.lastSequence);
     const engineOptions = {
       sessionId,
       accountId,
       symbolConfig: this.symbolConfig ?? undefined
     };
+    const initialState = persistedSnapshot?.state ?? createInitialTradingState(engineOptions);
     const slot: AccountRuntimeSlot = {
       accountId,
       sessionId,
       engine: persistedEvents.length > 0
-        ? new TradingEngine(replayEvents(persistedEvents, engineOptions).state, engineOptions)
-        : new TradingEngine(createInitialTradingState(engineOptions), engineOptions),
+        ? new TradingEngine(replayEventsFromState(initialState, persistedEvents).state, engineOptions)
+        : new TradingEngine(initialState, engineOptions),
       eventStore: [...persistedEvents],
-      persistQueue: Promise.resolve()
+      persistQueue: Promise.resolve(),
+      lastSnapshotMinuteKey: persistedSnapshot ? toMinuteKey(persistedSnapshot.updatedAt) : null
     };
 
     this.accountRuntimes.set(accountId, slot);
 
     if (this.bootstrapReady && persistedEvents.length === 0) {
-      await this.options.repository.persistState(slot.engine.getState(), []);
+      await this.persistState(slot, []);
     }
 
     return slot;
@@ -317,6 +330,7 @@ export class TradingRuntime {
     for (const event of events) {
       runtime.eventStore.push(event);
     }
+    this.pruneRuntimeEventStore(runtime);
 
     runtime.persistQueue = runtime.persistQueue
       .then(async () => {
@@ -324,7 +338,7 @@ export class TradingRuntime {
           return;
         }
 
-        await this.options.repository.persistState(runtime.engine.getState(), events);
+        await this.persistState(runtime, events);
       })
       .catch((error: unknown) => {
         this.options.logger.error({ error, accountId: runtime.accountId }, "Failed to persist trading state");
@@ -336,5 +350,31 @@ export class TradingRuntime {
     }
 
     this.options.onEvents(runtime.accountId, events);
+  }
+
+  private async persistState(runtime: AccountRuntimeSlot, events: AnyEventEnvelope[]): Promise<void> {
+    const state = runtime.engine.getState();
+    const snapshotMinuteKey = resolveSnapshotMinuteKey(state, events) ?? BOOTSTRAP_SNAPSHOT_MINUTE_KEY;
+    const persistSnapshot = runtime.lastSnapshotMinuteKey !== snapshotMinuteKey;
+
+    await this.options.repository.persistState(state, events, persistSnapshot);
+
+    if (persistSnapshot) {
+      runtime.lastSnapshotMinuteKey = snapshotMinuteKey;
+    }
+  }
+
+  private pruneRuntimeEventStore(runtime: AccountRuntimeSlot): void {
+    const marketTickEvents = runtime.eventStore.filter((event) => event.eventType === "MarketTickReceived");
+
+    if (marketTickEvents.length <= TradingRuntime.DEFAULT_RECENT_TICK_LIMIT) {
+      return;
+    }
+
+    const retainedTickSequenceFloor = marketTickEvents[marketTickEvents.length - TradingRuntime.DEFAULT_RECENT_TICK_LIMIT]?.sequence ?? 0;
+
+    runtime.eventStore = runtime.eventStore.filter((event) =>
+      event.eventType !== "MarketTickReceived" || event.sequence >= retainedTickSequenceFloor
+    );
   }
 }

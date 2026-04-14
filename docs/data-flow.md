@@ -179,18 +179,13 @@ flowchart LR
 ```mermaid
 flowchart LR
   HL[Hyperliquid]
-  B[apps/batch]
-  S3[(S3 / ndjson.gz)]
-  IMP[import-from-s3.ts / import-hyperliquid-day.ts]
+  IMP[import-hyperliquid-day.ts]
   PR[repository / Prisma writes]
   DB[(PostgreSQL)]
   API[apps/api]
   WEB[apps/web]
 
-  HL --> B
-  B --> S3
   HL --> IMP
-  S3 --> IMP
   IMP --> PR
   PR --> DB
   DB --> API
@@ -199,7 +194,7 @@ flowchart LR
 
 ### What happens
 
-1. The long-running batch service collects Hyperliquid market data and archives it.
+1. Batch import jobs request historical Hyperliquid candles directly from the public API.
 2. Import jobs write normalized candles and volume records into PostgreSQL.
 3. The API reads persisted historical market data on bootstrap or via history endpoints.
 4. The Web UI consumes that historical data for chart initialization.

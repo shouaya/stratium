@@ -9,6 +9,7 @@ export type JobRunnerJobId =
   | "db-migrate"
   | "db-push"
   | "db-seed"
+  | "db-clear-runtime-data"
   | "db-bootstrap"
   | "seed-symbol-configs"
   | "batch-clear-kline"
@@ -78,6 +79,12 @@ const definitions: JobDefinition[] = [
     label: "Refresh Hyperliquid Day",
     description: "Stop API, refresh the latest 24 hours of Hyperliquid 1-minute candles, then restart API.",
     adminVisible: true
+  },
+  {
+    id: "db-clear-runtime-data",
+    label: "DB Clear Runtime Data",
+    description: "Clear runtime event, account, order, position, fill, and trigger tables.",
+    adminVisible: false
   },
   {
     id: "db-push",
@@ -303,10 +310,13 @@ export class JobExecutor {
         return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db push");
       case "db-seed":
         return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db seed");
+      case "db-clear-runtime-data":
+        return runBatchShell("pnpm exec prisma generate && node prisma/clear-runtime-data.mjs");
       case "seed-symbol-configs":
         return runBatchShell("node prisma/seed-symbol-configs.mjs");
       case "db-bootstrap":
         return combineResults([
+          await this.run("db-clear-runtime-data"),
           await this.run("db-push"),
           await this.run("db-seed"),
           await this.run("seed-symbol-configs")

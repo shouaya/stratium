@@ -8,6 +8,10 @@ const prismaMock = vi.hoisted(() => ({
     findMany: vi.fn(),
     upsert: vi.fn()
   },
+  simulationSnapshot: {
+    findUnique: vi.fn(),
+    upsert: vi.fn()
+  },
   symbolConfig: {
     findUnique: vi.fn(),
     update: vi.fn()
@@ -260,17 +264,54 @@ describe("TradingRepository", () => {
   });
 
   it("loads events and symbol config metadata", async () => {
-    prismaMock.simulationEvent.findMany.mockResolvedValue([{
+    prismaMock.simulationEvent.findMany.mockResolvedValueOnce([{
       id: "evt-1",
-      eventType: "OrderAccepted",
-      occurredAt: new Date("2026-01-01T00:00:00.000Z"),
-      sequence: 1,
-      simulationSessionId: "session-1",
-      accountId: "paper-account-1",
-      symbol: "BTC-USD",
+        eventType: "OrderAccepted",
+        occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        sequence: 1,
+        simulationSessionId: "session-1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
       source: "system",
       payload: { orderId: "ord-1" }
     }]);
+    prismaMock.simulationSnapshot.findUnique.mockResolvedValue({
+      simulationSessionId: "session-1",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      lastSequence: 12,
+      updatedAt: new Date("2026-01-01T00:12:00.000Z"),
+      state: {
+        simulationSessionId: "session-1",
+        account: {
+          accountId: "paper-account-1",
+          walletBalance: 10000,
+          availableBalance: 10000,
+          positionMargin: 0,
+          orderMargin: 0,
+          equity: 10000,
+          realizedPnl: 0,
+          unrealizedPnl: 0,
+          riskRatio: 0
+        },
+        position: {
+          symbol: "BTC-USD",
+          side: "flat",
+          quantity: 0,
+          averageEntryPrice: 0,
+          markPrice: 0,
+          realizedPnl: 0,
+          unrealizedPnl: 0,
+          initialMargin: 0,
+          maintenanceMargin: 0,
+          liquidationPrice: 0
+        },
+        orders: [],
+        nextSequence: 13,
+        nextOrderId: 1,
+        nextFillId: 1
+      }
+    });
     prismaMock.symbolConfig.findUnique
       .mockResolvedValueOnce({
         symbol: "BTC-USD",
@@ -301,6 +342,52 @@ describe("TradingRepository", () => {
       source: "system",
       payload: { orderId: "ord-1" }
     }]);
+    expect(await repository.loadSimulationSnapshot("session-1")).toEqual({
+      lastSequence: 12,
+      updatedAt: "2026-01-01T00:12:00.000Z",
+      state: {
+        simulationSessionId: "session-1",
+        account: {
+          accountId: "paper-account-1",
+          walletBalance: 10000,
+          availableBalance: 10000,
+          positionMargin: 0,
+          orderMargin: 0,
+          equity: 10000,
+          realizedPnl: 0,
+          unrealizedPnl: 0,
+          riskRatio: 0
+        },
+        position: {
+          symbol: "BTC-USD",
+          side: "flat",
+          quantity: 0,
+          averageEntryPrice: 0,
+          markPrice: 0,
+          realizedPnl: 0,
+          unrealizedPnl: 0,
+          initialMargin: 0,
+          maintenanceMargin: 0,
+          liquidationPrice: 0
+        },
+        orders: [],
+        nextSequence: 13,
+        nextOrderId: 1,
+        nextFillId: 1
+      }
+    });
+    expect(prismaMock.simulationEvent.findMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        simulationSessionId: "session-1"
+      },
+      orderBy: {
+        sequence: "asc"
+      },
+      take: 2000
+    });
+    expect(prismaMock.simulationSnapshot.findUnique).toHaveBeenCalledWith({
+      where: { simulationSessionId: "session-1" }
+    });
     expect(await repository.loadSymbolConfig("BTC-USD")).toEqual({
       symbol: "BTC-USD",
       leverage: 8,
@@ -643,7 +730,9 @@ describe("TradingRepository", () => {
 
     await repository.persistState({
       simulationSessionId: "session-1",
-      sequence: 2,
+      nextSequence: 3,
+      nextOrderId: 2,
+      nextFillId: 2,
       latestTick: null,
       account: {
         accountId: "paper-account-1",
@@ -687,6 +776,16 @@ describe("TradingRepository", () => {
     expect(prismaMock.simulationEvent.upsert).toHaveBeenCalledTimes(2);
     expect(prismaMock.marketTick.upsert).toHaveBeenCalled();
     expect(prismaMock.fill.upsert).toHaveBeenCalled();
+    expect(prismaMock.simulationSnapshot.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        simulationSessionId: "session-1"
+      },
+      update: expect.objectContaining({
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        lastSequence: 2
+      })
+    }));
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
     expect(prismaMock.order.upsert).toHaveBeenCalled();
@@ -742,6 +841,129 @@ describe("TradingRepository", () => {
     });
   });
 
+  it("skips snapshot writes when requested while keeping runtime mirrors up to date", async () => {
+    await repository.persistState({
+      simulationSessionId: "session-1",
+      nextSequence: 2,
+      nextOrderId: 1,
+      nextFillId: 1,
+      latestTick: null,
+      account: {
+        accountId: "paper-account-1",
+        walletBalance: 10,
+        availableBalance: 10,
+        positionMargin: 0,
+        orderMargin: 0,
+        equity: 10,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        riskRatio: 0
+      },
+      position: {
+        symbol: "BTC-USD",
+        side: "flat",
+        quantity: 0,
+        averageEntryPrice: 0,
+        markPrice: 0,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        initialMargin: 0,
+        maintenanceMargin: 0,
+        liquidationPrice: 0
+      },
+      orders: []
+    }, [], false);
+
+    expect(prismaMock.simulationSnapshot.upsert).not.toHaveBeenCalled();
+    expect(prismaMock.account.upsert).toHaveBeenCalled();
+    expect(prismaMock.position.upsert).toHaveBeenCalled();
+  });
+
+  it("coalesces market tick persistence into one row per minute bucket", async () => {
+    await repository.persistState({
+      simulationSessionId: "session-1",
+      nextSequence: 3,
+      nextOrderId: 1,
+      nextFillId: 1,
+      latestTick: null,
+      account: {
+        accountId: "paper-account-1",
+        walletBalance: 10,
+        availableBalance: 10,
+        positionMargin: 0,
+        orderMargin: 0,
+        equity: 10,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        riskRatio: 0
+      },
+      position: {
+        symbol: "BTC-USD",
+        side: "flat",
+        quantity: 0,
+        averageEntryPrice: 0,
+        markPrice: 0,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        initialMargin: 0,
+        maintenanceMargin: 0,
+        liquidationPrice: 0
+      },
+      orders: []
+    }, [{
+      eventId: "evt-1",
+      eventType: "MarketTickReceived",
+      occurredAt: "2026-01-01T00:00:05.000Z",
+      sequence: 1,
+      simulationSessionId: "session-1",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      source: "system",
+      payload: {
+        symbol: "BTC-USD",
+        bid: 100,
+        ask: 101,
+        last: 100.5,
+        spread: 1,
+        tickTime: "2026-01-01T00:00:05.000Z",
+        volatilityTag: "normal"
+      }
+    }, {
+      eventId: "evt-2",
+      eventType: "MarketTickReceived",
+      occurredAt: "2026-01-01T00:00:45.000Z",
+      sequence: 2,
+      simulationSessionId: "session-1",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      source: "system",
+      payload: {
+        symbol: "BTC-USD",
+        bid: 101,
+        ask: 102,
+        last: 101.5,
+        spread: 1,
+        tickTime: "2026-01-01T00:00:45.000Z",
+        volatilityTag: "normal"
+      }
+    } satisfies AnyEventEnvelope]);
+
+    expect(prismaMock.marketTick.upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: {
+        id: "BTC-USD:2026-01-01T00:00"
+      }
+    }));
+    expect(prismaMock.marketTick.upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: {
+        id: "BTC-USD:2026-01-01T00:00"
+      },
+      update: expect.objectContaining({
+        tickTime: new Date("2026-01-01T00:00:45.000Z"),
+        last: 101.5
+      })
+    }));
+  });
+
   it("loads null account and null position snapshots", async () => {
     prismaMock.account.findUnique.mockResolvedValue(null);
     prismaMock.position.findFirst.mockResolvedValue(null);
@@ -755,7 +977,9 @@ describe("TradingRepository", () => {
   it("persists partial fill events and nullable order fields", async () => {
     await repository.persistState({
       simulationSessionId: "session-1",
-      sequence: 1,
+      nextSequence: 2,
+      nextOrderId: 1,
+      nextFillId: 2,
       latestTick: null,
       account: {
         accountId: "paper-account-1",

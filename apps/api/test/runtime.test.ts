@@ -12,6 +12,7 @@ const repositoryMocks = vi.hoisted(() => ({
   findUserByUsername: vi.fn(),
   loadSymbolConfig: vi.fn(),
   loadSymbolConfigMeta: vi.fn(),
+  loadSimulationSnapshot: vi.fn(),
   loadEvents: vi.fn(),
   loadRecentMarketSnapshot: vi.fn(),
   persistState: vi.fn(),
@@ -37,7 +38,9 @@ const hyperliquidClientState = vi.hoisted(() => ({
 const tradingCoreState = vi.hoisted(() => ({
   replayResult: {
     simulationSessionId: "session-1",
-    sequence: 1,
+    nextSequence: 2,
+    nextOrderId: 1,
+    nextFillId: 1,
     latestTick: {
       symbol: "BTC-USD",
       bid: 69999,
@@ -86,6 +89,7 @@ vi.mock("../src/repository", () => ({
     findUserByUsername = repositoryMocks.findUserByUsername;
     loadSymbolConfig = repositoryMocks.loadSymbolConfig;
     loadSymbolConfigMeta = repositoryMocks.loadSymbolConfigMeta;
+    loadSimulationSnapshot = repositoryMocks.loadSimulationSnapshot;
     loadEvents = repositoryMocks.loadEvents;
     loadRecentMarketSnapshot = repositoryMocks.loadRecentMarketSnapshot;
     persistState = repositoryMocks.persistState;
@@ -139,7 +143,9 @@ vi.mock("@stratium/trading-core", () => {
   class TradingEngine {
     private state: {
       simulationSessionId: string;
-      sequence: number;
+      nextSequence: number;
+      nextOrderId: number;
+      nextFillId: number;
       latestTick: MarketTick | null;
       account: {
         accountId: string;
@@ -170,7 +176,9 @@ vi.mock("@stratium/trading-core", () => {
     constructor(state?: typeof tradingCoreState.replayResult, options?: { sessionId?: string }) {
       this.state = state ?? {
         simulationSessionId: options?.sessionId ?? "session-1",
-        sequence: 0,
+        nextSequence: 1,
+        nextOrderId: 1,
+        nextFillId: 1,
         latestTick: null,
         account: {
           accountId: "paper-account-1",
@@ -211,15 +219,15 @@ vi.mock("@stratium/trading-core", () => {
           ...this.state.position,
           markPrice: tick.last
         },
-        sequence: this.state.sequence + 1
+        nextSequence: this.state.nextSequence + 1
       };
 
       return {
         events: [{
-          eventId: `evt-${this.state.sequence}`,
+          eventId: `evt-${this.state.nextSequence - 1}`,
           eventType: "MarketTickReceived",
           occurredAt: tick.tickTime,
-          sequence: this.state.sequence,
+          sequence: this.state.nextSequence - 1,
           simulationSessionId: this.state.simulationSessionId,
           accountId: this.state.account.accountId,
           symbol: tick.symbol,
@@ -252,16 +260,16 @@ vi.mock("@stratium/trading-core", () => {
       this.state = {
         ...this.state,
         orders: [...this.state.orders, order],
-        sequence: this.state.sequence + 1
+        nextSequence: this.state.nextSequence + 1
       };
 
       return {
         order,
         events: [{
-          eventId: `evt-${this.state.sequence}`,
+          eventId: `evt-${this.state.nextSequence - 1}`,
           eventType: "OrderAccepted",
           occurredAt: "2026-01-01T00:00:00.000Z",
-          sequence: this.state.sequence,
+          sequence: this.state.nextSequence - 1,
           simulationSessionId: this.state.simulationSessionId,
           accountId: input.accountId,
           symbol: input.symbol,
@@ -275,15 +283,15 @@ vi.mock("@stratium/trading-core", () => {
       this.state = {
         ...this.state,
         orders: this.state.orders.map((order) => order.id === input.orderId ? { ...order, status: "canceled" } : order),
-        sequence: this.state.sequence + 1
+        nextSequence: this.state.nextSequence + 1
       };
 
       return {
         events: [{
-          eventId: `evt-${this.state.sequence}`,
+          eventId: `evt-${this.state.nextSequence - 1}`,
           eventType: "OrderCanceled",
           occurredAt: "2026-01-01T00:00:00.000Z",
-          sequence: this.state.sequence,
+          sequence: this.state.nextSequence - 1,
           simulationSessionId: this.state.simulationSessionId,
           accountId: input.accountId,
           symbol: this.state.position.symbol,
@@ -308,7 +316,9 @@ vi.mock("@stratium/trading-core", () => {
     TradingEngine,
     createInitialTradingState: (options?: { sessionId?: string; symbolConfig?: { symbol?: string } }) => ({
       simulationSessionId: options?.sessionId ?? "session-1",
-      sequence: 0,
+      nextSequence: 1,
+      nextOrderId: 1,
+      nextFillId: 1,
       latestTick: null,
       account: {
         accountId: "paper-account-1",
@@ -336,6 +346,9 @@ vi.mock("@stratium/trading-core", () => {
       orders: []
     }),
     replayEvents: vi.fn((_events: AnyEventEnvelope[]) => ({
+      state: tradingCoreState.replayResult
+    })),
+    replayEventsFromState: vi.fn((_state: unknown, _events: AnyEventEnvelope[]) => ({
       state: tradingCoreState.replayResult
     }))
   };
@@ -370,6 +383,7 @@ describe("ApiRuntime", () => {
     hyperliquidClientState.instances.length = 0;
     repositoryMocks.loadSymbolConfig.mockResolvedValue(null);
     repositoryMocks.loadSymbolConfigMeta.mockResolvedValue(null);
+    repositoryMocks.loadSimulationSnapshot.mockResolvedValue(null);
     repositoryMocks.loadEvents.mockResolvedValue([]);
     repositoryMocks.loadRecentMarketSnapshot.mockResolvedValue(null);
     repositoryMocks.ensureDefaultAccess.mockResolvedValue(undefined);
@@ -971,6 +985,30 @@ describe("ApiRuntime", () => {
     expect(recentEvents.filter((event) => event.eventType === "MarketTickReceived").length).toBeLessThanOrEqual(240);
   });
 
+  it("prunes in-memory market tick events to the recent window", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    await runtime.bootstrap();
+
+    for (let index = 0; index < 400; index += 1) {
+      await runtime.ingestManualTick({
+        symbol: "BTC-USD",
+        bid: 70000 + index,
+        ask: 70002 + index,
+        last: 70001 + index,
+        spread: 2,
+        tickTime: new Date(Date.parse("2026-04-09T00:00:00.000Z") + (index * 1_000)).toISOString(),
+        volatilityTag: "normal"
+      });
+    }
+
+    const storedEvents = runtime.getEventStore("paper-account-1");
+    const storedTickEvents = storedEvents.filter((event) => event.eventType === "MarketTickReceived");
+
+    expect(storedTickEvents).toHaveLength(240);
+    expect(storedTickEvents[0]?.sequence).toBe(161);
+    expect(storedTickEvents[239]?.sequence).toBe(400);
+  });
+
   it("covers wrapper methods and broadcast listeners", async () => {
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
@@ -985,7 +1023,7 @@ describe("ApiRuntime", () => {
       getOrderByClientOrderId: vi.fn(() => ({ id: "ord_1", clientOrderId: "0xabc" })),
       cancelAllOpenOrders: vi.fn(async () => [{ orderId: "ord_1" }]),
       getPrimaryAccountId: vi.fn(() => "paper-account-1"),
-      getReplayState: vi.fn(() => ({ sequence: 1 })),
+      getReplayState: vi.fn(() => ({ nextSequence: 2 })),
       submitOrder: vi.fn(async () => ({ order: { id: "ord_1" }, events: [] })),
       cancelOrder: vi.fn(async () => ({ events: [] })),
       ensureFrontendAccount: vi.fn(async () => undefined),
@@ -1090,6 +1128,7 @@ describe("ApiRuntime", () => {
 
   it("covers TradingRuntime edge branches directly", async () => {
     const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
       loadEvents: vi.fn(async (sessionId: string) => sessionId === "session-paper-a"
         ? [{
           eventId: "evt-1",
@@ -1127,6 +1166,7 @@ describe("ApiRuntime", () => {
       persistedSymbolConfig: null
     });
     await runtime.ensureFrontendAccount("paper-a");
+    expect(repository.loadSimulationSnapshot).toHaveBeenCalledTimes(1);
     expect(repository.loadEvents).toHaveBeenCalledTimes(1);
 
     expect(runtime.getPrimaryAccountId()).toBe("paper-a");
@@ -1157,5 +1197,58 @@ describe("ApiRuntime", () => {
     await runtime.flushPersistence();
     await runtime.setBootstrapReady(true);
     expect(repository.persistState).toHaveBeenCalled();
+  });
+
+  it("writes snapshots only once per minute while still persisting every event batch", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined)
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+    await runtime.setBootstrapReady(true);
+
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100,
+      ask: 101,
+      last: 100.5,
+      spread: 1,
+      tickTime: "2026-01-01T00:00:05.000Z",
+      volatilityTag: "normal"
+    }, "BTC-USD");
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100.1,
+      ask: 101.1,
+      last: 100.6,
+      spread: 1,
+      tickTime: "2026-01-01T00:00:45.000Z",
+      volatilityTag: "normal"
+    }, "BTC-USD");
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 101,
+      ask: 102,
+      last: 101.5,
+      spread: 1,
+      tickTime: "2026-01-01T00:01:05.000Z",
+      volatilityTag: "normal"
+    }, "BTC-USD");
+
+    expect(repository.persistState).toHaveBeenNthCalledWith(1, expect.anything(), [], true);
+    expect(repository.persistState).toHaveBeenNthCalledWith(2, expect.anything(), expect.any(Array), true);
+    expect(repository.persistState).toHaveBeenNthCalledWith(3, expect.anything(), expect.any(Array), false);
+    expect(repository.persistState).toHaveBeenNthCalledWith(4, expect.anything(), expect.any(Array), true);
   });
 });

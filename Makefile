@@ -9,7 +9,7 @@ JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
 JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
 
-.PHONY: help init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-bootstrap seed-symbol-configs \
+.PHONY: help init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
 	up down logs config batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
@@ -20,13 +20,14 @@ help:
 	@echo Stratium make targets
 	@echo
 	@echo Setup
-	@echo   make init                 First-time setup: create .env, prepare container dependencies, start db/job-runner, and import base data
+	@echo   make init                 First-time setup: create .env, prepare container dependencies, clear runtime data, and import base data
 	@echo   make bootstrap-services   Start only db, redis, and job-runner for first-time initialization
 	@echo   make wait-job-runner      Wait until the job runner is ready to accept requests
 	@echo   make install              Build workspace images and prepare container-side dependencies
 	@echo   make db-push              Push Prisma schema via the job runner
 	@echo   make db-seed              Seed default app accounts and platform settings via the job runner
-	@echo   make db-bootstrap         Run db push, db seed, and symbol config seed via the job runner
+	@echo   make db-clear-runtime-data Clear runtime events, positions, orders, fills, and trigger data
+	@echo   make db-bootstrap         Clear runtime data, run db push, db seed, and seed symbol configs
 	@echo   make seed-symbol-configs  Seed default symbol configs via the job runner
 	@echo
 	@echo Local development
@@ -90,7 +91,10 @@ db-push:
 db-seed:
 	$(JOB_RUNNER_CLIENT) db-seed
 
-db-bootstrap: db-push db-seed seed-symbol-configs
+db-clear-runtime-data:
+	$(JOB_RUNNER_CLIENT) db-clear-runtime-data
+
+db-bootstrap: db-clear-runtime-data db-push db-seed seed-symbol-configs
 
 seed-symbol-configs:
 	$(JOB_RUNNER_CLIENT) seed-symbol-configs

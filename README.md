@@ -44,6 +44,7 @@ This step will automatically:
 
 - create local configuration files
 - prepare the runtime environment
+- clear stale runtime events, orders, positions, fills, and trigger data
 - start the database and initialization tools
 - wait for the initialization tools to become ready
 - seed default accounts and base data
@@ -85,6 +86,7 @@ Most users only need the first URL.
 
 Inside Docker Compose, services should call each other through internal service DNS names and container ports, for example `http://api:4000`.
 `http://localhost:6100` is only for the browser or host-side tools.
+
 
 ## Default Accounts
 
