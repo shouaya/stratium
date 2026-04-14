@@ -284,6 +284,7 @@ Nonce 不是工具输入项。
 ```bash
 STRATIUM_MCP_API_BASE_URL=http://localhost:4000
 TRADER_MCP_PORT=4600
+STRATIUM_MCP_DEBUG_LOG_PATH=logs/trader-mcp-http.ndjson
 ```
 
 启动命令：
@@ -303,6 +304,19 @@ http://localhost:4600/mcp
 ```text
 Authorization: Bearer <你的 Stratium frontend token>
 ```
+
+如果你要排查 Codex 到 MCP 或 MCP 到 Stratium API 的连通性，可以直接看日志文件：
+
+```text
+logs/trader-mcp-http.ndjson
+```
+
+该文件会按 JSON Lines 追加记录：
+
+- 入站 MCP HTTP request / response
+- trader-mcp 发往 Stratium API 的 HTTP request / response
+- request / response headers
+- 原始 body
 
 ## 最小接入结论
 

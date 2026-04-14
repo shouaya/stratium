@@ -1,3 +1,5 @@
+import type { TraderMcpLogger } from "./logger.js";
+
 export interface StratiumBotCredentials {
   accountId: string;
   vaultAddress: string;
@@ -47,6 +49,8 @@ export interface TraderMcpRuntimeConfig {
   port?: number;
   mcpPath?: string;
   corsOrigin?: string;
+  debugLogPath?: string;
+  logger?: TraderMcpLogger;
   frontendUsername?: string;
   frontendPassword?: string;
   frontendRole?: "frontend";

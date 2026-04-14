@@ -33,3 +33,11 @@ export const extractBearerToken = (headers?: IncomingHttpHeaders): string | unde
     ? rawAuthorization.slice(prefix.length).trim()
     : undefined;
 };
+
+export const extractRequestId = (headers?: IncomingHttpHeaders): string | undefined => {
+  const rawRequestId = Array.isArray(headers?.["x-stratium-mcp-request-id"])
+    ? headers["x-stratium-mcp-request-id"][0]
+    : headers?.["x-stratium-mcp-request-id"];
+
+  return rawRequestId?.trim() || undefined;
+};

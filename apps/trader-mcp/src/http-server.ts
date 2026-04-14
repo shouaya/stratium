@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import { PassThrough } from "node:stream";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { JsonLineFileLogger } from "./logger.js";
+import { normalizeIncomingHeaders, tryParseJson } from "./logger.js";
 import { createMcpServer } from "./tools.js";
 import type { TraderMcpRuntimeConfig } from "./types.js";
 
@@ -22,6 +26,59 @@ const closeQuietly = async (resource: { close?: () => Promise<void> | void }) =>
   } catch {
     // Best-effort cleanup for per-request MCP instances.
   }
+};
+
+const captureChunk = (chunks: Buffer[], chunk: unknown) => {
+  if (chunk === undefined || chunk === null) {
+    return;
+  }
+
+  if (Buffer.isBuffer(chunk)) {
+    chunks.push(chunk);
+    return;
+  }
+
+  if (chunk instanceof Uint8Array) {
+    chunks.push(Buffer.from(chunk));
+    return;
+  }
+
+  chunks.push(Buffer.from(String(chunk)));
+};
+
+const teeIncomingRequest = (request: IncomingMessage) => {
+  const replayRequest = new PassThrough() as unknown as IncomingMessage & PassThrough;
+  replayRequest.method = request.method;
+  replayRequest.url = request.url;
+  replayRequest.headers = { ...request.headers };
+  replayRequest.rawHeaders = [...request.rawHeaders];
+  replayRequest.httpVersion = request.httpVersion;
+  replayRequest.httpVersionMajor = request.httpVersionMajor;
+  replayRequest.httpVersionMinor = request.httpVersionMinor;
+  replayRequest.complete = request.complete;
+  replayRequest.rawTrailers = [...request.rawTrailers];
+  replayRequest.trailers = { ...request.trailers };
+  (replayRequest as unknown as { socket?: IncomingMessage["socket"] }).socket = request.socket;
+
+  const captureStream = new PassThrough();
+  const capturedChunks: Buffer[] = [];
+  captureStream.on("data", (chunk) => {
+    captureChunk(capturedChunks, chunk);
+  });
+
+  request.pipe(replayRequest as unknown as PassThrough);
+  request.pipe(captureStream);
+
+  const bodyBufferPromise = new Promise<Buffer>((resolve, reject) => {
+    request.once("end", () => resolve(Buffer.concat(capturedChunks)));
+    request.once("error", reject);
+    captureStream.once("error", reject);
+  });
+
+  return {
+    replayRequest: replayRequest as IncomingMessage,
+    bodyBufferPromise
+  };
 };
 
 const handleHttpRequest = (config: Required<Pick<TraderMcpRuntimeConfig, "host" | "port" | "mcpPath" | "corsOrigin">> & TraderMcpRuntimeConfig) =>
@@ -68,6 +125,24 @@ const handleHttpRequest = (config: Required<Pick<TraderMcpRuntimeConfig, "host" 
       return;
     }
 
+    const requestId = randomUUID();
+    request.headers["x-stratium-mcp-request-id"] = requestId;
+    response.setHeader("x-stratium-mcp-request-id", requestId);
+
+    const { replayRequest, bodyBufferPromise } = teeIncomingRequest(request);
+
+    const responseChunks: Buffer[] = [];
+    const originalWrite = response.write.bind(response);
+    const originalEnd = response.end.bind(response);
+    response.write = ((...args: Parameters<typeof response.write>) => {
+      captureChunk(responseChunks, args[0]);
+      return originalWrite(...args);
+    }) as typeof response.write;
+    response.end = ((...args: Parameters<typeof response.end>) => {
+      captureChunk(responseChunks, args[0]);
+      return originalEnd(...args);
+    }) as typeof response.end;
+
     const mcpServer = createMcpServer(config);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -88,12 +163,34 @@ const handleHttpRequest = (config: Required<Pick<TraderMcpRuntimeConfig, "host" 
       void cleanup();
     });
     response.once("finish", () => {
+      void bodyBufferPromise.then((requestBodyBuffer) =>
+        config.logger?.log({
+          channel: "incoming-mcp-http",
+          event: "mcp-http-request",
+          requestId,
+          data: {
+            request: {
+              method: request.method,
+              url: request.url,
+              headers: normalizeIncomingHeaders(request.headers),
+              rawHeaders: request.rawHeaders,
+              body: requestBodyBuffer.toString("utf8"),
+              json: tryParseJson(requestBodyBuffer.toString("utf8"))
+            },
+            response: {
+              statusCode: response.statusCode,
+              headers: response.getHeaders(),
+              body: Buffer.concat(responseChunks).toString("utf8"),
+              json: tryParseJson(Buffer.concat(responseChunks).toString("utf8"))
+            }
+          }
+        }));
       void cleanup();
     });
 
     try {
       await mcpServer.connect(transport);
-      await transport.handleRequest(request, response);
+      await transport.handleRequest(replayRequest, response);
     } catch (error) {
       await cleanup();
       if (!response.headersSent) {
@@ -115,7 +212,8 @@ export const startTraderMcpHttpServer = async (config: TraderMcpRuntimeConfig) =
     host: config.host ?? "0.0.0.0",
     port: config.port ?? 4600,
     mcpPath: config.mcpPath ?? "/mcp",
-    corsOrigin: config.corsOrigin ?? "*"
+    corsOrigin: config.corsOrigin ?? "*",
+    logger: config.logger ?? (config.debugLogPath ? new JsonLineFileLogger(config.debugLogPath) : undefined)
   };
 
   const server = http.createServer(handleHttpRequest(resolvedConfig));

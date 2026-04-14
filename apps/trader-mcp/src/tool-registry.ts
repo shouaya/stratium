@@ -4,7 +4,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { ZodRawShape } from "zod";
 import { StratiumHttpClient } from "./client.js";
-import { extractBearerToken } from "./auth.js";
+import { extractBearerToken, extractRequestId } from "./auth.js";
 import type { TraderMcpRuntimeConfig } from "./types.js";
 
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -28,11 +28,16 @@ export interface InputClientToolDefinition extends BaseClientToolDefinition {
 
 export type ClientToolDefinition = NoInputClientToolDefinition | InputClientToolDefinition;
 
-const createClient = (config: TraderMcpRuntimeConfig, extra?: ToolExtra) => {
-  const authToken = extractBearerToken(extra?.requestInfo?.headers as IncomingHttpHeaders | undefined);
+const createClient = (config: TraderMcpRuntimeConfig, toolName: string, extra?: ToolExtra) => {
+  const headers = extra?.requestInfo?.headers as IncomingHttpHeaders | undefined;
+  const authToken = extractBearerToken(headers);
+  const requestId = extractRequestId(headers);
 
   return new StratiumHttpClient({
     apiBaseUrl: config.apiBaseUrl,
+    logger: config.logger,
+    requestId,
+    toolName,
     authToken,
     frontendUsername: authToken ? undefined : config.frontendUsername,
     frontendPassword: authToken ? undefined : config.frontendPassword,
@@ -54,7 +59,7 @@ export function registerClientTool(
 
   if ("inputSchema" in definition) {
     (server.registerTool as any)(definition.name, toolConfig, async (args: any, extra: ToolExtra) => {
-      const client = createClient(config, extra);
+      const client = createClient(config, definition.name, extra);
       const response = await definition.run(client, args);
       return client.toMcpResult(definition.name, response, definition.summarize?.(response));
     });
@@ -62,7 +67,7 @@ export function registerClientTool(
   }
 
   (server.registerTool as any)(definition.name, toolConfig, async (extra: ToolExtra) => {
-    const client = createClient(config, extra);
+    const client = createClient(config, definition.name, extra);
     const response = await definition.run(client);
     return client.toMcpResult(definition.name, response, definition.summarize?.(response));
   });

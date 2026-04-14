@@ -1041,6 +1041,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   return {
     ui,
     t,
+    authToken,
     timeframes: TIMEFRAMES,
     state,
     message,

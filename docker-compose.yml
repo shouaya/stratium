@@ -147,6 +147,7 @@ services:
       STRATIUM_MCP_PORT: 4600
       STRATIUM_MCP_PATH: /mcp
       STRATIUM_MCP_CORS_ORIGIN: ${STRATIUM_MCP_CORS_ORIGIN:-*}
+      STRATIUM_MCP_DEBUG_LOG_PATH: ${STRATIUM_MCP_DEBUG_LOG_PATH:-logs/trader-mcp-http.ndjson}
     ports:
       - "${TRADER_MCP_PORT:-4600}:4600"
     volumes:

@@ -1,4 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -26,6 +29,8 @@ describe("trader-mcp http integration", () => {
   });
 
   it("serves MCP over HTTP and forwards bearer-authenticated private flows", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "stratium-trader-mcp-logs-"));
+    const logPath = join(logDir, "http.ndjson");
     const upstreamCalls: Array<{
       method: string;
       path: string;
@@ -135,7 +140,8 @@ describe("trader-mcp http integration", () => {
     const runtime = await startTraderMcpHttpServer({
       apiBaseUrl: "http://127.0.0.1:4612",
       host: "127.0.0.1",
-      port: 4613
+      port: 4613,
+      debugLogPath: logPath
     });
     cleanups.push(runtime.close);
 
@@ -232,5 +238,20 @@ describe("trader-mcp http integration", () => {
         v: 27
       }
     });
+
+    const logLines = (await readFile(logPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(logLines.some((entry) =>
+      entry.channel === "incoming-mcp-http"
+      && entry.event === "mcp-http-request"
+      && entry.data?.request?.headers?.authorization === "Bearer platform-token")).toBe(true);
+
+    expect(logLines.some((entry) =>
+      entry.channel === "outgoing-stratium-http"
+      && entry.data?.request?.path === "/exchange"
+      && entry.data?.response?.status === 200)).toBe(true);
   });
 });

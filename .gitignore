@@ -9,5 +9,6 @@ coverage
 node-compile-cache/
 logs/*.log
 logs/*.err.log
+logs/*.ndjson
 logs/hyperliquid-batch/
 node-compile-cache/

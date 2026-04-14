@@ -252,7 +252,12 @@ export const UI_TEXT = {
       readyAt: "就绪价格 {price}",
       waitingForLiveQuote: "等待实时报价",
       marginRequired: "需要 {amount} USDC",
-      noEstimateYet: "暂时无法估算"
+      noEstimateYet: "暂时无法估算",
+      mcpToken: "MCP Token",
+      copyToken: "复制",
+      tokenCopied: "Token 已复制到剪贴板。",
+      copyTokenFailed: "复制失败，请手动复制。",
+      mcpTokenHint: "可直接用于 Codex / MCP 远端服务连接。"
     }
   },
   ja: {
@@ -497,7 +502,12 @@ export const UI_TEXT = {
       readyAt: "{price} で準備完了",
       waitingForLiveQuote: "リアルタイム気配を待機中",
       marginRequired: "{amount} USDC 必要",
-      noEstimateYet: "まだ見積もりできません"
+      noEstimateYet: "まだ見積もりできません",
+      mcpToken: "MCP Token",
+      copyToken: "コピー",
+      tokenCopied: "Token をクリップボードにコピーしました。",
+      copyTokenFailed: "コピーに失敗しました。手動でコピーしてください。",
+      mcpTokenHint: "Codex / MCP のリモート接続にそのまま利用できます。"
     }
   },
   en: {
@@ -742,7 +752,12 @@ export const UI_TEXT = {
       readyAt: "Ready at {price}",
       waitingForLiveQuote: "Waiting for live quote",
       marginRequired: "{amount} USDC required",
-      noEstimateYet: "No estimate yet"
+      noEstimateYet: "No estimate yet",
+      mcpToken: "MCP Token",
+      copyToken: "Copy",
+      tokenCopied: "Token copied to clipboard.",
+      copyTokenFailed: "Copy failed. Please copy it manually.",
+      mcpTokenHint: "Use this token directly with your Codex / MCP remote connection."
     }
   }
 } as const;

@@ -97,22 +97,64 @@ password: admin123456
 
 - https://stratium.weget.jp/
 
-## 常见问题
+## 用 Codex 连接 Trader MCP 并下单
 
-- 第一次启动比较慢是正常的，因为系统要先把运行环境准备好
-- 如果浏览器打不开页面，先确认 Docker 还在运行
-- 如果 `3000` 或 `8080` 端口被别的软件占用，页面可能打不开
-- 关闭当前终端后，`make up` 启动的服务也会一起停止
+如果你希望让 Codex 直接通过 MCP 调用 Stratium 下单，可以按下面的顺序来。
 
-## 进一步阅读
+### 1. 先启动本地服务
 
-如果你已经成功跑起来，后面想再了解更详细的设计和规则，可以继续看这些文档：
+先确保项目已经初始化完成，然后启动：
 
-- [PH1 架构说明](docs/ph1-architecture.md)
-- [数据流](docs/data-flow.md)
-- [事件规范](docs/event-spec.md)
-- [订单规则](docs/order-rules.md)
-- [保证金规则](docs/margin-rules.md)
-- [Hyperliquid API 兼容说明](docs/hyperliquid-api-compatibility.md)
-- [Hyperliquid WebSocket 兼容说明](docs/hyperliquid-websocket-compatibility.md)
-- [Trader MCP 接入说明](docs/trader-mcp.md)
+```bash
+make up
+```
+
+Trader MCP 默认地址是：
+
+```text
+http://localhost:4600/mcp
+```
+
+如果你只想单独启动 trader-mcp，也可以执行：
+
+```bash
+docker compose up trader-mcp
+```
+
+### 2. 把 Trader MCP 加到 Codex
+
+Codex 支持通过 CLI 把一个远端 MCP server 加进配置里。
+
+```bash
+codex mcp add stratiumTrader --url http://localhost:4600/mcp
+codex mcp list
+```
+
+你也可以直接写到 `~/.codex/config.toml`：
+
+```toml
+[mcp_servers.stratiumTrader]
+url = "http://localhost:4600/mcp"
+bearer_token_env_var = "STRATIUM_FRONTEND_TOKEN"
+```
+
+### 3. 给 Trader MCP 带上 Stratium 登录态
+
+Trader MCP 当前推荐的认证方式不是直接把 bot 密钥交给 Codex，而是：
+
+1. 先通过 Stratium 正常登录，拿到 frontend token
+2. 让 Codex 连接 Trader MCP 时附带：
+
+```text
+export STRATIUM_FRONTEND_TOKEN='你的 token'
+```
+
+这样 trader-mcp 会自动去后端读取当前用户绑定的 bot 凭证，并代为完成签名和 nonce 管理。
+
+### 4. 如果你想让 Codex 直接下一个最小示例单
+
+你也可以把目标说得更直接一些：
+
+```text
+ 通过 stratiumTrader 下一个普通市价BTC买单 size是1
+```

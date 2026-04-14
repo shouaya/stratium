@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import type { TraderMcpLogger } from "./logger.js";
+import { normalizeFetchHeaders, tryParseJson } from "./logger.js";
 import type {
   BatchModifyOrderInput,
   ModifyOrderInput,
@@ -13,6 +15,9 @@ interface LoginResponse {
 
 interface StratiumClientConfig {
   apiBaseUrl: string;
+  logger?: TraderMcpLogger;
+  requestId?: string;
+  toolName?: string;
   authToken?: string;
   frontendUsername?: string;
   frontendPassword?: string;
@@ -196,25 +201,21 @@ export class StratiumHttpClient {
 
   private async request(path: string, body: Record<string, unknown>) {
     const token = await this.getOptionalFrontendToken();
-    const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
+    const requestBody = JSON.stringify(body);
+    const headers = {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {})
+    };
+
+    return this.fetchJson(`${this.config.apiBaseUrl}${path}`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify(body)
+      headers,
+      body: requestBody
+    }, {
+      stage: "private-request",
+      path,
+      requestBody
     });
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(typeof data?.message === "string"
-        ? data.message
-        : typeof data?.response?.data === "string"
-          ? data.response.data
-          : `Request failed with status ${response.status}`);
-    }
-
-    return data;
   }
 
   private toOrderWire(input: PlaceOrderInput) {
@@ -263,17 +264,15 @@ export class StratiumHttpClient {
     }
 
     const token = await this.getFrontendToken();
-    const response = await fetch(`${this.config.apiBaseUrl}/api/bot-credentials`, {
+    this.credentials = await this.fetchJson(`${this.config.apiBaseUrl}/api/bot-credentials`, {
       headers: {
         authorization: `Bearer ${token}`
       }
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(typeof data?.message === "string" ? data.message : "Failed to fetch bot credentials");
-    }
+    }, {
+      stage: "credential-bootstrap",
+      path: "/api/bot-credentials"
+    }) as StratiumBotCredentials;
 
-    this.credentials = data as StratiumBotCredentials;
     return this.credentials;
   }
 
@@ -290,19 +289,24 @@ export class StratiumHttpClient {
       return null;
     }
 
-    const response = await fetch(`${this.config.apiBaseUrl}/api/auth/login`, {
+    const requestBody = JSON.stringify({
+      username: this.config.frontendUsername,
+      password: this.config.frontendPassword,
+      role: this.config.frontendRole ?? "frontend"
+    });
+    const data = await this.fetchJson(`${this.config.apiBaseUrl}/api/auth/login`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
       },
-      body: JSON.stringify({
-        username: this.config.frontendUsername,
-        password: this.config.frontendPassword,
-        role: this.config.frontendRole ?? "frontend"
-      })
-    });
-    const data = await response.json() as LoginResponse & { message?: string };
-    if (!response.ok || !data.token) {
+      body: requestBody
+    }, {
+      stage: "frontend-login",
+      path: "/api/auth/login",
+      requestBody
+    }) as LoginResponse & { message?: string };
+
+    if (!data.token) {
       throw new Error(typeof data.message === "string" ? data.message : "Failed to login to Stratium API");
     }
 
@@ -316,6 +320,90 @@ export class StratiumHttpClient {
       throw new Error("Missing platform bearer token or frontend login credentials for trader MCP bootstrap");
     }
     return token;
+  }
+
+  private async fetchJson(url: string, init: RequestInit, context: { stage: string; path: string; requestBody?: string }) {
+    const requestHeaders = normalizeFetchHeaders(init.headers);
+
+    try {
+      const response = await fetch(url, init);
+      const { data, rawBody } = await this.readResponseBody(response);
+
+      await this.config.logger?.log({
+        channel: "outgoing-stratium-http",
+        event: context.stage,
+        requestId: this.config.requestId,
+        toolName: this.config.toolName,
+        data: {
+          request: {
+            method: init.method ?? "GET",
+            url,
+            path: context.path,
+            headers: requestHeaders,
+            body: context.requestBody
+          },
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            headers: normalizeFetchHeaders(response.headers),
+            body: rawBody
+          }
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(typeof data?.message === "string"
+          ? data.message
+          : typeof data?.response?.data === "string"
+            ? data.response.data
+            : `Request failed with status ${response.status}`);
+      }
+
+      return data;
+    } catch (error) {
+      await this.config.logger?.log({
+        channel: "outgoing-stratium-http",
+        event: `${context.stage}-error`,
+        requestId: this.config.requestId,
+        toolName: this.config.toolName,
+        data: {
+          request: {
+            method: init.method ?? "GET",
+            url,
+            path: context.path,
+            headers: requestHeaders,
+            body: context.requestBody
+          },
+          error: {
+            message: error instanceof Error ? error.message : String(error)
+          }
+        }
+      });
+      throw error;
+    }
+  }
+
+  private async readResponseBody(response: Response | { json?: () => Promise<unknown>; text?: () => Promise<string> }) {
+    if (typeof response.text === "function") {
+      const rawBody = await response.text();
+      return {
+        rawBody,
+        data: tryParseJson(rawBody) ?? rawBody
+      };
+    }
+
+    if (typeof response.json === "function") {
+      const data = await response.json();
+      return {
+        rawBody: JSON.stringify(data),
+        data
+      };
+    }
+
+    return {
+      rawBody: "",
+      data: undefined
+    };
   }
 }
 

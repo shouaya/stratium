@@ -155,6 +155,44 @@ describe("StratiumHttpClient", () => {
     expect((infoRequest.headers as Record<string, string>).authorization).toBe("Bearer platform-token");
   });
 
+  it("logs outgoing request and response payloads", async () => {
+    const log = vi.fn().mockResolvedValue(undefined);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => JSON.stringify({ mids: { BTC: "70000" } })
+    });
+
+    const client = new StratiumHttpClient({
+      apiBaseUrl: "http://127.0.0.1:4000",
+      logger: { log },
+      requestId: "req-1",
+      toolName: "stratium_get_all_mids"
+    });
+
+    expect(await client.getAllMids()).toEqual({ mids: { BTC: "70000" } });
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "outgoing-stratium-http",
+      event: "private-request",
+      requestId: "req-1",
+      toolName: "stratium_get_all_mids",
+      data: expect.objectContaining({
+        request: expect.objectContaining({
+          method: "POST",
+          url: "http://127.0.0.1:4000/info",
+          path: "/info"
+        }),
+        response: expect.objectContaining({
+          status: 200,
+          body: JSON.stringify({ mids: { BTC: "70000" } })
+        })
+      })
+    }));
+  });
+
   it("covers all tool-facing client methods and normalized MCP results", async () => {
     fetchMock
       .mockResolvedValueOnce({ ok: true, json: async () => ([{ universe: [] }, [{ markPx: "70000" }]]) })
