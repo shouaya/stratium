@@ -1,10 +1,15 @@
 PNPM ?= corepack pnpm
-COMPOSE ?= docker compose
-COMPOSE_PROD ?= $(COMPOSE) -f docker-compose.prod.yml
-COMPOSE_BATCH ?= $(COMPOSE) --env-file .env -f docker-compose.batch.yml
+COMPOSE_FLAVOR ?= $(shell if docker compose version >/dev/null 2>&1; then printf plugin; elif docker-compose version >/dev/null 2>&1; then printf legacy; else printf plugin; fi)
+COMPOSE ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker compose)
+JOB_RUNNER_COMPOSE_COMMAND ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker)
+JOB_RUNNER_COMPOSE_ARGS ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),,compose)
+COMPOSE_ENV ?= JOB_RUNNER_COMPOSE_COMMAND=$(JOB_RUNNER_COMPOSE_COMMAND) JOB_RUNNER_COMPOSE_ARGS="$(JOB_RUNNER_COMPOSE_ARGS)"
+COMPOSE_RUN ?= $(COMPOSE_ENV) $(COMPOSE)
+COMPOSE_PROD ?= $(COMPOSE_RUN) -f docker-compose.prod.yml
+COMPOSE_BATCH ?= $(COMPOSE_RUN) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
 DOCKER_BATCH_ROOT_RUN ?= $(COMPOSE_BATCH) run --rm --workdir /workspace batch
-WORKSPACE_RUN ?= $(COMPOSE) run --rm --no-deps --workdir /workspace job-runner
+WORKSPACE_RUN ?= $(COMPOSE_RUN) run --rm --no-deps --workdir /workspace job-runner
 JOB_RUNNER_CONTAINER ?= stratium-job-runner
 JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
 JOB_RUNNER_TOKEN ?= stratium-local-runner
@@ -21,7 +26,7 @@ INTERVAL ?= 1m
 
 help:
 	@echo Stratium make targets
-	@echo.
+	@echo
 	@echo Setup
 	@echo   make init                 First-time setup: create .env, prepare container dependencies, start db/job-runner, and import base data
 	@echo   make bootstrap-services   Start only db, redis, and job-runner for first-time initialization
@@ -35,7 +40,7 @@ help:
 	@echo   make db-seed              Seed default app accounts and platform settings via the job runner
 	@echo   make db-bootstrap         Run db push, db seed, and symbol config seed via the job runner
 	@echo   make seed-symbol-configs  Seed default symbol configs via the job runner
-	@echo.
+	@echo
 	@echo Local development
 	@echo   make dev                  Run api + web in local dev mode
 	@echo   make lint                 Run TypeScript lint checks across workspace
@@ -43,8 +48,10 @@ help:
 	@echo   make build                Build all workspace packages/apps
 	@echo   make prod-esm-check       Build and validate production ESM entrypoints/imports
 	@echo   make check                Run lint, test, build, and compose config
-	@echo.
+	@echo
 	@echo Docker compose
+	@echo   detected compose flavor: $(COMPOSE_FLAVOR)
+	@echo   using compose command: $(COMPOSE)
 	@echo   make up                   Start main stack
 	@echo   make up-build             Rebuild and start main stack
 	@echo   make down                 Stop main stack
@@ -57,20 +64,20 @@ help:
 	@echo   make logs-db              Tail db logs
 	@echo   make logs-adminer         Tail adminer logs
 	@echo   make logs-job-runner      Tail job-runner logs
-	@echo.
+	@echo
 	@echo Production
 	@echo   make prod-up              Start production stack
 	@echo   make prod-up-build        Rebuild and start production stack
 	@echo   make prod-down            Stop production stack
 	@echo   make prod-logs            Tail production logs
 	@echo   make prod-config          Validate docker-compose.prod.yml
-	@echo.
+	@echo
 	@echo Batch
 	@echo   make batch-build          Build the batch job image
 	@echo   make batch-run-collector  Run the collector as an explicit Docker job
 	@echo   make batch-import         Import batch data from S3
 	@echo   make batch-import-hl-day  Download and import one Hyperliquid day via the job runner
-	@echo   make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles via the job runner
+	@echo "  make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles via the job runner"
 	@echo   make batch-clear-kline    Clear persisted K-line history via the job runner
 
 init:
@@ -82,7 +89,7 @@ init:
 	$(MAKE) batch-refresh-hl-day
 
 bootstrap-services:
-	$(COMPOSE) up -d db redis job-runner
+	$(COMPOSE_RUN) up -d db redis job-runner
 
 wait-job-runner:
 	@until docker exec $(JOB_RUNNER_CONTAINER) node -e "fetch('http://127.0.0.1:4300/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))" >/dev/null 2>&1; do \
@@ -91,17 +98,17 @@ wait-job-runner:
 	done
 
 install:
-	$(COMPOSE) build job-runner api web
+	$(COMPOSE_RUN) build job-runner api web
 	$(COMPOSE_BATCH) build batch
 
 job-runner-start:
-	$(COMPOSE) up -d job-runner
+	$(COMPOSE_RUN) up -d job-runner
 
 job-runner-build:
-	$(COMPOSE) build job-runner
+	$(COMPOSE_RUN) build job-runner
 
 dev:
-	$(COMPOSE) up db redis job-runner api web adminer
+	$(COMPOSE_RUN) up db redis job-runner api web adminer
 
 lint:
 	$(WORKSPACE_RUN) pnpm lint
@@ -135,40 +142,40 @@ seed-symbol-configs:
 	$(JOB_RUNNER_CLIENT) seed-symbol-configs
 
 up:
-	$(COMPOSE) up
+	$(COMPOSE_RUN) up
 
 up-build:
-	$(COMPOSE) up --build
+	$(COMPOSE_RUN) up --build
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE_RUN) down
 
 down-volumes:
-	$(COMPOSE) down -v
+	$(COMPOSE_RUN) down -v
 
 restart:
-	$(COMPOSE) restart api web
+	$(COMPOSE_RUN) restart api web
 
 logs:
-	$(COMPOSE) logs -f
+	$(COMPOSE_RUN) logs -f
 
 logs-api:
-	$(COMPOSE) logs -f api
+	$(COMPOSE_RUN) logs -f api
 
 logs-web:
-	$(COMPOSE) logs -f web
+	$(COMPOSE_RUN) logs -f web
 
 logs-db:
-	$(COMPOSE) logs -f db
+	$(COMPOSE_RUN) logs -f db
 
 logs-adminer:
-	$(COMPOSE) logs -f adminer
+	$(COMPOSE_RUN) logs -f adminer
 
 logs-job-runner:
-	$(COMPOSE) logs -f job-runner
+	$(COMPOSE_RUN) logs -f job-runner
 
 config:
-	$(COMPOSE) config
+	$(COMPOSE_RUN) config
 
 prod-up:
 	$(COMPOSE_PROD) up -d

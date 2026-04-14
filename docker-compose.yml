@@ -81,8 +81,8 @@ services:
       JOB_RUNNER_HOST: 0.0.0.0
       JOB_RUNNER_TOKEN: ${JOB_RUNNER_TOKEN:-stratium-local-runner}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      JOB_RUNNER_COMPOSE_COMMAND: docker
-      JOB_RUNNER_COMPOSE_ARGS: compose
+      JOB_RUNNER_COMPOSE_COMMAND: ${JOB_RUNNER_COMPOSE_COMMAND:-docker}
+      JOB_RUNNER_COMPOSE_ARGS: ${JOB_RUNNER_COMPOSE_ARGS:-compose}
       JOB_RUNNER_WORKDIR: /workspace
       JOB_RUNNER_BATCH_ENV_FILE: .env
       JOB_RUNNER_BATCH_COMPOSE_FILE: docker-compose.batch.yml
