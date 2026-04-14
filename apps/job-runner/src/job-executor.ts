@@ -42,8 +42,8 @@ export interface JobDefinition {
 const DEFAULT_COIN = process.env.HYPERLIQUID_COIN ?? "BTC";
 const DEFAULT_INTERVAL = process.env.HYPERLIQUID_CANDLE_INTERVAL ?? "1m";
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-const composeCommand = process.env.JOB_RUNNER_COMPOSE_COMMAND?.trim() || "docker-compose";
-const composeCommandArgs = (process.env.JOB_RUNNER_COMPOSE_ARGS ?? "")
+const composeCommandOverride = process.env.JOB_RUNNER_COMPOSE_COMMAND?.trim();
+const composeCommandArgsOverride = (process.env.JOB_RUNNER_COMPOSE_ARGS ?? "")
   .split(/\s+/)
   .map((value) => value.trim())
   .filter(Boolean);
@@ -151,6 +151,11 @@ const ensureMigrationName = (value: string | undefined): string => {
 
 const batchComposeBaseArgs = ["--env-file", batchEnvFile, "-f", batchComposeFile];
 
+type ComposeRunner = {
+  command: string;
+  args: string[];
+};
+
 const runCommand = async (command: string, args: string[]): Promise<JobRunResult> => {
   try {
     const result = await execFileAsync(command, args, {
@@ -186,13 +191,53 @@ const runCommand = async (command: string, args: string[]): Promise<JobRunResult
   }
 };
 
+const canRunCommand = async (command: string, args: string[]) => {
+  const result = await runCommand(command, args);
+  return result.ok;
+};
+
+let composeRunnerPromise: Promise<ComposeRunner> | null = null;
+
+const resolveComposeRunner = async (): Promise<ComposeRunner> => {
+  if (composeRunnerPromise) {
+    return composeRunnerPromise;
+  }
+
+  composeRunnerPromise = (async () => {
+    if (composeCommandOverride) {
+      return {
+        command: composeCommandOverride,
+        args: composeCommandArgsOverride
+      };
+    }
+
+    if (await canRunCommand("docker", ["compose", "version"])) {
+      return {
+        command: "docker",
+        args: ["compose"]
+      };
+    }
+
+    if (await canRunCommand("docker-compose", ["version"])) {
+      return {
+        command: "docker-compose",
+        args: []
+      };
+    }
+
+    throw new Error("Unable to find a working Docker Compose command. Tried `docker compose` and `docker-compose`.");
+  })();
+
+  return composeRunnerPromise;
+};
+
 const combineResults = (steps: JobRunResult[]): JobRunResult => {
   const firstFailure = steps.find((step) => !step.ok);
   const lastStep = steps[steps.length - 1];
 
   return {
     ok: !firstFailure,
-    command: composeCommand,
+    command: steps[0]?.command ?? "docker",
     args: [],
     stdout: steps
       .map((step, index) => step.stdout ? `# Step ${index + 1}: ${step.command} ${step.args.join(" ")}\n${step.stdout}` : "")
@@ -207,14 +252,20 @@ const combineResults = (steps: JobRunResult[]): JobRunResult => {
   };
 };
 
-const runBatchShell = (script: string) =>
-  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--build", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
+const runBatchShell = async (script: string) => {
+  const composeRunner = await resolveComposeRunner();
+  return runCommand(composeRunner.command, [...composeRunner.args, ...batchComposeBaseArgs, "run", "--build", "--rm", "--workdir", "/workspace", "batch", "sh", "-lc", script]);
+};
 
-const runBatchNode = (args: string[]) =>
-  runCommand(composeCommand, [...composeCommandArgs, ...batchComposeBaseArgs, "run", "--build", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
+const runBatchNode = async (args: string[]) => {
+  const composeRunner = await resolveComposeRunner();
+  return runCommand(composeRunner.command, [...composeRunner.args, ...batchComposeBaseArgs, "run", "--build", "--rm", "batch", "node", "--experimental-specifier-resolution=node", ...args]);
+};
 
-const runMainCompose = (args: string[]) =>
-  runCommand(composeCommand, [...composeCommandArgs, "-f", mainComposeFile, ...args]);
+const runMainCompose = async (args: string[]) => {
+  const composeRunner = await resolveComposeRunner();
+  return runCommand(composeRunner.command, [...composeRunner.args, "-f", mainComposeFile, ...args]);
+};
 
 const runDocker = (args: string[]) =>
   runCommand("docker", args);

@@ -1,10 +1,7 @@
 PNPM ?= corepack pnpm
 COMPOSE_FLAVOR ?= $(shell if docker compose version >/dev/null 2>&1; then printf plugin; elif docker-compose version >/dev/null 2>&1; then printf legacy; else printf plugin; fi)
 COMPOSE ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker compose)
-JOB_RUNNER_COMPOSE_COMMAND ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker)
-JOB_RUNNER_COMPOSE_ARGS ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),,compose)
-COMPOSE_ENV ?= JOB_RUNNER_COMPOSE_COMMAND=$(JOB_RUNNER_COMPOSE_COMMAND) JOB_RUNNER_COMPOSE_ARGS="$(JOB_RUNNER_COMPOSE_ARGS)"
-COMPOSE_RUN ?= $(COMPOSE_ENV) $(COMPOSE)
+COMPOSE_RUN ?= $(COMPOSE)
 COMPOSE_PROD ?= $(COMPOSE_RUN) -f docker-compose.prod.yml
 COMPOSE_BATCH ?= $(COMPOSE_RUN) --env-file .env -f docker-compose.batch.yml
 DOCKER_BATCH_RUN ?= $(COMPOSE_BATCH) run --rm batch
