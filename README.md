@@ -180,24 +180,7 @@ If you want a very direct prompt:
 Use stratiumTrader to place a normal BTC market buy order with size 1.
 ```
 
-## Useful Trader MCP Tools
-
-- Market data:
-  `stratium_get_meta`
-  `stratium_get_meta_and_asset_ctxs`
-  `stratium_get_all_mids`
-  `stratium_get_l2_book`
-- Account queries:
-  `stratium_get_clearinghouse_state`
-  `stratium_get_open_orders`
-  `stratium_get_frontend_open_orders`
-  `stratium_get_order_status`
-- Trading:
-  `stratium_place_order`
-  `stratium_place_orders`
-  `stratium_modify_order`
-  `stratium_cancel_order`
-  `stratium_cancel_order_by_cloid`
+![Codex Demo](docs/codex.jpg)
 
 ## FAQ
 
