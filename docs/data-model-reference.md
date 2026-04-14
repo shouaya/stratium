@@ -1,41 +1,41 @@
-# 数据模型说明
+# Data Model Reference
 
-这份文档说明当前项目里主要数据表的职责、哪些表是事实源、哪些表是投影，以及市场数据和交易状态是如何流转的。
+This document explains the responsibilities of the main data tables in the current project, which tables are sources of truth, which ones are projections, and how market data and trading state move through the system.
 
-适用场景：
+Useful scenarios:
 
-- 排查 replay 问题
-- 做一轮干净的测试前清数据
-- 理解为什么删掉某些数据后又会重新出现
-- 判断哪些数据适合用来做复盘
+- investigating replay issues
+- clearing data before a clean test run
+- understanding why some records reappear after deletion
+- deciding which tables are suitable for replay or post-trade analysis
 
-## 表的分类
+## Table Categories
 
-当前项目里的表可以分成三类：
+The current schema can be grouped into four categories:
 
-1. 交易事实表
-   - 记录“发生过什么”
-   - 核心代表：`SimulationEvent`
+1. Trading fact tables
+   - record what happened
+   - primary example: `SimulationEvent`
 
-2. 交易配置表
-   - 记录交易品种配置
-   - 核心代表：`SymbolConfig`
+2. Trading configuration tables
+   - store instrument-level configuration
+   - primary example: `SymbolConfig`
 
-3. 交易状态投影表
-   - 记录“当前状态是什么”
-   - 代表：`Account`、`Order`、`Position`、`Fill`
+3. Trading state projection tables
+   - store the current state
+   - examples: `Account`, `Order`, `Position`, `Fill`
 
-4. 市场历史表
-   - 记录 Hyperliquid 公共市场数据，以及本地交易引擎吃进去的价格输入
-   - 代表：`MarketTrade`、`MarketCandle`、`MarketVolumeRecord`、`MarketBookSnapshot`、`MarketBookLevel`
+4. Market history tables
+   - store Hyperliquid public market data and the price inputs consumed by the local trading engine
+   - examples: `MarketTrade`, `MarketCandle`, `MarketVolumeRecord`, `MarketBookSnapshot`, `MarketBookLevel`
 
-## 事实源与投影
+## Sources of Truth and Projections
 
-对交易引擎来说，主要事实源是：
+For the trading engine, the main source of truth is:
 
 - `SimulationEvent`
 
-这些表是由交易事实或当前引擎状态投影出来的：
+These tables are projected from trading facts or the current engine state:
 
 - `Account`
 - `Order`
@@ -43,12 +43,12 @@
 - `Fill`
 - `MarketTick`
 
-这件事很重要，因为它直接决定了“删库是否真的清空状态”：
+This matters because it directly determines whether deleting rows truly resets state:
 
-- 只删 `Order` 不等于真正重置
-- 只要 `SimulationEvent` 还在，API 启动 replay 或后续持久化时，订单就可能被重新写回
+- deleting only `Order` does not mean the system is actually reset
+- as long as `SimulationEvent` still exists, orders may be written back during API startup replay or later persistence
 
-## 数据流转图
+## Data Flow Diagram
 
 ```mermaid
 flowchart LR
@@ -58,7 +58,7 @@ flowchart LR
     B --> E[MarketTrade]
     B --> F[MarketCandle]
     B --> G[MarketAssetContext]
-    B --> H[派生 MarketTick]
+    B --> H[Derived MarketTick]
 
     H --> I[Trading Engine]
     J[POST /api/orders] --> I
@@ -86,17 +86,17 @@ flowchart LR
     Q --> S
 ```
 
-## 交易相关表
+## Trading Tables
 
 ### `SymbolConfig`
 
-用途：
+Purpose:
 
-- 交易品种配置表
-- 为本地交易引擎提供 symbol 级别配置
-- 作为 Hyperliquid 官方元数据的本地缓存
+- instrument configuration table
+- provides symbol-level config to the local trading engine
+- acts as a local cache of official Hyperliquid metadata
 
-官方对齐字段：
+Fields aligned with Hyperliquid:
 
 - `assetIndex`
 - `coin`
@@ -115,314 +115,314 @@ flowchart LR
 - `baseTakerFeeRate`
 - `baseMakerFeeRate`
 
-本地模拟字段：
+Local simulation fields:
 
 - `engineDefaultLeverage`
 - `engineMaintenanceMarginRate`
 - `engineBaseSlippageBps`
 - `enginePartialFillEnabled`
 
-说明：
+Notes:
 
-- 官方字段通过 seeder 从 Hyperliquid `meta` 拉取
-- 本地模拟字段用于当前 PH1 引擎，不等同于 Hyperliquid 真实撮合逻辑
-- API 启动时会优先从这张表读取当前交易品种配置
+- official fields are seeded from Hyperliquid `meta`
+- local simulation fields are for the current PH1 engine and are not identical to Hyperliquid matching behavior
+- on API startup, the service reads the current instrument configuration from this table first
 
 ### `SimulationEvent`
 
-用途：
+Purpose:
 
-- 交易事件总日志
-- 交易 replay 的事实源
-- API 启动时用它重建内存里的引擎状态
+- the master trading event log
+- the source of truth for replay
+- used to rebuild in-memory engine state during API startup
 
-常见内容：
+Typical contents:
 
-- 下单请求
-- 订单接受
-- 订单拒绝
-- 撤单
-- 市场 tick 到达
-- 订单成交
-- 部分成交
-- 账户和保证金更新
+- order requests
+- order acceptance
+- order rejection
+- order cancellation
+- market tick arrival
+- order fill
+- partial fill
+- account and margin updates
 
-为什么重要：
+Why it matters:
 
-- 它解释了“状态为什么会变成现在这样”
-- 如果你想做真正的交易状态重置，这张表通常必须一起清
+- it explains why the current state looks the way it does
+- if you want a real trading-state reset, this table usually needs to be cleared as well
 
 ### `Account`
 
-用途：
+Purpose:
 
-- 账户当前状态快照
+- snapshot of current account state
 
-常见内容：
+Typical contents:
 
-- 钱包余额
-- 可用余额
-- 仓位保证金
-- 订单保证金
-- 权益
-- 已实现 / 未实现盈亏
-- 风险率
+- wallet balance
+- available balance
+- position margin
+- order margin
+- equity
+- realized / unrealized PnL
+- risk ratio
 
-说明：
+Notes:
 
-- 这是当前状态表，不是事实源
-- 由引擎当前状态持久化出来
+- this is a current-state table, not a source of truth
+- it is persisted from the current engine state
 
 ### `Order`
 
-用途：
+Purpose:
 
-- 当前订单状态
+- current order state
 
-常见内容：
+Typical contents:
 
-- 方向
-- 订单类型
-- 状态
-- 数量
-- 已成交数量
-- 剩余数量
-- 限价
-- 拒单原因
+- side
+- order type
+- status
+- quantity
+- filled quantity
+- remaining quantity
+- limit price
+- rejection reason
 
-说明：
+Notes:
 
-- 这张表不是事实源
-- 只删它，不会真正消除历史订单
+- this table is not a source of truth
+- deleting it alone does not truly erase order history
 
 ### `Fill`
 
-用途：
+Purpose:
 
-- 记录订单实际成交明细
+- records actual fill details for orders
 
-常见内容：
+Typical contents:
 
 - `orderId`
-- 成交价
-- 成交数量
-- 手续费
-- 滑点
+- fill price
+- fill quantity
+- fee
+- slippage
 
-说明：
+Notes:
 
-- 一张订单在更完整的执行模型里可以对应多条 `Fill`
-- 当前执行模型还比较简化，但这张表仍然是查看真实成交结果的正确位置
+- in a more complete execution model, one order may correspond to multiple `Fill` rows
+- the current execution model is still simplified, but this table is still the correct place to inspect actual execution results
 
 ### `Position`
 
-用途：
+Purpose:
 
-- 当前持仓状态快照
+- snapshot of the current position state
 
-常见内容：
+Typical contents:
 
-- 方向
-- 数量
-- 开仓均价
-- 标记价
-- 已实现 / 未实现盈亏
-- 保证金
-- 强平价
+- side
+- quantity
+- average entry price
+- mark price
+- realized / unrealized PnL
+- margin
+- liquidation price
 
-说明：
+Notes:
 
-- 当前状态表
-- 由引擎持仓状态持久化出来
+- current-state table
+- persisted from the engine position state
 
 ### `LedgerEntry`
 
-用途：
+Purpose:
 
-- 计划中的账户资金流水表
+- planned account ledger table
 
-典型场景：
+Typical scenarios:
 
-- 手续费扣减
-- 已实现盈亏入账
-- 保证金释放
-- 强平相关资金变化
+- fee deductions
+- realized PnL booking
+- margin release
+- liquidation-related balance changes
 
-当前状态：
+Current status:
 
-- schema 已有
-- 但还没有完整接入当前持久化链路
+- the schema exists
+- but it is not fully integrated into the current persistence flow
 
 ### `LiquidationEvent`
 
-用途：
+Purpose:
 
-- 计划中的强平审计表
+- planned liquidation audit table
 
-典型内容：
+Typical contents:
 
-- 触发价格
-- 执行价格
-- 执行数量
-- 强平订单 id
+- trigger price
+- execution price
+- execution quantity
+- liquidation order id
 
-当前状态：
+Current status:
 
-- schema 已有
-- 但完整强平流程还没有全部做完
+- the schema exists
+- but the full liquidation flow is not fully connected yet
 
-## 市场相关表
+## Market Tables
 
 ### `MarketBookSnapshot`
 
-用途：
+Purpose:
 
-- 某一时刻订单簿快照的头记录
+- header record for an order book snapshot at a specific point in time
 
-常见内容：
+Typical contents:
 
-- 数据源
+- data source
 - coin
 - symbol
 - best bid
 - best ask
 - spread
-- 抓取时间
+- capture time
 
-适合用来：
+Useful for:
 
-- 找某个时点的盘口头部状态
-- 关联 `MarketBookLevel`
+- checking the top-of-book state at a specific time
+- joining with `MarketBookLevel`
 
 ### `MarketBookLevel`
 
-用途：
+Purpose:
 
-- 某次订单簿快照里的逐档深度
+- per-level depth rows inside a specific order book snapshot
 
-常见内容：
+Typical contents:
 
 - snapshot id
-- 买 / 卖方向
-- 档位索引
-- 价格
-- 数量
-- 该档订单数
+- bid / ask side
+- level index
+- price
+- size
+- number of orders at that level
 
-适合用来：
+Useful for:
 
-- 重建前端 order book
-- 看某段时间的深度结构
-- 做盘口复盘
+- rebuilding the frontend order book
+- inspecting depth structure over a period of time
+- order book replay analysis
 
 ### `MarketTrade`
 
-用途：
+Purpose:
 
-- Hyperliquid 公共逐笔成交历史
+- Hyperliquid public trade history
 
-常见内容：
+Typical contents:
 
-- 买 / 卖方向
-- 成交价
-- 成交量
-- 成交时间
+- buy / sell side
+- trade price
+- trade size
+- trade time
 
-适合用来：
+Useful for:
 
 - trade tape
-- 看短时执行节奏
-- 判断价格变化是通过真实成交发生的，还是只是盘口变化
+- short-term execution rhythm analysis
+- checking whether price moves happened through real trades or only through book movement
 
 ### `MarketCandle`
 
-用途：
+Purpose:
 
-- K 线历史
+- candlestick history
 
-常见内容：
+Typical contents:
 
-- 周期
-- 开盘时间
-- 收盘时间
-- 开高低收
-- 成交量
-- 成交笔数
+- interval
+- open time
+- close time
+- OHLC
+- volume
+- trade count
 
-适合用来：
+Useful for:
 
-- 画图
-- 长时间范围复盘
-- 快速看趋势和阶段结构
+- chart rendering
+- long-range replay
+- quick trend and regime inspection
 
-当前建议定位：
+Current recommendation:
 
-- `1m` 是主要历史粒度
-- 更细粒度细节靠服务器在线期间持续同步的 WS 数据补足
+- `1m` is the main historical granularity
+- finer detail should be supplemented by continuously synced WebSocket data while the server is online
 
 ### `MarketVolumeRecord`
 
-用途：
+Purpose:
 
-- 独立的成交量历史记录表
-- 让成交量查询和统计不必直接依赖整张 `MarketCandle`
+- standalone historical volume table
+- allows volume queries and statistics without relying directly on the full `MarketCandle` table
 
-常见内容：
+Typical contents:
 
-- 周期
-- bucket 开始时间
-- bucket 结束时间
+- interval
+- bucket start time
+- bucket end time
 - volume
 - tradeCount
 
-说明：
+Notes:
 
-- 当前这张表的数据来自 Hyperliquid candle 同步
-- 它是从 candle 派生出来的成交量视图，不是新的事实源
-- 适合单独做 volume 图、成交量复盘和统计查询
+- current data in this table comes from Hyperliquid candle sync
+- it is a volume view derived from candles, not a new source of truth
+- it is suitable for standalone volume charts, volume replay, and statistical queries
 
-适合用来：
+Useful for:
 
-- 查某段时间的成交量变化
-- 直接给前端 volume 图或 volume API
-- 做 volume 异常检测
+- checking volume changes over a time range
+- serving a frontend volume chart or volume API directly
+- volume anomaly detection
 
 ### `MarketAssetContext`
 
-用途：
+Purpose:
 
-- 市场上下文历史快照
+- historical snapshot of market context
 
-常见内容：
+Typical contents:
 
-- 标记价
-- 中间价
-- 预言机价
-- 资金费率
-- 持仓量
-- 前一日价格
-- 24h 名义成交额
-- 抓取时间
+- mark price
+- mid price
+- oracle price
+- funding rate
+- open interest
+- previous day price
+- 24h notional volume
+- capture time
 
-说明：
+Notes:
 
-- 之前它更像一张“当前状态表”
-- 现在已经改成历史追加表
-- 页面如果只要最新值，应按 `capturedAt desc limit 1` 查询
+- it used to behave more like a current-state table
+- it is now an append-only historical table
+- if the UI only needs the latest value, query with `capturedAt desc limit 1`
 
-适合用来：
+Useful for:
 
-- 看 funding
-- 对比 mark 和 oracle
-- 观察某笔交易前后的 open interest 和市场状态
+- funding analysis
+- comparing mark and oracle
+- observing open interest and market state before and after a trade
 
 ### `MarketTick`
 
-用途：
+Purpose:
 
-- 本地交易引擎实际使用的价格输入记录
+- the actual price input records consumed by the local trading engine
 
-常见内容：
+Typical contents:
 
 - bid
 - ask
@@ -431,48 +431,48 @@ flowchart LR
 - volatility tag
 - tick time
 
-关键区别：
+Key difference:
 
-- 这张表记录的是本地引擎实际吃进去的价格点
-- 它不等同于交易所逐笔成交历史
+- this table records the price points actually ingested by the local engine
+- it is not the same thing as exchange-level public trade history
 
-适合用来：
+Useful for:
 
-- 解释为什么本地模拟单会在某个价格成交
-- 对比引擎输入和外部公共市场状态
+- explaining why a local simulated order filled at a specific price
+- comparing engine inputs with external public market state
 
-## 遇到问题时该先看哪张表
+## Which Table to Inspect First
 
-如果你要回答的是具体问题，可以从这里开始：
+If you are answering a specific question, start here:
 
-- 为什么删了订单又回来了？
-  - 先看 `SimulationEvent`
-  - 再看 `Order`
+- Why did deleted orders come back?
+  - first check `SimulationEvent`
+  - then check `Order`
 
-- 为什么这笔单在这个价格成交？
+- Why did this order fill at this price?
   - `Fill`
   - `MarketTick`
   - `MarketTrade`
   - `MarketBookSnapshot` + `MarketBookLevel`
 
-- 某一时刻市场到底长什么样？
-- `MarketCandle`
-- `MarketVolumeRecord`
-- `MarketTrade`
-- `MarketBookSnapshot`
-- `MarketBookLevel`
+- What exactly did the market look like at a given moment?
+  - `MarketCandle`
+  - `MarketVolumeRecord`
+  - `MarketTrade`
+  - `MarketBookSnapshot`
+  - `MarketBookLevel`
   - `MarketAssetContext`
 
-- 当前账户状态是什么？
+- What is the current account state?
   - `Account`
   - `Position`
 
-- 重启后能不能重建交易状态？
-  - 可以，主要依赖 `SimulationEvent`
+- Can trading state be rebuilt after restart?
+  - yes, mainly from `SimulationEvent`
 
-## 重置数据时的建议
+## Recommended Reset Strategy
 
-如果你想做一次真正的交易状态重置，建议一起清掉：
+If you want a real trading-state reset, clear these together:
 
 - `SimulationEvent`
 - `Order`
@@ -481,7 +481,7 @@ flowchart LR
 - `Account`
 - `MarketTick`
 
-如果你还想把市场历史也清掉，再一起清：
+If you also want to clear market history, additionally clear:
 
 - `MarketBookSnapshot`
 - `MarketBookLevel`
@@ -489,16 +489,16 @@ flowchart LR
 - `MarketCandle`
 - `MarketAssetContext`
 
-不要假设只删 `Order` 就足够。
+Do not assume that deleting only `Order` is enough.
 
-## 当前未完全闭合的部分
+## Areas That Are Not Fully Closed Yet
 
-下面两张表 schema 已经存在，但还不能视为完整可依赖的审计来源：
+The following two tables already exist in the schema, but should not yet be treated as fully reliable audit sources:
 
 - `LedgerEntry`
 - `LiquidationEvent`
 
-原因是：
+Why:
 
-- 它们还没有完整接入当前交易执行和持久化闭环
-- 所以当前复盘时不要把它们当成最终可信来源
+- they are not yet fully integrated into the current trading execution and persistence loop
+- for replay and post-trade analysis, do not treat them as final authoritative sources yet
