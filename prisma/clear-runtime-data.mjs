@@ -15,12 +15,29 @@ const RUNTIME_TABLES = [
   ["MarketTick", () => prisma.marketTick.deleteMany({})]
 ];
 
+const isMissingTableError = (error) => {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const message = typeof error.message === "string" ? error.message : "";
+  return error.code === "P2021" || message.includes("does not exist");
+};
+
 async function main() {
   const results = [];
 
   for (const [tableName, runDelete] of RUNTIME_TABLES) {
-    const result = await runDelete();
-    results.push([tableName, result.count]);
+    try {
+      const result = await runDelete();
+      results.push([tableName, result.count]);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+
+      results.push([tableName, "skipped (missing table)"]);
+    }
   }
 
   console.log("Cleared runtime data:");

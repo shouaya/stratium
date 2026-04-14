@@ -316,8 +316,8 @@ export class JobExecutor {
         return runBatchShell("node prisma/seed-symbol-configs.mjs");
       case "db-bootstrap":
         return combineResults([
-          await this.run("db-clear-runtime-data"),
           await this.run("db-push"),
+          await this.run("db-clear-runtime-data"),
           await this.run("db-seed"),
           await this.run("seed-symbol-configs")
         ]);

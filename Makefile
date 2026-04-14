@@ -27,7 +27,7 @@ help:
 	@echo   make db-push              Push Prisma schema via the job runner
 	@echo   make db-seed              Seed default app accounts and platform settings via the job runner
 	@echo   make db-clear-runtime-data Clear runtime events, positions, orders, fills, and trigger data
-	@echo   make db-bootstrap         Clear runtime data, run db push, db seed, and seed symbol configs
+	@echo   make db-bootstrap         Run db push first, then clear runtime data, seed default access, and seed symbol configs
 	@echo   make seed-symbol-configs  Seed default symbol configs via the job runner
 	@echo
 	@echo Local development
@@ -94,7 +94,7 @@ db-seed:
 db-clear-runtime-data:
 	$(JOB_RUNNER_CLIENT) db-clear-runtime-data
 
-db-bootstrap: db-clear-runtime-data db-push db-seed seed-symbol-configs
+db-bootstrap: db-push db-clear-runtime-data db-seed seed-symbol-configs
 
 seed-symbol-configs:
 	$(JOB_RUNNER_CLIENT) seed-symbol-configs
