@@ -19,6 +19,7 @@ const repositoryMocks = vi.hoisted(() => ({
   updateSymbolLeverage: vi.fn(),
   loadRecentVolumeRecords: vi.fn(),
   persistMarketSnapshot: vi.fn(),
+  persistMinuteCandles: vi.fn(),
   persistClosedMinuteCandles: vi.fn()
 }));
 
@@ -96,6 +97,7 @@ vi.mock("../src/repository", () => ({
     updateSymbolLeverage = repositoryMocks.updateSymbolLeverage;
     loadRecentVolumeRecords = repositoryMocks.loadRecentVolumeRecords;
     persistMarketSnapshot = repositoryMocks.persistMarketSnapshot;
+    persistMinuteCandles = repositoryMocks.persistMinuteCandles;
     persistClosedMinuteCandles = repositoryMocks.persistClosedMinuteCandles;
   }
 }));
@@ -638,6 +640,16 @@ describe("ApiRuntime", () => {
       volatilityTag: "high"
     });
     expect(accepted.ok).toBe(true);
+    expect(repositoryMocks.persistMinuteCandles).toHaveBeenCalledWith([
+      expect.objectContaining({
+        openTime: Date.parse("2026-01-01T00:00:00.000Z"),
+        closeTime: Date.parse("2026-01-01T00:01:00.000Z"),
+        open: 70001,
+        high: 70001,
+        low: 70001,
+        close: 70001
+      })
+    ], "hyperliquid");
     const manualTickHistory = await runtime.getMarketHistory(20);
     expect(manualTickHistory.candles).toEqual([
       expect.objectContaining({

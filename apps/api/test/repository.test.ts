@@ -435,7 +435,7 @@ describe("TradingRepository", () => {
     expect(await repository.loadSymbolConfigMeta("ETH-USD")).toBeNull();
   });
 
-  it("updates leverage and persists closed 1m candles only", async () => {
+  it("updates leverage and persists 1m candles only", async () => {
     await repository.updateSymbolLeverage("BTC-USD", 4);
     expect(prismaMock.symbolConfig.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { symbol: "BTC-USD" }
@@ -451,7 +451,7 @@ describe("TradingRepository", () => {
     });
     expect(prismaMock.marketBookSnapshot.upsert).not.toHaveBeenCalled();
 
-    await repository.persistClosedMinuteCandles([
+    await repository.persistMinuteCandles([
       {
         id: "candle-1",
         coin: "BTC",
@@ -486,6 +486,22 @@ describe("TradingRepository", () => {
     expect(prismaMock.marketBookLevel.upsert).not.toHaveBeenCalled();
     expect(prismaMock.marketTrade.upsert).not.toHaveBeenCalled();
     expect(prismaMock.marketAssetContext.create).not.toHaveBeenCalled();
+
+    await repository.persistClosedMinuteCandles([
+      {
+        id: "candle-1b",
+        coin: "BTC",
+        interval: "1m",
+        openTime: 2000,
+        closeTime: 3000,
+        open: 2,
+        high: 3,
+        low: 1.5,
+        close: 2.5,
+        volume: 50,
+        tradeCount: 2
+      }
+    ]);
 
     await repository.persistMarketSnapshot({
       source: "hyperliquid",
@@ -523,8 +539,8 @@ describe("TradingRepository", () => {
         capturedAt: 1000
       }
     });
-    expect(prismaMock.marketCandle.upsert).toHaveBeenCalledTimes(2);
-    expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalledTimes(2);
+    expect(prismaMock.marketCandle.upsert).toHaveBeenCalledTimes(3);
+    expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalledTimes(3);
   });
 
   it("loads recent market snapshots and volume records", async () => {

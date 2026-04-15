@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AnyEventEnvelope } from "@stratium/shared";
-import type { CandlestickData, HistogramData, UTCTimestamp } from "lightweight-charts";
 import { buildWebSocketUrl } from "../api-base-url";
 import { filterCandlesToRecent24Hours } from "../market-window";
 import { getUiText } from "../i18n";
 import { fetchDashboardSnapshot, fetchOrderActivity, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
+import { buildCandlesFromMarket, buildCandlesFromTicks, buildVolumeFromMarket, buildVolumeFromTicks, mergeCandlesWithTicks } from "./chart-data";
 import { calculateMarginPreview, createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createOcoOrdersBody, createSimpleOrderBody, hasInsufficientMargin } from "./model";
 import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, OcoOrderForm, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
@@ -88,10 +88,6 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     const acceptedTicks: EnrichedTick[] = [];
 
     for (const tick of marketTicks) {
-      if (previousLast && Math.abs(tick.last - previousLast) / previousLast > 0.05) {
-        continue;
-      }
-
       const priceMoveRatio = previousLast ? Math.abs(tick.last - previousLast) / previousLast : 0;
       const spreadRatio = tick.last > 0 ? tick.spread / tick.last : 0;
       const baseVolume = 0.12 + Math.min(priceMoveRatio * 60, 0.22) + Math.min(spreadRatio * 220, 0.08);
@@ -113,68 +109,51 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   const recentMarketCandles = useMemo(() => state.market ? filterCandlesToRecent24Hours(state.market.candles) : [], [state.market]);
 
   const candles = useMemo(() => {
-    if (recentMarketCandles.length > 0) {
-      const map = new Map<number, CandlestickData<UTCTimestamp>>();
-      for (const candle of recentMarketCandles) {
-        const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
-        const existing = map.get(bucket);
-        map.set(bucket, existing ? { time: bucket, open: existing.open, high: Math.max(existing.high, candle.high), low: Math.min(existing.low, candle.low), close: candle.close } : { time: bucket, open: candle.open, high: candle.high, low: candle.low, close: candle.close });
-      }
-      return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+    const marketCandles = buildCandlesFromMarket(recentMarketCandles, selectedTimeframe.bucketMs);
+    const tickCandles = buildCandlesFromTicks(ticks, selectedTimeframe.bucketMs);
+
+    if (marketCandles.length === 0) {
+      return tickCandles;
     }
 
-    const map = new Map<number, CandlestickData<UTCTimestamp>>();
-    for (const tick of ticks) {
-      const bucket = Math.floor(new Date(tick.tickTime).getTime() / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
-      const current = map.get(bucket);
-      map.set(bucket, current ? { ...current, high: Math.max(current.high, tick.last), low: Math.min(current.low, tick.last), close: tick.last } : { time: bucket, open: tick.last, high: tick.last, low: tick.last, close: tick.last });
-    }
-    return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+    return mergeCandlesWithTicks(marketCandles, tickCandles);
   }, [recentMarketCandles, selectedTimeframe.bucketMs, ticks]);
 
   const volume = useMemo(() => {
     if (recentMarketCandles.length > 0) {
-      const map = new Map<number, HistogramData<UTCTimestamp>>();
-      for (const candle of recentMarketCandles) {
-        const bucket = Math.floor(candle.openTime / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
-        const existing = map.get(bucket);
-        const value = Number((((existing?.value as number | undefined) ?? 0) + candle.volume).toFixed(4));
-        map.set(bucket, { time: bucket, value, color: candle.close >= candle.open ? "#2dd4bf88" : "#f8717188" });
-      }
-      return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+      return buildVolumeFromMarket(recentMarketCandles, selectedTimeframe.bucketMs);
     }
 
-    const map = new Map<number, HistogramData<UTCTimestamp>>();
-    for (const tick of ticks) {
-      const bucket = Math.floor(new Date(tick.tickTime).getTime() / selectedTimeframe.bucketMs) * (selectedTimeframe.bucketMs / 1000) as UTCTimestamp;
-      const current = map.get(bucket);
-      const next = Number((((current?.value as number | undefined) ?? 0) + tick.syntheticVolume).toFixed(4));
-      map.set(bucket, { time: bucket, value: next, color: tick.aggressorSide === "buy" ? "#2dd4bf88" : "#f8717188" });
-    }
-    return [...map.values()].sort((left, right) => Number(left.time) - Number(right.time));
+    return buildVolumeFromTicks(ticks, selectedTimeframe.bucketMs);
   }, [recentMarketCandles, selectedTimeframe.bucketMs, ticks]);
 
   const stats = useMemo(() => {
+    const lastCandle = candles[candles.length - 1];
+
     if (state.market?.assetCtx) {
-      const reference = state.market.assetCtx.prevDayPrice ?? recentMarketCandles[0]?.open;
-      const last = state.market.assetCtx.markPrice ?? state.market.markPrice ?? state.latestTick?.last;
+      const reference = state.market.assetCtx.prevDayPrice ?? candles[0]?.open;
+      const last = state.latestTick?.last ?? lastCandle?.close ?? state.market.assetCtx.markPrice ?? state.market.markPrice;
       return {
         last,
         change: last && reference ? ((last - reference) / reference) * 100 : undefined,
-        low: recentMarketCandles.length > 0 ? Math.min(...recentMarketCandles.map((candle) => candle.low)) : undefined,
-        high: recentMarketCandles.length > 0 ? Math.max(...recentMarketCandles.map((candle) => candle.high)) : undefined
+        low: candles.length > 0 ? Math.min(...candles.map((candle) => candle.low)) : undefined,
+        high: candles.length > 0 ? Math.max(...candles.map((candle) => candle.high)) : undefined
       };
     }
 
-    if (!ticks.length) {
+    if (!candles.length) {
       return { last: undefined, change: undefined, low: undefined, high: undefined };
     }
 
-    const prices = ticks.map((tick) => tick.last);
-    const first = prices[0] ?? 0;
-    const last = prices[prices.length - 1];
-    return { last, change: first ? ((last - first) / first) * 100 : 0, low: Math.min(...prices), high: Math.max(...prices) };
-  }, [recentMarketCandles, state.latestTick?.last, state.market?.assetCtx, state.market?.markPrice, ticks]);
+    const first = candles[0]?.open ?? 0;
+    const last = lastCandle?.close;
+    return {
+      last,
+      change: first && last ? ((last - first) / first) * 100 : 0,
+      low: Math.min(...candles.map((candle) => candle.low)),
+      high: Math.max(...candles.map((candle) => candle.high))
+    };
+  }, [candles, state.latestTick?.last, state.market?.assetCtx, state.market?.markPrice]);
 
   const syntheticBook = useMemo(() => {
     const mid = state.latestTick?.last ?? 100;

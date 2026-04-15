@@ -94,6 +94,11 @@ const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
 };
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
 const DEFAULT_EXCHANGE = "hyperliquid";
+const HIDDEN_BATCH_JOB_IDS: BatchJobDefinition["id"][] = [
+  "db-bootstrap",
+  "batch-clear-kline",
+  "batch-import-hl-day"
+];
 
 export function AdminConsole({
   apiBaseUrl,
@@ -150,6 +155,10 @@ export function AdminConsole({
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
   const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
   const switchSymbolJobId: BatchJobDefinition["id"] = "batch-switch-active-symbol";
+  const visibleJobs = useMemo(
+    () => jobs.filter((job) => !HIDDEN_BATCH_JOB_IDS.includes(job.id)),
+    [jobs]
+  );
   const exchangeSelectOptions = useMemo(() => {
     const options = [...new Set(symbolOptions.map((entry) => entry.source))]
       .map((value) => ({ value, label: value }));
@@ -903,14 +912,14 @@ export function AdminConsole({
           />
         </div>
         <div style={{ marginTop: 10, color: "#7e97a5", fontSize: 12 }}>
-          {jobs.some((job) => job.id === refreshJobId) ? "Refresh Hyperliquid Day always uses the latest 24 hours." : ""}
+          {visibleJobs.some((job) => job.id === refreshJobId) ? "Refresh Hyperliquid Day always uses the latest 24 hours." : ""}
         </div>
       </section>
 
       <section style={panel}>
         <div style={panelTitle}>{ui.admin.batchJobs}</div>
         <div style={{ display: "grid", gap: 12 }}>
-          {jobs.map((job) => (
+          {visibleJobs.map((job) => (
             <div key={job.id} style={jobCard}>
               <div>
                 <strong>{job.label}</strong>

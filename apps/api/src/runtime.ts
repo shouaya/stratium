@@ -522,8 +522,7 @@ export class ApiRuntime {
     );
 
     if (result.ok) {
-      this.marketRuntime.ingestManualTick(tick);
-      this.broadcast();
+      await this.marketRuntime.ingestManualTick(tick);
     }
 
     return result;

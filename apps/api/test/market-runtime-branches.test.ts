@@ -39,6 +39,7 @@ describe("MarketRuntime branch coverage", () => {
     const repository = {
       loadRecentMarketSnapshot: vi.fn(),
       loadRecentVolumeRecords: vi.fn(),
+      persistMinuteCandles: vi.fn(async () => undefined),
       persistClosedMinuteCandles: vi.fn(async () => undefined)
     };
     const onLiveTick = vi.fn(async () => undefined);
@@ -256,12 +257,12 @@ describe("MarketRuntime branch coverage", () => {
     expect(clientState.instances[0]?.close).toHaveBeenCalled();
   });
 
-  it("projects manual ticks into the live book and current candle", () => {
+  it("projects manual ticks into the live book, current candle, and persisted minute candles", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T12:00:30.000Z"));
-    const { runtime, onBroadcast } = makeRuntime();
+    const { runtime, onBroadcast, repository } = makeRuntime();
 
-    runtime.ingestManualTick({
+    await runtime.ingestManualTick({
       symbol: "BTC-USD",
       bid: 100,
       ask: 102,
@@ -270,7 +271,7 @@ describe("MarketRuntime branch coverage", () => {
       tickTime: "2026-04-09T12:00:30.000Z",
       volatilityTag: "manual"
     });
-    runtime.ingestManualTick({
+    await runtime.ingestManualTick({
       symbol: "BTC-USD",
       bid: 101,
       ask: 103,
@@ -301,5 +302,15 @@ describe("MarketRuntime branch coverage", () => {
         tradeCount: 2
       })
     ]);
+    expect(repository.persistMinuteCandles).toHaveBeenCalledTimes(2);
+    expect(repository.persistMinuteCandles).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        openTime: Date.parse("2026-04-09T12:00:00.000Z"),
+        close: 102,
+        high: 102,
+        low: 101,
+        tradeCount: 2
+      })
+    ], "hyperliquid");
   });
 });

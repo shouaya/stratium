@@ -552,7 +552,7 @@ export class TradingRepository {
     });
   }
 
-  async persistClosedMinuteCandles(
+  async persistMinuteCandles(
     candles: HyperliquidCandle[],
     source = "hyperliquid"
   ): Promise<void> {
@@ -605,6 +605,13 @@ export class TradingRepository {
     if (operations.length > 0) {
       await Promise.allSettled(operations);
     }
+  }
+
+  async persistClosedMinuteCandles(
+    candles: HyperliquidCandle[],
+    source = "hyperliquid"
+  ): Promise<void> {
+    await this.persistMinuteCandles(candles, source);
   }
 
   async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {

@@ -211,7 +211,7 @@ export class MarketRuntime {
     };
   }
 
-  ingestManualTick(tick: MarketTick): void {
+  async ingestManualTick(tick: MarketTick): Promise<void> {
     const tickTime = Date.parse(tick.tickTime);
     const capturedAt = Number.isFinite(tickTime) ? tickTime : Date.now();
     const intervalMs = resolveIntervalMs(this.activeCandleInterval);
@@ -270,6 +270,12 @@ export class MarketRuntime {
         capturedAt
       }
     };
+
+    try {
+      await this.options.repository.persistMinuteCandles([nextCandle], this.marketData.source);
+    } catch (error: unknown) {
+      this.options.logger.error({ error }, "Failed to persist manual market candle");
+    }
 
     this.options.onBroadcast();
   }
