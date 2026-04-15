@@ -57,7 +57,12 @@ const main = async () => {
 
   try {
     const symbolConfig = await prisma.symbolConfig.findUnique({
-      where: { symbol: options.symbol }
+      where: {
+        source_symbol: {
+          source: options.exchange,
+          symbol: options.symbol
+        }
+      }
     });
 
     if (!symbolConfig) {

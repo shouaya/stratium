@@ -1,24 +1,24 @@
 import type { FastifyInstance } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
-import { HyperliquidBotAuth } from "./hyperliquid-bot-auth.js";
 import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "./hyperliquid-compat.js";
-import { HyperliquidExchangeCompat } from "./hyperliquid-exchange.js";
-import { HyperliquidPrivateWsHub } from "./hyperliquid-private-ws.js";
 import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js";
+import { PlatformBotAuth } from "./platform-bot-auth.js";
+import { PlatformExchangeService } from "./platform-exchange.js";
+import { PlatformPrivateWsHub } from "./platform-private-ws.js";
 import type { ApiRuntime } from "./runtime.js";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
   const exchangeCompat = "getNextTriggerOrderOid" in runtime
-    ? new HyperliquidExchangeCompat({
+    ? new PlatformExchangeService({
       getNextTriggerOrderOid: (base) => runtime.getNextTriggerOrderOid(base),
       upsertTriggerOrderHistory: (input) => runtime.upsertTriggerOrderHistory(input),
       listTriggerOrderHistory: (accountId) => runtime.listTriggerOrderHistory(accountId),
       listPendingTriggerOrders: () => runtime.listPendingTriggerOrders(),
       findTriggerOrder: (accountId, oidOrCloid) => runtime.findTriggerOrder(accountId, oidOrCloid)
     })
-    : new HyperliquidExchangeCompat();
-  const botAuth = new HyperliquidBotAuth();
-  const privateWsHub = new HyperliquidPrivateWsHub({
+    : new PlatformExchangeService();
+  const botAuth = new PlatformBotAuth();
+  const privateWsHub = new PlatformPrivateWsHub({
     getOrders: (accountId) => runtime.getOrders(accountId),
     getFillHistoryEvents: (accountId) => runtime.getFillHistoryEvents(accountId),
     getEventStore: (accountId) => runtime.getEventStore(accountId)
@@ -292,7 +292,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const query = request.query as { limit?: string; interval?: string; coin?: string };
     const limit = Number(query.limit ?? 500);
     const interval = query.interval ?? runtime.getHyperliquidCandleInterval();
-    const coin = query.coin ?? runtime.getHyperliquidCoin();
+    const coin = query.coin ?? runtime.getActiveCoin?.() ?? runtime.getHyperliquidCoin();
 
     return runtime.getMarketVolume(limit, interval, coin);
   });
@@ -803,7 +803,10 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       runtime.addSocket(socket, session);
     });
 
-    instance.get("/ws-hyperliquid", { websocket: true }, (socket, request) => {
+    const registerPlatformPrivateSocket = (
+      socket: { close(): void; on?(event: "message", listener: (message: unknown) => void): void; send(message: string): void },
+      request: { headers: Record<string, string | string[] | undefined>; query?: unknown }
+    ) => {
       const resolved = resolveFrontendAccount({
         headers: request.headers,
         query: request.query,
@@ -831,6 +834,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       socket.on?.("message", (message: unknown) => {
         privateWsHub.handleMessage(socket, String(message));
       });
+    };
+
+    instance.get("/ws-hyperliquid", { websocket: true }, (socket, request) => {
+      registerPlatformPrivateSocket(socket, request);
+    });
+
+    instance.get("/ws-private", { websocket: true }, (socket, request) => {
+      registerPlatformPrivateSocket(socket, request);
     });
   });
 };

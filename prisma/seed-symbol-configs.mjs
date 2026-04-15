@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 
 const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 const HYPERLIQUID_SOURCE = "hyperliquid";
+const OKX_SOURCE = "okx";
 const DEFAULT_QUOTE_ASSET = "USDC";
 const DEFAULT_CONTRACT_TYPE = "perp";
 const DEFAULT_CONTRACT_MULTIPLIER = 1;
@@ -12,6 +13,12 @@ const DEFAULT_BASE_MAKER_FEE_RATE = 0.00015;
 const DEFAULT_ENGINE_MAINTENANCE_MARGIN_RATE = 0.05;
 const DEFAULT_ENGINE_BASE_SLIPPAGE_BPS = 5;
 const DEFAULT_SYMBOL_WHITELIST = ["BTC", "ETH", "SOL", "SUI", "HYPE"];
+const OKX_LINEAR_SWAP_SYMBOLS = {
+  BTC: { marketSymbol: "BTC-USDT-SWAP", szDecimals: 3, maxLeverage: 50, quoteAsset: "USDT" },
+  ETH: { marketSymbol: "ETH-USDT-SWAP", szDecimals: 2, maxLeverage: 50, quoteAsset: "USDT" },
+  SOL: { marketSymbol: "SOL-USDT-SWAP", szDecimals: 1, maxLeverage: 20, quoteAsset: "USDT" },
+  SUI: { marketSymbol: "SUI-USDT-SWAP", szDecimals: 0, maxLeverage: 20, quoteAsset: "USDT" }
+};
 
 async function fetchMeta() {
   const response = await fetch(HYPERLIQUID_INFO_URL, {
@@ -40,6 +47,7 @@ function mapUniverseToConfig(universeItem, assetIndex, syncedAt) {
     assetIndex,
     coin,
     symbol: `${coin}-USD`,
+    marketSymbol: coin,
     quoteAsset: DEFAULT_QUOTE_ASSET,
     contractType: DEFAULT_CONTRACT_TYPE,
     contractMultiplier: DEFAULT_CONTRACT_MULTIPLIER,
@@ -87,12 +95,26 @@ async function main() {
     }
   });
 
+  await prisma.symbolConfig.deleteMany({
+    where: {
+      source: OKX_SOURCE,
+      coin: {
+        notIn: whitelist
+      }
+    }
+  });
+
   for (const universeItem of filteredUniverse) {
     const assetIndex = meta.universe.findIndex((item) => item.name === universeItem.name);
     const config = mapUniverseToConfig(universeItem, assetIndex, syncedAt);
 
     await prisma.symbolConfig.upsert({
-      where: { symbol: config.symbol },
+      where: {
+        source_symbol: {
+          source: config.source,
+          symbol: config.symbol
+        }
+      },
       update: config,
       create: config
     });
@@ -100,7 +122,77 @@ async function main() {
     upserted += 1;
   }
 
+  let okxUpserted = 0;
+  for (const [index, coin] of whitelist.entries()) {
+    const okxConfig = OKX_LINEAR_SWAP_SYMBOLS[coin];
+    if (!okxConfig) {
+      continue;
+    }
+
+    await prisma.symbolConfig.upsert({
+      where: {
+        source_symbol: {
+          source: OKX_SOURCE,
+          symbol: `${coin}-USD`
+        }
+      },
+      update: {
+        source: OKX_SOURCE,
+        assetIndex: index,
+        coin,
+        symbol: `${coin}-USD`,
+        marketSymbol: okxConfig.marketSymbol,
+        quoteAsset: okxConfig.quoteAsset,
+        contractType: "linear-perp",
+        contractMultiplier: DEFAULT_CONTRACT_MULTIPLIER,
+        szDecimals: okxConfig.szDecimals,
+        maxPriceDecimals: 6,
+        maxLeverage: okxConfig.maxLeverage,
+        marginTableId: 1,
+        onlyIsolated: false,
+        marginMode: "cross",
+        isDelisted: false,
+        isActive: true,
+        baseTakerFeeRate: DEFAULT_BASE_TAKER_FEE_RATE,
+        baseMakerFeeRate: DEFAULT_BASE_MAKER_FEE_RATE,
+        engineDefaultLeverage: Math.min(10, okxConfig.maxLeverage),
+        engineMaintenanceMarginRate: DEFAULT_ENGINE_MAINTENANCE_MARGIN_RATE,
+        engineBaseSlippageBps: DEFAULT_ENGINE_BASE_SLIPPAGE_BPS,
+        enginePartialFillEnabled: false,
+        lastSyncedAt: syncedAt
+      },
+      create: {
+        source: OKX_SOURCE,
+        assetIndex: index,
+        coin,
+        symbol: `${coin}-USD`,
+        marketSymbol: okxConfig.marketSymbol,
+        quoteAsset: okxConfig.quoteAsset,
+        contractType: "linear-perp",
+        contractMultiplier: DEFAULT_CONTRACT_MULTIPLIER,
+        szDecimals: okxConfig.szDecimals,
+        maxPriceDecimals: 6,
+        maxLeverage: okxConfig.maxLeverage,
+        marginTableId: 1,
+        onlyIsolated: false,
+        marginMode: "cross",
+        isDelisted: false,
+        isActive: true,
+        baseTakerFeeRate: DEFAULT_BASE_TAKER_FEE_RATE,
+        baseMakerFeeRate: DEFAULT_BASE_MAKER_FEE_RATE,
+        engineDefaultLeverage: Math.min(10, okxConfig.maxLeverage),
+        engineMaintenanceMarginRate: DEFAULT_ENGINE_MAINTENANCE_MARGIN_RATE,
+        engineBaseSlippageBps: DEFAULT_ENGINE_BASE_SLIPPAGE_BPS,
+        enginePartialFillEnabled: false,
+        lastSyncedAt: syncedAt
+      }
+    });
+
+    okxUpserted += 1;
+  }
+
   console.log(`Seeded ${upserted} Hyperliquid symbol configs at ${syncedAt.toISOString()}.`);
+  console.log(`Seeded ${okxUpserted} OKX symbol configs at ${syncedAt.toISOString()}.`);
   console.log(`Whitelist: ${whitelist.join(", ")}`);
   console.log("Source alignment:");
   console.log("- meta universe -> assetIndex, coin, szDecimals, maxLeverage, marginTableId, onlyIsolated, marginMode, isDelisted");

@@ -1,7 +1,7 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
 import type { PlatformSettingsView } from "./auth.js";
 import type { BatchJobExecution } from "./batch-job-runner.js";
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
+import type { MarketSnapshot } from "./market-data.js";
 import type { SymbolConfigState } from "./market-runtime.js";
 
 export interface TradingStateLike {
@@ -20,7 +20,7 @@ export interface BatchJobPayload {
 interface RuntimePayloadInput {
   state: TradingStateLike;
   events: AnyEventEnvelope[];
-  market: HyperliquidMarketSnapshot;
+  market: MarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
   batch: BatchJobPayload;
@@ -33,7 +33,7 @@ export interface StatePayload {
   position: unknown;
   latestTick?: unknown;
   events: AnyEventEnvelope[];
-  market: HyperliquidMarketSnapshot;
+  market: MarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
   batch: BatchJobPayload;
@@ -43,7 +43,7 @@ export interface ReplayPayload {
   sessionId: string;
   events: AnyEventEnvelope[];
   state: TradingStateLike;
-  market: HyperliquidMarketSnapshot;
+  market: MarketSnapshot;
   platform: PlatformSettingsView;
   batch: BatchJobPayload;
 }
@@ -61,7 +61,7 @@ export interface SocketBootstrapPayload {
   type: "bootstrap";
   state: TradingStateLike;
   events: AnyEventEnvelope[];
-  market: HyperliquidMarketSnapshot;
+  market: MarketSnapshot;
   platform: PlatformSettingsView;
   batch: BatchJobPayload;
 }
@@ -70,7 +70,7 @@ export interface SocketEventsPayload {
   type: "events";
   events: AnyEventEnvelope[];
   state: TradingStateLike;
-  market: HyperliquidMarketSnapshot;
+  market: MarketSnapshot;
   symbolConfig: SymbolConfigState;
   platform: PlatformSettingsView;
   batch: BatchJobPayload;
@@ -93,7 +93,7 @@ export const createReplayPayload = (
   sessionId: string,
   state: TradingStateLike,
   events: AnyEventEnvelope[],
-  market: HyperliquidMarketSnapshot,
+  market: MarketSnapshot,
   platform: PlatformSettingsView,
   batch: BatchJobPayload
 ): ReplayPayload => ({
@@ -124,7 +124,7 @@ export const createPositionReplayPayload = (
 export const createSocketBootstrapPayload = (
   state: TradingStateLike,
   events: AnyEventEnvelope[],
-  market: HyperliquidMarketSnapshot,
+  market: MarketSnapshot,
   platform: PlatformSettingsView,
   batch: BatchJobPayload
 ): SocketBootstrapPayload => ({
@@ -139,7 +139,7 @@ export const createSocketBootstrapPayload = (
 export const createSocketEventsPayload = (
   state: TradingStateLike,
   events: AnyEventEnvelope[],
-  market: HyperliquidMarketSnapshot,
+  market: MarketSnapshot,
   symbolConfig: SymbolConfigState,
   platform: PlatformSettingsView,
   batch: BatchJobPayload

@@ -539,7 +539,7 @@ export class TradingRuntime {
       await this.persistState(runtime, []);
     }
 
-    await this.options.repository.updateSymbolLeverage(symbolConfigState.symbol, leverage);
+    await this.options.repository.updateSymbolLeverage(symbolConfigState.symbol, leverage, symbolConfigState.source);
 
     return {
       ...symbolConfigState,

@@ -487,8 +487,10 @@ describe("ApiRuntime", () => {
       partialFillEnabled: false
     });
     repositoryMocks.loadSymbolConfigMeta.mockResolvedValue({
+      source: "hyperliquid",
       symbol: "BTC-USD",
       coin: "BTC",
+      marketSymbol: "BTC",
       leverage: 7,
       maxLeverage: 25,
       szDecimals: 5,
@@ -504,6 +506,8 @@ describe("ApiRuntime", () => {
     expect(runtime.getEventStore()).toEqual(persistedEvents);
     expect(runtime.getMarketData()).toEqual(marketSnapshot);
     expect(runtime.getSymbolConfigState()).toEqual({
+      source: "hyperliquid",
+      marketSymbol: "BTC",
       symbol: "BTC-USD",
       coin: "BTC",
       leverage: 7,
@@ -551,7 +555,7 @@ describe("ApiRuntime", () => {
 
     await runtime.updateLeverage("BTC-USD", 4);
 
-    expect(repositoryMocks.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 4);
+    expect(repositoryMocks.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 4, "hyperliquid");
     expect(repositoryMocks.persistState).toHaveBeenCalled();
     expect(socket.send).toHaveBeenCalled();
     expect(runtime.getSymbolConfigState().leverage).toBe(4);
@@ -754,7 +758,7 @@ describe("ApiRuntime", () => {
       interval: "5m",
       records: [{ id: "vol-1" }]
     });
-    expect(repositoryMocks.loadRecentVolumeRecords).toHaveBeenCalledWith("ETH", "5m", 99);
+    expect(repositoryMocks.loadRecentVolumeRecords).toHaveBeenCalledWith("ETH", "5m", 99, "hyperliquid");
   });
 
   it("returns live market history when no persisted snapshot is available", async () => {
@@ -1082,6 +1086,7 @@ describe("ApiRuntime", () => {
       getOrders: vi.fn(() => [{ id: "ord_1" }]),
       getOrderByClientOrderId: vi.fn(() => ({ id: "ord_1", clientOrderId: "0xabc" })),
       cancelAllOpenOrders: vi.fn(async () => [{ orderId: "ord_1" }]),
+      getSessionStartedAt: vi.fn(() => "2026-04-09T00:00:00.000Z"),
       getPrimaryAccountId: vi.fn(() => "paper-account-1"),
       getReplayState: vi.fn(() => ({ nextSequence: 2 })),
       getReplayData: vi.fn(async () => ({
@@ -1160,6 +1165,7 @@ describe("ApiRuntime", () => {
     expect(runtime.getMarketData()).toEqual({ markPrice: 70000 });
     expect(runtime.getHyperliquidCoin()).toBe("BTC");
     expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
+    expect(runtime.getSessionStartedAt("paper-account-1")).toBe("2026-04-09T00:00:00.000Z");
     expect(runtime.getAccountIds()).toEqual(["paper-account-1"]);
     expect(runtime.getOrders("paper-account-1")).toEqual([{ id: "ord_1" }]);
     expect(runtime.getOrderByClientOrderId("paper-account-1", "0xabc")).toEqual({ id: "ord_1", clientOrderId: "0xabc" });
@@ -1211,6 +1217,7 @@ describe("ApiRuntime", () => {
     expect(await runtime.runBatchJob("db-bootstrap")).toEqual({ executionId: "exec-1" });
     expect(await runtime.listRunningBatchJobs()).toEqual([{ executionId: "exec-1" }]);
     expect(await runtime.getBatchJobExecution("exec-1")).toEqual({ executionId: "exec-1" });
+    expect(await runtime.listAvailableSymbolConfigMeta()).toEqual([]);
     expect(await runtime.getReplayPayload("paper-account-1", "session-paper-a-btc-usdccount-1-btc-usd")).toMatchObject({
       sessionId: "session-paper-a-btc-usdccount-1-btc-usd",
       state: { simulationSessionId: "session-paper-a-btc-usdccount-1-btc-usd", nextSequence: 2 },
@@ -1234,6 +1241,80 @@ describe("ApiRuntime", () => {
     const socket = { send: vi.fn(), on: vi.fn() };
     runtime.removeSocket(socket);
     expect(privateRuntime.webSocketHub.removeSocket).toHaveBeenCalledWith(socket);
+  });
+
+  it("switches active symbols through maintenance mode and rolls settings back on failure", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    const privateRuntime = runtime as never;
+
+    privateRuntime.platformSettings = {
+      platformName: "Desk",
+      platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
+      allowFrontendTrading: true,
+      allowManualTicks: true
+    };
+    privateRuntime.repository = {
+      loadSymbolConfigMeta: vi.fn(async () => ({
+        source: "okx",
+        symbol: "ETH-USD",
+        coin: "ETH",
+        marketSymbol: "ETH-USDT-SWAP",
+        leverage: 5,
+        maxLeverage: 20,
+        szDecimals: 2,
+        quoteAsset: "USDT"
+      })),
+      listPendingTriggerOrders: vi.fn(async () => [])
+    };
+    privateRuntime.tradingRuntime = {
+      getAccountIds: vi.fn(() => ["paper-account-1"]),
+      getEngineState: vi.fn(() => ({
+        position: { side: "flat", quantity: 0 },
+        orders: []
+      }))
+    };
+    privateRuntime.authRuntime = {
+      updatePlatformSettings: vi.fn(async (input: unknown) => input)
+    };
+    privateRuntime.batchJobRunner = {
+      run: vi.fn(async () => ({ executionId: "exec-2", jobId: "batch-switch-active-symbol" }))
+    };
+    privateRuntime.webSocketHub = { broadcast: vi.fn() };
+
+    await expect(runtime.runBatchJob("batch-switch-active-symbol", {
+      exchange: "OKX",
+      symbol: "eth-usd"
+    })).resolves.toEqual({ executionId: "exec-2", jobId: "batch-switch-active-symbol" });
+
+    expect(privateRuntime.authRuntime.updatePlatformSettings).toHaveBeenCalledWith(expect.objectContaining({
+      maintenanceMode: true,
+      allowFrontendTrading: false,
+      allowManualTicks: false
+    }));
+    expect(privateRuntime.batchJobRunner.run).toHaveBeenCalledWith("batch-switch-active-symbol", {
+      exchange: "okx",
+      symbol: "ETH-USD"
+    });
+
+    privateRuntime.batchJobRunner.run.mockRejectedValueOnce(new Error("runner exploded"));
+
+    await expect(runtime.runBatchJob("batch-switch-active-symbol", {
+      exchange: "okx",
+      symbol: "eth-usd"
+    })).rejects.toThrow("runner exploded");
+
+    expect(privateRuntime.authRuntime.updatePlatformSettings).toHaveBeenLastCalledWith({
+      platformName: "Desk",
+      platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: true,
+      allowFrontendTrading: false,
+      allowManualTicks: false
+    });
   });
 
   it("covers TradingRuntime edge branches directly", async () => {
@@ -1321,17 +1402,22 @@ describe("ApiRuntime", () => {
     expect((await runtime.cancelAllOpenOrders("paper-a")).length).toBe(2);
 
     await runtime.updateLeverage({
+      source: "hyperliquid",
       symbol: "BTC-USD",
       coin: "BTC",
       leverage: 10,
       maxLeverage: 20,
       szDecimals: 5
     }, 3);
-    expect(repository.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 3);
+    expect(repository.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 3, "hyperliquid");
 
     await runtime.flushPersistence();
     await runtime.setBootstrapReady(true);
     expect(repository.persistState).toHaveBeenCalled();
+    const persistCallsBeforeNewAccount = repository.persistState.mock.calls.length;
+    await runtime.ensureFrontendAccount("paper-b");
+    expect(repository.persistState.mock.calls.length).toBeGreaterThan(persistCallsBeforeNewAccount);
+    expect(repository.loadSimulationSnapshot).toHaveBeenCalledWith("session-paper-b-btc-usd");
     expect(() => runtime.getOrders("paper-missing")).toThrow("Trading account runtime paper-missing is not initialized.");
   });
 

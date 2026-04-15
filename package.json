@@ -14,9 +14,6 @@
     "seed:symbol-configs": "node prisma/seed-symbol-configs.mjs",
     "test": "pnpm -r test"
   },
-  "prisma": {
-    "seed": "node prisma/seed.mjs"
-  },
   "devDependencies": {
     "@prisma/client": "^6.19.2",
     "@types/node": "^22.13.10",

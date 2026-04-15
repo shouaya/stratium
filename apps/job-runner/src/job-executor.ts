@@ -57,6 +57,7 @@ const batchEnvFile = process.env.JOB_RUNNER_BATCH_ENV_FILE?.trim() || ".env";
 const batchComposeFile = process.env.JOB_RUNNER_BATCH_COMPOSE_FILE?.trim() || "docker-compose.batch.yml";
 const mainComposeFile = process.env.JOB_RUNNER_MAIN_COMPOSE_FILE?.trim() || "docker-compose.yml";
 const apiContainerName = process.env.JOB_RUNNER_API_CONTAINER?.trim() || "stratium-api";
+const supportedExchanges = new Set(["hyperliquid", "okx"]);
 
 const definitions: JobDefinition[] = [
   {
@@ -138,7 +139,7 @@ const ensureSafeExchange = (value: string | undefined): string => {
     throw new Error("Batch exchange must be a lowercase identifier like hyperliquid.");
   }
 
-  if (candidate !== "hyperliquid") {
+  if (!supportedExchanges.has(candidate)) {
     throw new Error(`Unsupported exchange: ${candidate}.`);
   }
 
@@ -328,6 +329,60 @@ const getContainerRunningState = async (containerName: string): Promise<boolean>
   return result.stdout.trim() === "true";
 };
 
+const buildHistoryRefreshSteps = async (exchange: string, symbol: string, coin: string, since: Date, until: Date): Promise<JobRunResult[]> => {
+  const steps: JobRunResult[] = [
+    await runBatchNode([
+      "dist/jobs/clear-market-history.js",
+      "--coin",
+      coin,
+      "--interval",
+      "1m",
+      "--source",
+      exchange,
+      "--after",
+      since.toISOString(),
+      "--before",
+      until.toISOString()
+    ])
+  ];
+
+  if (exchange === "hyperliquid") {
+    steps.push(
+      await runBatchNode([
+        "dist/jobs/import-hyperliquid-day.js",
+        "--coin",
+        coin,
+        "--interval",
+        "1m",
+        "--since",
+        since.toISOString(),
+        "--until",
+        until.toISOString()
+      ])
+    );
+    return steps;
+  }
+
+  if (exchange === "okx") {
+    steps.push(
+      await runBatchNode([
+        "dist/jobs/import-okx-history.js",
+        "--symbol",
+        symbol,
+        "--interval",
+        "1m",
+        "--since",
+        since.toISOString(),
+        "--until",
+        until.toISOString()
+      ])
+    );
+    return steps;
+  }
+
+  throw new Error(`Unsupported exchange: ${exchange}.`);
+};
+
 export class JobExecutor {
   listJobs(): JobDefinition[] {
     return definitions.filter((job) => job.adminVisible);
@@ -446,35 +501,7 @@ export class JobExecutor {
           ])
         );
 
-        steps.push(
-          await runBatchNode([
-            "dist/jobs/clear-market-history.js",
-            "--coin",
-            coin,
-            "--interval",
-            "1m",
-            "--source",
-            "hyperliquid",
-            "--after",
-            since.toISOString(),
-            "--before",
-            until.toISOString()
-          ])
-        );
-
-        steps.push(
-          await runBatchNode([
-            "dist/jobs/import-hyperliquid-day.js",
-            "--coin",
-            coin,
-            "--interval",
-            "1m",
-            "--since",
-            since.toISOString(),
-            "--until",
-            until.toISOString()
-          ])
-        );
+        steps.push(...await buildHistoryRefreshSteps(exchange, symbol, coin, since, until));
 
         if (apiWasRunning) {
           steps.push(await runDocker(["restart", apiContainerName]));

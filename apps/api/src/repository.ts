@@ -3,11 +3,11 @@ import type { AnyEventEnvelope, FillPayload, MarketTick, OrderView, PositionView
 import type { TradingEngineState } from "@stratium/trading-core";
 import type { PlatformSettingsView } from "./auth.js";
 import type {
-  HyperliquidAssetContext,
-  HyperliquidCandle,
-  HyperliquidMarketSnapshot,
-  HyperliquidTrade
-} from "./hyperliquid-market.js";
+  MarketAssetContext,
+  MarketCandle,
+  MarketSnapshot,
+  MarketTrade
+} from "./market-data.js";
 
 const prisma = new PrismaClient();
 const RECENT_MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -469,10 +469,30 @@ export class TradingRepository {
     }) as AnyEventEnvelope);
   }
 
-  async loadSymbolConfig(symbol: string): Promise<TradingSymbolConfig | null> {
-    const row = await prisma.symbolConfig.findUnique({
-      where: { symbol }
-    });
+  async loadSymbolConfig(symbol: string, source?: string): Promise<TradingSymbolConfig | null> {
+    const symbolConfigDelegate = prisma.symbolConfig as {
+      findFirst?: (args: unknown) => Promise<unknown>;
+      findUnique?: (args: unknown) => Promise<unknown>;
+    };
+    const row = (symbolConfigDelegate.findFirst
+      ? await symbolConfigDelegate.findFirst({
+        where: {
+          symbol,
+          ...(source ? { source } : {})
+        },
+        orderBy: { source: "asc" }
+      })
+      : await symbolConfigDelegate.findUnique?.({
+        where: { symbol }
+      })) as {
+        symbol: string;
+        engineDefaultLeverage: number;
+        engineMaintenanceMarginRate: { toString(): string } | number;
+        baseTakerFeeRate: { toString(): string } | number;
+        baseMakerFeeRate: { toString(): string } | number;
+        engineBaseSlippageBps: number;
+        enginePartialFillEnabled: boolean;
+      } | null | undefined;
 
     if (!row) {
       return null;
@@ -489,27 +509,52 @@ export class TradingRepository {
     };
   }
 
-  async loadSymbolConfigMeta(symbol: string): Promise<{
+  async loadSymbolConfigMeta(symbol: string, source?: string): Promise<{
     source: string;
     symbol: string;
     coin: string;
+    marketSymbol: string;
     leverage: number;
     maxLeverage: number;
     szDecimals: number;
     quoteAsset: string;
   } | null> {
-    const row = await prisma.symbolConfig.findUnique({
-      where: { symbol }
-    });
+    const symbolConfigDelegate = prisma.symbolConfig as {
+      findFirst?: (args: unknown) => Promise<unknown>;
+      findUnique?: (args: unknown) => Promise<unknown>;
+    };
+    const row = (symbolConfigDelegate.findFirst
+      ? await symbolConfigDelegate.findFirst({
+        where: {
+          symbol,
+          ...(source ? { source } : {})
+        },
+        orderBy: { source: "asc" }
+      })
+      : await symbolConfigDelegate.findUnique?.({
+        where: { symbol }
+      })) as {
+        source: string;
+        symbol: string;
+        coin: string;
+        marketSymbol: string;
+        engineDefaultLeverage: number;
+        maxLeverage: number;
+        szDecimals: number;
+        quoteAsset: string;
+      } | null | undefined;
 
     if (!row) {
       return null;
     }
 
+    const marketSymbol = row.marketSymbol ?? row.coin;
+
     return {
       source: row.source,
       symbol: row.symbol,
       coin: row.coin,
+      marketSymbol,
       leverage: row.engineDefaultLeverage,
       maxLeverage: row.maxLeverage,
       szDecimals: row.szDecimals,
@@ -521,6 +566,7 @@ export class TradingRepository {
     source: string;
     symbol: string;
     coin: string;
+    marketSymbol: string;
     leverage: number;
     maxLeverage: number;
     szDecimals: number;
@@ -535,6 +581,7 @@ export class TradingRepository {
       source: row.source,
       symbol: row.symbol,
       coin: row.coin,
+      marketSymbol: row.marketSymbol ?? row.coin,
       leverage: row.engineDefaultLeverage,
       maxLeverage: row.maxLeverage,
       szDecimals: row.szDecimals,
@@ -542,8 +589,37 @@ export class TradingRepository {
     }));
   }
 
-  async updateSymbolLeverage(symbol: string, leverage: number): Promise<void> {
-    await prisma.symbolConfig.update({
+  async updateSymbolLeverage(symbol: string, leverage: number, source?: string): Promise<void> {
+    const symbolConfigDelegate = prisma.symbolConfig as {
+      update?: (args: unknown) => Promise<unknown>;
+      updateMany?: (args: unknown) => Promise<unknown>;
+    };
+
+    if (source) {
+      await symbolConfigDelegate.update?.({
+        where: {
+          source_symbol: { source, symbol }
+        },
+        data: {
+          engineDefaultLeverage: leverage,
+          lastSyncedAt: new Date()
+        }
+      });
+      return;
+    }
+
+    if (symbolConfigDelegate.updateMany) {
+      await symbolConfigDelegate.updateMany({
+        where: { symbol },
+        data: {
+          engineDefaultLeverage: leverage,
+          lastSyncedAt: new Date()
+        }
+      });
+      return;
+    }
+
+    await symbolConfigDelegate.update?.({
       where: { symbol },
       data: {
         engineDefaultLeverage: leverage,
@@ -553,7 +629,7 @@ export class TradingRepository {
   }
 
   async persistMinuteCandles(
-    candles: HyperliquidCandle[],
+    candles: MarketCandle[],
     source = "hyperliquid"
   ): Promise<void> {
     if (candles.length === 0) {
@@ -570,7 +646,8 @@ export class TradingRepository {
       operations.push(
         prisma.marketCandle.upsert({
           where: {
-            coin_interval_openTime: {
+            source_coin_interval_openTime: {
+              source,
               coin: candle.coin,
               interval: candle.interval,
               openTime: new Date(candle.openTime)
@@ -587,7 +664,8 @@ export class TradingRepository {
       operations.push(
         prisma.marketVolumeRecord.upsert({
           where: {
-            coin_interval_bucketStart: {
+            source_coin_interval_bucketStart: {
+              source,
               coin: candle.coin,
               interval: candle.interval,
               bucketStart: new Date(candle.openTime)
@@ -608,25 +686,25 @@ export class TradingRepository {
   }
 
   async persistClosedMinuteCandles(
-    candles: HyperliquidCandle[],
+    candles: MarketCandle[],
     source = "hyperliquid"
   ): Promise<void> {
     await this.persistMinuteCandles(candles, source);
   }
 
-  async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {
+  async persistMarketSnapshot(snapshot: MarketSnapshot): Promise<void> {
     await this.persistClosedMinuteCandles(snapshot.candles, snapshot.source);
   }
 
-  async loadRecentMarketSnapshot(coin: string, interval = "1m"): Promise<HyperliquidMarketSnapshot | null> {
+  async loadRecentMarketSnapshot(coin: string, interval = "1m", source = "hyperliquid"): Promise<MarketSnapshot | null> {
     const candleWindowStart = new Date(Date.now() - RECENT_MARKET_WINDOW_MS);
     const [bookSnapshot, trades, candles, assetCtx] = await Promise.all([
       prisma.marketBookSnapshot.findFirst({
-        where: { coin, source: "hyperliquid" },
+        where: { coin, source },
         orderBy: { capturedAt: "desc" }
       }),
       prisma.marketTrade.findMany({
-        where: { coin, source: "hyperliquid" },
+        where: { coin, source },
         orderBy: { tradeTime: "desc" },
         take: 80
       }),
@@ -634,7 +712,7 @@ export class TradingRepository {
         where: {
           coin,
           interval,
-          source: "hyperliquid",
+          source,
           openTime: {
             gte: candleWindowStart
           }
@@ -643,18 +721,18 @@ export class TradingRepository {
         take: RECENT_MARKET_CANDLE_LIMIT
       }),
       prisma.marketAssetContext.findFirst({
-        where: { coin, source: "hyperliquid" },
+        where: { coin, source },
         orderBy: { capturedAt: "desc" }
       })
     ]);
     const [bids, asks] = await Promise.all([
       prisma.marketBookLevel.findMany({
-        where: { snapshotId: bookSnapshot?.id ?? "", side: "bid", source: "hyperliquid" },
+        where: { snapshotId: bookSnapshot?.id ?? "", side: "bid", source },
         orderBy: { levelIndex: "asc" },
         take: 12
       }),
       prisma.marketBookLevel.findMany({
-        where: { snapshotId: bookSnapshot?.id ?? "", side: "ask", source: "hyperliquid" },
+        where: { snapshotId: bookSnapshot?.id ?? "", side: "ask", source },
         orderBy: { levelIndex: "asc" },
         take: 12
       })
@@ -665,7 +743,7 @@ export class TradingRepository {
     }
 
     return {
-      source: "hyperliquid",
+      source,
       coin,
       connected: false,
       bestBid: bookSnapshot ? toNumber(bookSnapshot.bestBid ?? 0) || undefined : undefined,
@@ -683,7 +761,7 @@ export class TradingRepository {
       trades: trades.map((trade) => ({
         id: trade.id,
         coin: trade.coin,
-        side: trade.side as HyperliquidTrade["side"],
+        side: trade.side as MarketTrade["side"],
         price: toNumber(trade.price),
         size: toNumber(trade.size),
         time: trade.tradeTime.getTime()
@@ -715,7 +793,7 @@ export class TradingRepository {
     };
   }
 
-  async loadRecentVolumeRecords(coin: string, interval = "1m", limit = 500): Promise<Array<{
+  async loadRecentVolumeRecords(coin: string, interval = "1m", limit = 500, source = "hyperliquid"): Promise<Array<{
     id: string;
     source: string;
     coin: string;
@@ -726,7 +804,7 @@ export class TradingRepository {
     tradeCount: number;
   }>> {
     const rows = await prisma.marketVolumeRecord.findMany({
-      where: { coin, interval, source: "hyperliquid" },
+      where: { coin, interval, source },
       orderBy: { bucketStart: "asc" },
       take: Math.max(1, Math.min(limit, 2000))
     });
@@ -1182,7 +1260,7 @@ export class TradingRepository {
     };
   }
 
-  private mapMarketTrade(trade: HyperliquidTrade, source: string) {
+  private mapMarketTrade(trade: MarketTrade, source: string) {
     return {
       source,
       coin: trade.coin,
@@ -1193,7 +1271,7 @@ export class TradingRepository {
     };
   }
 
-  private mapMarketCandle(candle: HyperliquidCandle, source: string) {
+  private mapMarketCandle(candle: MarketCandle, source: string) {
     return {
       source,
       coin: candle.coin,
@@ -1209,7 +1287,7 @@ export class TradingRepository {
     };
   }
 
-  private mapMarketVolumeRecord(candle: HyperliquidCandle, source: string) {
+  private mapMarketVolumeRecord(candle: MarketCandle, source: string) {
     return {
       source,
       coin: candle.coin,
@@ -1221,7 +1299,7 @@ export class TradingRepository {
     };
   }
 
-  private mapAssetContext(assetCtx: HyperliquidAssetContext, source: string) {
+  private mapAssetContext(assetCtx: MarketAssetContext, source: string) {
     return {
       source,
       coin: assetCtx.coin,

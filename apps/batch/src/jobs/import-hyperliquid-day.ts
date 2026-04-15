@@ -225,7 +225,8 @@ const main = async () => {
     for (const candle of candles) {
       await prisma.marketCandle.upsert({
         where: {
-          coin_interval_openTime: {
+          source_coin_interval_openTime: {
+            source: "hyperliquid",
             coin: candle.s,
             interval: candle.i,
             openTime: new Date(candle.t)
@@ -262,7 +263,8 @@ const main = async () => {
 
       await prisma.marketVolumeRecord.upsert({
         where: {
-          coin_interval_bucketStart: {
+          source_coin_interval_bucketStart: {
+            source: "hyperliquid",
             coin: candle.s,
             interval: candle.i,
             bucketStart: new Date(candle.t)

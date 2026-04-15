@@ -55,4 +55,51 @@ describe("JobExecutor", () => {
     expect(dockerCalls.some((args: string[]) => args[0] === "stop")).toBe(false);
     expect(dockerCalls.some((args: string[]) => args[0] === "start")).toBe(false);
   });
+
+  it("supports okx when switching the active symbol", async () => {
+    execFileMock.mockImplementation((
+      command: string,
+      args: string[],
+      _options: unknown,
+      callback: (error: ExecFileException | null, result?: { stdout: string; stderr: string }) => void
+    ) => {
+      if (command === "docker" && args[0] === "container" && args[1] === "inspect") {
+        callback(null, { stdout: "true", stderr: "" });
+        return;
+      }
+
+      if (command === "docker" && args[0] === "restart") {
+        callback(null, { stdout: "restarted", stderr: "" });
+        return;
+      }
+
+      if (command === "docker" && args[0] === "compose") {
+        callback(null, { stdout: "ok", stderr: "" });
+        return;
+      }
+
+      callback(new Error(`Unexpected command: ${command} ${args.join(" ")}`) as ExecFileException);
+    });
+
+    const module = await import("../src/job-executor.js");
+    const executor = new module.JobExecutor();
+    const result = await executor.run("batch-switch-active-symbol", {
+      exchange: "okx",
+      symbol: "ETH-USD"
+    });
+
+    expect(result.ok).toBe(true);
+
+    const batchNodeCalls = execFileMock.mock.calls
+      .filter(([command, args]: [string, string[]]) =>
+        command === "docker"
+        && args[0] === "compose"
+        && args.includes("node")
+      )
+      .map(([, args]: [string, string[]]) => args.join(" "));
+
+    expect(batchNodeCalls.some((value: string) => value.includes("dist/jobs/switch-active-symbol.js --exchange okx --symbol ETH-USD"))).toBe(true);
+    expect(batchNodeCalls.some((value: string) => value.includes("dist/jobs/clear-market-history.js --coin ETH --interval 1m --source okx"))).toBe(true);
+    expect(batchNodeCalls.some((value: string) => value.includes("dist/jobs/import-okx-history.js --symbol ETH-USD --interval 1m"))).toBe(true);
+  });
 });

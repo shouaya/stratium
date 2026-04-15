@@ -5,22 +5,23 @@ describe("loadApiBootstrapState", () => {
   it("loads trading and market bootstrap data from the repository", async () => {
     const repository = {
       loadSymbolConfig: vi.fn().mockResolvedValue({ symbol: "BTC-USD", leverage: 7 }),
-      loadSymbolConfigMeta: vi.fn().mockResolvedValue({ symbol: "BTC-USD", coin: "BTC", leverage: 7 }),
+      loadSymbolConfigMeta: vi.fn().mockResolvedValue({ source: "hyperliquid", symbol: "BTC-USD", coin: "BTC", marketSymbol: "BTC", leverage: 7 }),
       loadRecentMarketSnapshot: vi.fn().mockResolvedValue({ source: "hyperliquid", coin: "BTC", candles: [] })
     };
 
     const state = await loadApiBootstrapState(repository as never, {
       configuredTradingSymbol: "BTC-USD",
+      configuredExchange: "hyperliquid",
       fallbackHyperliquidCoin: "BTC",
       hyperliquidCandleInterval: "1m"
     });
 
-    expect(repository.loadSymbolConfig).toHaveBeenCalledWith("BTC-USD");
-    expect(repository.loadSymbolConfigMeta).toHaveBeenCalledWith("BTC-USD");
-    expect(repository.loadRecentMarketSnapshot).toHaveBeenCalledWith("BTC", "1m");
+    expect(repository.loadSymbolConfig).toHaveBeenCalledWith("BTC-USD", "hyperliquid");
+    expect(repository.loadSymbolConfigMeta).toHaveBeenCalledWith("BTC-USD", "hyperliquid");
+    expect(repository.loadRecentMarketSnapshot).toHaveBeenCalledWith("BTC", "1m", "hyperliquid");
     expect(state).toEqual({
       persistedSymbolConfig: { symbol: "BTC-USD", leverage: 7 },
-      persistedSymbolMeta: { symbol: "BTC-USD", coin: "BTC", leverage: 7 },
+      persistedSymbolMeta: { source: "hyperliquid", symbol: "BTC-USD", coin: "BTC", marketSymbol: "BTC", leverage: 7 },
       persistedMarketSnapshot: { source: "hyperliquid", coin: "BTC", candles: [] }
     });
   });
@@ -34,6 +35,7 @@ describe("loadApiBootstrapState", () => {
 
     const state = await loadApiBootstrapState(repository as never, {
       configuredTradingSymbol: "ETH-USD",
+      configuredExchange: "hyperliquid",
       fallbackHyperliquidCoin: "ETH",
       hyperliquidCandleInterval: "5m"
     });

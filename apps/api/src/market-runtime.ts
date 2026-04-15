@@ -1,10 +1,12 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { MarketTick } from "@stratium/shared";
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
-import { HyperliquidMarketClient } from "./hyperliquid-market.js";
+import type { MarketDataAdapter, MarketSnapshot } from "./market-data.js";
+import { createMarketDataAdapter } from "./market-adapters.js";
 import { TradingRepository } from "./repository.js";
 
 export interface SymbolConfigState {
+  source?: string;
+  marketSymbol?: string;
   symbol: string;
   coin: string;
   leverage: number;
@@ -56,8 +58,12 @@ const resolveIntervalMs = (interval: string): number => {
 interface MarketRuntimeOptions {
   logger: FastifyBaseLogger;
   repository: TradingRepository;
-  hyperliquidCoin: string;
-  hyperliquidCandleInterval: string;
+  hyperliquidCoin?: string;
+  hyperliquidCandleInterval?: string;
+  configuredExchange?: string;
+  configuredCoin?: string;
+  configuredMarketSymbol?: string;
+  marketCandleInterval?: string;
   configuredTradingSymbol: string;
   onLiveTick: (tick: MarketTick) => Promise<void>;
   onBroadcast: () => void;
@@ -66,7 +72,7 @@ interface MarketRuntimeOptions {
 export class MarketRuntime {
   private marketFlushTimer: NodeJS.Timeout | undefined;
 
-  private marketData: HyperliquidMarketSnapshot = {
+  private marketData: MarketSnapshot = {
     source: "hyperliquid",
     coin: "BTC",
     connected: false,
@@ -82,36 +88,59 @@ export class MarketRuntime {
 
   private lastFlushedClosedCandleOpenTime = 0;
 
-  private hyperliquidClient: HyperliquidMarketClient;
-  private activeHyperliquidCoin: string;
+  private marketAdapter: MarketDataAdapter;
+  private activeExchange: string;
+  private activeCoin: string;
+  private activeMarketSymbol: string;
   private readonly activeCandleInterval: string;
 
   constructor(private readonly options: MarketRuntimeOptions) {
     void options.configuredTradingSymbol;
-    this.activeHyperliquidCoin = options.hyperliquidCoin;
-    this.activeCandleInterval = options.hyperliquidCandleInterval;
-    this.hyperliquidClient = this.createHyperliquidClient(options.hyperliquidCoin);
+    this.activeExchange = options.configuredExchange ?? "hyperliquid";
+    this.activeCoin = options.configuredCoin ?? options.hyperliquidCoin ?? "BTC";
+    this.activeMarketSymbol = options.configuredMarketSymbol ?? options.configuredTradingSymbol ?? this.activeCoin;
+    this.activeCandleInterval = options.marketCandleInterval ?? options.hyperliquidCandleInterval ?? "1m";
+    this.marketAdapter = this.createMarketAdapter(this.activeExchange, this.activeCoin, this.activeMarketSymbol);
   }
 
   getMarketData() {
     return this.marketData;
   }
 
-  getHyperliquidCoin() {
-    return this.activeHyperliquidCoin;
+  getActiveExchange() {
+    return this.activeExchange;
   }
 
-  getHyperliquidCandleInterval() {
+  getActiveCoin() {
+    return this.activeCoin;
+  }
+
+  getHyperliquidCoin() {
+    return this.getActiveCoin();
+  }
+
+  getActiveCandleInterval() {
     return this.activeCandleInterval;
   }
 
-  configureActiveMarket(symbol: string, coin: string) {
-    void symbol;
-    this.hyperliquidClient.close();
-    this.activeHyperliquidCoin = coin;
+  getHyperliquidCandleInterval() {
+    return this.getActiveCandleInterval();
+  }
+
+  configureActiveMarket(input: {
+    exchange: string;
+    symbol: string;
+    coin: string;
+    marketSymbol?: string;
+  }) {
+    void input.symbol;
+    this.marketAdapter.close();
+    this.activeExchange = input.exchange;
+    this.activeCoin = input.coin;
+    this.activeMarketSymbol = input.marketSymbol ?? input.symbol;
     this.marketData = {
-      source: "hyperliquid",
-      coin,
+      source: input.exchange,
+      coin: input.coin,
       connected: false,
       book: {
         bids: [],
@@ -121,7 +150,7 @@ export class MarketRuntime {
       candles: []
     };
     this.lastFlushedClosedCandleOpenTime = 0;
-    this.hyperliquidClient = this.createHyperliquidClient(coin);
+    this.marketAdapter = this.createMarketAdapter(this.activeExchange, this.activeCoin, this.activeMarketSymbol);
   }
 
   isMarketTickInFlight() {
@@ -132,7 +161,7 @@ export class MarketRuntime {
     this.marketTickInFlight = value;
   }
 
-  setBootstrapState(symbol: string, latestPrice: number | undefined, marketData: HyperliquidMarketSnapshot | null) {
+  setBootstrapState(symbol: string, latestPrice: number | undefined, marketData: MarketSnapshot | null) {
     void symbol;
     void latestPrice;
 
@@ -152,19 +181,20 @@ export class MarketRuntime {
 
   maybeStartConfiguredSource() {
     this.startMarketFlushTimer();
-    this.hyperliquidClient.connect();
+    this.marketAdapter.connect();
   }
 
   async shutdown(): Promise<void> {
     this.stopMarketFlushTimer();
     await this.flushClosedMinuteCandles();
-    this.hyperliquidClient.close();
+    this.marketAdapter.close();
   }
 
   async getMarketHistory(limit: number) {
     const persistedMarketSnapshot = await this.options.repository.loadRecentMarketSnapshot(
-      this.activeHyperliquidCoin,
-      this.activeCandleInterval
+      this.activeCoin,
+      this.activeCandleInterval,
+      this.activeExchange
     );
     const now = Date.now();
     const sourceMarket = persistedMarketSnapshot
@@ -202,7 +232,7 @@ export class MarketRuntime {
   }
 
   async getMarketVolume(limit: number, interval: string, coin: string) {
-    const records = await this.options.repository.loadRecentVolumeRecords(coin, interval, limit);
+    const records = await this.options.repository.loadRecentVolumeRecords(coin, interval, limit, this.activeExchange);
 
     return {
       coin,
@@ -217,7 +247,7 @@ export class MarketRuntime {
     const intervalMs = resolveIntervalMs(this.activeCandleInterval);
     const openTime = Math.floor(capturedAt / intervalMs) * intervalMs;
     const closeTime = openTime + intervalMs;
-    const candleId = `${this.activeHyperliquidCoin}-${this.activeCandleInterval}-${openTime}`;
+    const candleId = `${this.activeExchange}-${this.activeCoin}-${this.activeCandleInterval}-${openTime}`;
     const existingCandle = this.marketData.candles.find((entry) => entry.id === candleId);
     const nextCandle = existingCandle
       ? {
@@ -229,7 +259,7 @@ export class MarketRuntime {
       }
       : {
         id: candleId,
-        coin: this.activeHyperliquidCoin,
+        coin: this.activeCoin,
         interval: this.activeCandleInterval,
         openTime,
         closeTime,
@@ -250,8 +280,8 @@ export class MarketRuntime {
 
     this.marketData = {
       ...this.marketData,
-      source: "hyperliquid",
-      coin: this.activeHyperliquidCoin,
+      source: this.activeExchange,
+      coin: this.activeCoin,
       bestBid: tick.bid,
       bestAsk: tick.ask,
       markPrice: tick.last,
@@ -263,7 +293,7 @@ export class MarketRuntime {
       candles: mergedCandles,
       assetCtx: {
         ...this.marketData.assetCtx,
-        coin: this.activeHyperliquidCoin,
+        coin: this.activeCoin,
         markPrice: tick.last,
         midPrice: Number(((tick.bid + tick.ask) / 2).toFixed(2)),
         oraclePrice: tick.last,
@@ -280,7 +310,7 @@ export class MarketRuntime {
     this.options.onBroadcast();
   }
 
-  private handleMarketSnapshot(snapshot: HyperliquidMarketSnapshot): void {
+  private handleMarketSnapshot(snapshot: MarketSnapshot): void {
     const now = Date.now();
     const mergedTrades = mergeByKey(
       [...snapshot.trades, ...this.marketData.trades],
@@ -296,7 +326,7 @@ export class MarketRuntime {
       .slice(-DEFAULT_LIVE_CANDLE_LIMIT);
 
     this.marketData = {
-      source: "hyperliquid",
+      source: snapshot.source,
       coin: snapshot.coin,
       connected: snapshot.connected,
       bestBid: snapshot.bestBid ?? this.marketData.bestBid,
@@ -350,13 +380,15 @@ export class MarketRuntime {
         );
       })
       .catch((error: unknown) => {
-        this.options.logger.error({ error }, "Failed to persist closed Hyperliquid candles");
+        this.options.logger.error({ error }, `Failed to persist closed ${this.marketData.source} candles`);
       });
   }
 
-  private createHyperliquidClient(coin: string): HyperliquidMarketClient {
-    return new HyperliquidMarketClient({
-      coin,
+  private createMarketAdapter(source: string, coin: string, marketSymbol: string): MarketDataAdapter {
+    return createMarketDataAdapter({
+      source: source || "hyperliquid",
+      coin: coin || "BTC",
+      marketSymbol: marketSymbol || coin || "BTC",
       candleInterval: this.activeCandleInterval,
       onTick: async (tick) => {
         if (this.marketTickInFlight) {

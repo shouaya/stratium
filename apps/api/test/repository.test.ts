@@ -14,8 +14,10 @@ const prismaMock = vi.hoisted(() => ({
     upsert: vi.fn()
   },
   symbolConfig: {
+    findFirst: vi.fn(),
     findUnique: vi.fn(),
-    update: vi.fn()
+    update: vi.fn(),
+    updateMany: vi.fn()
   },
   marketBookSnapshot: {
     upsert: vi.fn(),
@@ -330,7 +332,7 @@ describe("TradingRepository", () => {
         nextFillId: 1
       }
     });
-    prismaMock.symbolConfig.findUnique
+    prismaMock.symbolConfig.findFirst
       .mockResolvedValueOnce({
         symbol: "BTC-USD",
         engineDefaultLeverage: 8,
@@ -344,6 +346,7 @@ describe("TradingRepository", () => {
         source: "hyperliquid",
         symbol: "BTC-USD",
         coin: "BTC",
+        marketSymbol: "BTC",
         engineDefaultLeverage: 8,
         maxLeverage: 20,
         szDecimals: 5,
@@ -421,6 +424,7 @@ describe("TradingRepository", () => {
       source: "hyperliquid",
       symbol: "BTC-USD",
       coin: "BTC",
+      marketSymbol: "BTC",
       leverage: 8,
       maxLeverage: 20,
       szDecimals: 5,
@@ -429,6 +433,7 @@ describe("TradingRepository", () => {
   });
 
   it("returns null for missing symbol config rows", async () => {
+    prismaMock.symbolConfig.findFirst.mockResolvedValue(null);
     prismaMock.symbolConfig.findUnique.mockResolvedValue(null);
 
     expect(await repository.loadSymbolConfig("ETH-USD")).toBeNull();
@@ -437,7 +442,7 @@ describe("TradingRepository", () => {
 
   it("updates leverage and persists 1m candles only", async () => {
     await repository.updateSymbolLeverage("BTC-USD", 4);
-    expect(prismaMock.symbolConfig.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prismaMock.symbolConfig.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { symbol: "BTC-USD" }
     }));
 
@@ -541,6 +546,143 @@ describe("TradingRepository", () => {
     });
     expect(prismaMock.marketCandle.upsert).toHaveBeenCalledTimes(3);
     expect(prismaMock.marketVolumeRecord.upsert).toHaveBeenCalledTimes(3);
+  });
+
+  it("covers repository fallback branches for leverage updates and market mappers", async () => {
+    prismaMock.symbolConfig.updateMany = undefined as unknown as typeof prismaMock.symbolConfig.updateMany;
+    prismaMock.symbolConfig.update.mockResolvedValue({});
+
+    await repository.updateSymbolLeverage("BTC-USD", 9);
+
+    expect(prismaMock.symbolConfig.update).toHaveBeenCalledWith({
+      where: { symbol: "BTC-USD" },
+      data: expect.objectContaining({
+        engineDefaultLeverage: 9
+      })
+    });
+
+    await repository.persistMinuteCandles([]);
+    expect(prismaMock.marketCandle.upsert).not.toHaveBeenCalled();
+
+    const repo = repository as never;
+    expect(repo.mapMarketTrade({
+      id: "trade-1",
+      coin: "BTC",
+      side: "buy",
+      price: 101.5,
+      size: 0.2,
+      time: 1_000
+    }, "okx")).toEqual({
+      source: "okx",
+      coin: "BTC",
+      side: "buy",
+      price: 101.5,
+      size: 0.2,
+      tradeTime: new Date(1_000)
+    });
+    expect(repo.mapMarketCandle({
+      id: "candle-1",
+      coin: "BTC",
+      interval: "1m",
+      openTime: 2_000,
+      closeTime: 62_000,
+      open: 100,
+      high: 102,
+      low: 99,
+      close: 101,
+      volume: 10,
+      tradeCount: 3
+    }, "okx")).toEqual({
+      source: "okx",
+      coin: "BTC",
+      interval: "1m",
+      openTime: new Date(2_000),
+      closeTime: new Date(62_000),
+      open: 100,
+      high: 102,
+      low: 99,
+      close: 101,
+      volume: 10,
+      tradeCount: 3
+    });
+  });
+
+  it("supports source-scoped symbol config lookups and leverage updates", async () => {
+    prismaMock.symbolConfig.findFirst
+      .mockResolvedValueOnce({
+        symbol: "BTC-USD",
+        source: "okx",
+        marketSymbol: "BTC-USDT-SWAP",
+        coin: "BTC",
+        engineDefaultLeverage: 6,
+        engineMaintenanceMarginRate: 0.01,
+        baseTakerFeeRate: 0.0005,
+        baseMakerFeeRate: 0.0002,
+        engineBaseSlippageBps: 3,
+        enginePartialFillEnabled: false
+      })
+      .mockResolvedValueOnce({
+        symbol: "BTC-USD",
+        source: "okx",
+        marketSymbol: "BTC-USDT-SWAP",
+        coin: "BTC",
+        engineDefaultLeverage: 6,
+        maxLeverage: 20,
+        szDecimals: 3,
+        quoteAsset: "USDT"
+      });
+
+    expect(await repository.loadSymbolConfig("BTC-USD", "okx")).toMatchObject({
+      symbol: "BTC-USD",
+      leverage: 6
+    });
+    expect(prismaMock.symbolConfig.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { symbol: "BTC-USD", source: "okx" }
+    }));
+    expect(await repository.loadSymbolConfigMeta("BTC-USD", "okx")).toEqual({
+      source: "okx",
+      symbol: "BTC-USD",
+      coin: "BTC",
+      marketSymbol: "BTC-USDT-SWAP",
+      leverage: 6,
+      maxLeverage: 20,
+      szDecimals: 3,
+      quoteAsset: "USDT"
+    });
+
+    await repository.updateSymbolLeverage("BTC-USD", 7, "okx");
+    expect(prismaMock.symbolConfig.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        source_symbol: {
+          source: "okx",
+          symbol: "BTC-USD"
+        }
+      }
+    }));
+  });
+
+  it("falls back to coin when a source-scoped marketSymbol is null", async () => {
+    prismaMock.symbolConfig.findFirst.mockResolvedValue({
+      source: "okx",
+      symbol: "HYPE-USD",
+      coin: "HYPE",
+      marketSymbol: null,
+      engineDefaultLeverage: 6,
+      maxLeverage: 20,
+      szDecimals: 3,
+      quoteAsset: "USDT"
+    });
+
+    expect(await repository.loadSymbolConfigMeta("HYPE-USD", "okx")).toEqual({
+      source: "okx",
+      symbol: "HYPE-USD",
+      coin: "HYPE",
+      marketSymbol: "HYPE",
+      leverage: 6,
+      maxLeverage: 20,
+      szDecimals: 3,
+      quoteAsset: "USDT"
+    });
   });
 
   it("loads recent market snapshots and volume records", async () => {

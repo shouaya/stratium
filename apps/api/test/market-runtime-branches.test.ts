@@ -86,9 +86,17 @@ describe("MarketRuntime branch coverage", () => {
     expect(clientState.instances[0]?.connect).toHaveBeenCalledTimes(2);
     expect(clearIntervalSpy).toHaveBeenCalled();
 
-    runtime.configureActiveMarket("ETH-USD", "ETH");
+    runtime.configureActiveMarket({
+      exchange: "hyperliquid",
+      symbol: "ETH-USD",
+      coin: "ETH"
+    });
     expect(clientState.instances[0]?.close).toHaveBeenCalledOnce();
     expect(runtime.getHyperliquidCoin()).toBe("ETH");
+    expect(runtime.getActiveExchange()).toBe("hyperliquid");
+    expect(runtime.getActiveCoin()).toBe("ETH");
+    expect(runtime.getActiveCandleInterval()).toBe("1m");
+    expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
     expect(runtime.getMarketData()).toMatchObject({
       source: "hyperliquid",
       coin: "ETH",
@@ -312,5 +320,157 @@ describe("MarketRuntime branch coverage", () => {
         tradeCount: 2
       })
     ], "hyperliquid");
+  });
+
+  it("defaults legacy constructor fields and logs manual candle persistence failures", async () => {
+    const repository = {
+      loadRecentMarketSnapshot: vi.fn(),
+      loadRecentVolumeRecords: vi.fn(),
+      persistMinuteCandles: vi.fn(async () => {
+        throw new Error("write failed");
+      }),
+      persistClosedMinuteCandles: vi.fn(async () => undefined)
+    };
+    const logger = {
+      error: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      fatal: vi.fn(),
+      trace: vi.fn(),
+      child: vi.fn()
+    };
+    const runtime = new MarketRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      hyperliquidCoin: "BTC",
+      hyperliquidCandleInterval: "5m",
+      configuredTradingSymbol: "BTC-USD",
+      onLiveTick: vi.fn(async () => undefined),
+      onBroadcast: vi.fn()
+    });
+
+    expect(runtime.getActiveExchange()).toBe("hyperliquid");
+    expect(runtime.getActiveCoin()).toBe("BTC");
+    expect(runtime.getActiveCandleInterval()).toBe("5m");
+    expect(runtime.isMarketTickInFlight()).toBe(false);
+    runtime.setMarketTickInFlight(true);
+    expect(runtime.isMarketTickInFlight()).toBe(true);
+
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100,
+      ask: 101,
+      last: 100.5,
+      spread: 1,
+      tickTime: "2026-04-09T12:00:00.000Z",
+      volatilityTag: "manual"
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(expect.anything(), "Failed to persist manual market candle");
+  });
+
+  it("falls back to 1 minute buckets when the configured interval is invalid", async () => {
+    const repository = {
+      loadRecentMarketSnapshot: vi.fn(),
+      loadRecentVolumeRecords: vi.fn(),
+      persistMinuteCandles: vi.fn(async () => undefined),
+      persistClosedMinuteCandles: vi.fn(async () => undefined)
+    };
+    const runtime = new MarketRuntime({
+      logger: {
+        error: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+        fatal: vi.fn(),
+        trace: vi.fn(),
+        child: vi.fn()
+      } as never,
+      repository: repository as never,
+      configuredExchange: "hyperliquid",
+      configuredCoin: "BTC",
+      configuredMarketSymbol: "BTC",
+      marketCandleInterval: "0m",
+      configuredTradingSymbol: "BTC-USD",
+      onLiveTick: vi.fn(async () => undefined),
+      onBroadcast: vi.fn()
+    });
+
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100,
+      ask: 101,
+      last: 100.5,
+      spread: 1,
+      tickTime: "2026-04-09T12:00:15.000Z",
+      volatilityTag: "manual"
+    });
+
+    const persistedCandle = repository.persistMinuteCandles.mock.calls[0]?.[0]?.[0];
+    expect(persistedCandle.openTime).toBe(Date.parse("2026-04-09T12:00:00.000Z"));
+    expect(persistedCandle.closeTime).toBe(Date.parse("2026-04-09T12:01:00.000Z"));
+
+    const regexFallbackRuntime = new MarketRuntime({
+      logger: {
+        error: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+        fatal: vi.fn(),
+        trace: vi.fn(),
+        child: vi.fn()
+      } as never,
+      repository: repository as never,
+      configuredExchange: "hyperliquid",
+      configuredCoin: "BTC",
+      configuredMarketSymbol: "BTC",
+      marketCandleInterval: "weird",
+      configuredTradingSymbol: "BTC-USD",
+      onLiveTick: vi.fn(async () => undefined),
+      onBroadcast: vi.fn()
+    });
+    await regexFallbackRuntime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100,
+      ask: 101,
+      last: 100.5,
+      spread: 1,
+      tickTime: "2026-04-09T12:00:15.000Z",
+      volatilityTag: "manual"
+    });
+    const regexFallbackCandle = repository.persistMinuteCandles.mock.calls.at(-1)?.[0]?.[0];
+    expect(regexFallbackCandle.closeTime).toBe(Date.parse("2026-04-09T12:01:00.000Z"));
+  });
+
+  it("falls back to current time for invalid manual tick timestamps and defaults adapter inputs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:02:05.000Z"));
+    const { runtime, repository } = makeRuntime();
+    const runtimeAny = runtime as never;
+
+    await runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 200,
+      ask: 202,
+      last: 201,
+      spread: 2,
+      tickTime: "not-a-date",
+      volatilityTag: "manual"
+    });
+
+    expect(repository.persistMinuteCandles).toHaveBeenCalledWith([
+      expect.objectContaining({
+        openTime: Date.parse("2026-04-09T12:02:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:03:00.000Z"),
+        open: 201,
+        high: 201,
+        low: 201,
+        close: 201
+      })
+    ], "hyperliquid");
+
+    runtimeAny.createMarketAdapter("", "", "");
+    expect(clientState.instances.at(-1)?.options.coin).toBe("BTC");
   });
 });

@@ -53,6 +53,8 @@ export class ApiRuntime {
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.symbolConfigState = {
+      source: this.platformSettings.activeExchange,
+      marketSymbol: this.hyperliquidCoin,
       symbol: this.configuredTradingSymbol,
       coin: this.hyperliquidCoin,
       leverage: 10,
@@ -64,8 +66,10 @@ export class ApiRuntime {
     this.marketRuntime = new MarketRuntime({
       logger,
       repository: this.repository,
-      hyperliquidCoin: this.hyperliquidCoin,
-      hyperliquidCandleInterval: this.hyperliquidCandleInterval,
+      configuredExchange: this.platformSettings.activeExchange,
+      configuredCoin: this.hyperliquidCoin,
+      configuredMarketSymbol: this.hyperliquidCoin,
+      marketCandleInterval: this.hyperliquidCandleInterval,
       configuredTradingSymbol: this.configuredTradingSymbol,
       onLiveTick: async (tick) => this.tradingRuntime.handleLiveTick(tick),
       onBroadcast: () => {
@@ -116,7 +120,7 @@ export class ApiRuntime {
       throw new Error(`Active symbol is already ${normalizedSymbol} on ${normalizedExchange}.`);
     }
 
-    const symbolMeta = await this.repository.loadSymbolConfigMeta(normalizedSymbol);
+    const symbolMeta = await this.repository.loadSymbolConfigMeta(normalizedSymbol, normalizedExchange);
 
     if (!symbolMeta) {
       throw new Error(`Symbol config ${normalizedSymbol} was not found in DB.`);
@@ -196,12 +200,37 @@ export class ApiRuntime {
     return this.symbolConfigState;
   }
 
+  getActiveExchange() {
+    const marketRuntime = this.marketRuntime as MarketRuntime & {
+      getActiveExchange?: () => string;
+    };
+    return marketRuntime.getActiveExchange
+      ? marketRuntime.getActiveExchange()
+      : this.platformSettings.activeExchange;
+  }
+
+  getActiveCoin() {
+    const marketRuntime = this.marketRuntime as MarketRuntime & {
+      getActiveCoin?: () => string;
+      getHyperliquidCoin?: () => string;
+    };
+    return marketRuntime.getActiveCoin
+      ? marketRuntime.getActiveCoin()
+      : (marketRuntime.getHyperliquidCoin?.() ?? this.hyperliquidCoin);
+  }
+
   getHyperliquidCoin() {
-    return this.marketRuntime.getHyperliquidCoin();
+    return this.getActiveCoin();
   }
 
   getHyperliquidCandleInterval() {
-    return this.marketRuntime.getHyperliquidCandleInterval();
+    const marketRuntime = this.marketRuntime as MarketRuntime & {
+      getActiveCandleInterval?: () => string;
+      getHyperliquidCandleInterval?: () => string;
+    };
+    return marketRuntime.getActiveCandleInterval
+      ? marketRuntime.getActiveCandleInterval()
+      : (marketRuntime.getHyperliquidCandleInterval?.() ?? this.hyperliquidCandleInterval);
   }
 
   getPlatformSettings() {
@@ -277,6 +306,7 @@ export class ApiRuntime {
     this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
     const bootstrapState = await loadApiBootstrapState(this.repository, {
       configuredTradingSymbol: configuredSymbol,
+      configuredExchange: this.platformSettings.activeExchange,
       fallbackHyperliquidCoin: configuredCoin,
       hyperliquidCandleInterval: this.hyperliquidCandleInterval
     });
@@ -291,6 +321,8 @@ export class ApiRuntime {
 
     if (bootstrapState.persistedSymbolMeta) {
       this.symbolConfigState = {
+        source: bootstrapState.persistedSymbolMeta.source,
+        marketSymbol: bootstrapState.persistedSymbolMeta.marketSymbol,
         symbol: bootstrapState.persistedSymbolMeta.symbol,
         coin: bootstrapState.persistedSymbolMeta.coin,
         leverage: bootstrapState.persistedSymbolMeta.leverage,
@@ -306,12 +338,18 @@ export class ApiRuntime {
     } else {
       this.symbolConfigState = {
         ...this.symbolConfigState,
+        source: this.platformSettings.activeExchange,
         symbol: configuredSymbol,
         coin: configuredCoin
       };
     }
 
-    this.marketRuntime.configureActiveMarket(this.symbolConfigState.symbol, this.symbolConfigState.coin);
+    this.marketRuntime.configureActiveMarket({
+      exchange: this.platformSettings.activeExchange,
+      symbol: this.symbolConfigState.symbol,
+      coin: this.symbolConfigState.coin,
+      marketSymbol: bootstrapState.persistedSymbolMeta?.marketSymbol ?? this.symbolConfigState.coin
+    });
 
     const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
     this.marketRuntime.setBootstrapState(

@@ -181,7 +181,8 @@ model SymbolConfig {
   source                       String
   assetIndex                   Int
   coin                         String
-  symbol                       String   @unique
+  symbol                       String
+  marketSymbol                 String?
   quoteAsset                   String
   contractType                 String
   contractMultiplier           Decimal  @db.Decimal(20, 8)
@@ -205,7 +206,8 @@ model SymbolConfig {
 
   @@unique([source, assetIndex])
   @@unique([source, coin])
-  @@index([isActive, symbol])
+  @@unique([source, symbol])
+  @@index([isActive, source, symbol])
 }
 
 model MarketBookSnapshot {
@@ -265,8 +267,8 @@ model MarketCandle {
   tradeCount Int
   createdAt  DateTime @default(now())
 
-  @@unique([coin, interval, openTime])
-  @@index([coin, interval, openTime])
+  @@unique([source, coin, interval, openTime])
+  @@index([source, coin, interval, openTime])
 }
 
 model MarketVolumeRecord {
@@ -281,8 +283,8 @@ model MarketVolumeRecord {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([coin, interval, bucketStart])
-  @@index([coin, interval, bucketStart])
+  @@unique([source, coin, interval, bucketStart])
+  @@index([source, coin, interval, bucketStart])
 }
 
 model MarketAssetContext {

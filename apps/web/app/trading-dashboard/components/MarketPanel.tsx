@@ -18,6 +18,22 @@ export function MarketPanel({
   bookOnly?: boolean;
 }) {
   const { state, message, t, ui } = vm;
+  const panelShellStyle = bookOnly
+    ? {
+      ...box(),
+      position: "sticky" as const,
+      top: 88,
+      height: "calc(100dvh - 96px)",
+      display: "flex",
+      flexDirection: "column" as const,
+      minHeight: 0
+    }
+    : {
+      ...box(),
+      display: "flex",
+      flexDirection: "column" as const,
+      minHeight: 0
+    };
 
   return (
     <>
@@ -58,20 +74,20 @@ export function MarketPanel({
       ) : null}
 
       {!chartOnly ? (
-        <div style={{ ...box(), height: bookOnly ? "100%" : undefined }}>
+        <div style={panelShellStyle}>
           <div style={{ display: "flex", gap: 2, padding: 10, borderBottom: "1px solid #16262f" }}>
             <button onClick={() => vm.setBookTab("book")} style={vm.bookTab === "book" ? tabActive : tabIdle}>{t.orderBook}</button>
             <button onClick={() => vm.setBookTab("trades")} style={vm.bookTab === "trades" ? tabActive : tabIdle}>{t.trades}</button>
         </div>
         {vm.bookTab === "book" ? (
-          <div style={{ padding: 14 }}>
+          <div style={{ padding: 14, flex: 1, overflowY: "auto", minHeight: 0 }}>
             <div style={bookHead}><span>{t.price}</span><span>{t.sizeContracts}</span><span>{t.totalContracts}</span></div>
             {vm.bookWithDepth.asks.map((row: any) => <BookRow key={`a-${row.price}`} price={row.price} size={row.size} total={row.total} tone="ask" maxTotal={vm.bookWithDepth.maxAskTotal} priceDigits={vm.priceDigits} />)}
             <div style={{ display: "flex", justifyContent: "space-between", margin: "10px 0", padding: "8px 10px", borderRadius: 8, background: "#10222c", fontSize: 12 }}><span>{ui.admin.spread}</span><strong>{fmt(state.latestTick?.spread, 4)}</strong></div>
             {vm.bookWithDepth.bids.map((row: any) => <BookRow key={`b-${row.price}`} price={row.price} size={row.size} total={row.total} tone="bid" maxTotal={vm.bookWithDepth.maxBidTotal} priceDigits={vm.priceDigits} />)}
           </div>
         ) : (
-          <div style={{ padding: 14, display: "grid", gap: 8 }}>
+          <div style={{ padding: 14, display: "grid", gap: 8, flex: 1, overflowY: "auto", minHeight: 0 }}>
             <div style={bookHead}><span>{t.time}</span><span>{t.price}</span><span>{t.contracts}</span></div>
             {vm.trades.length === 0 ? <div style={{ color: "#60727f" }}>{t.noTrades}</div> : vm.trades.map((trade: any) => <div key={trade.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, opacity: trade.source === "tape" ? 0.84 : 1 }}><span>{clock(trade.time)}</span><strong style={{ color: trade.side === "sell" ? "#f87171" : "#2dd4bf" }}>{fmt(trade.price, vm.priceDigits)}</strong><span>{fmt(trade.size, 4)}</span></div>)}
           </div>

@@ -1,62 +1,19 @@
 import type { MarketTick } from "@stratium/shared";
+import type {
+  MarketAssetContext,
+  MarketBookLevel,
+  MarketCandle,
+  MarketDataAdapter,
+  MarketDataAdapterConfig,
+  MarketSnapshot,
+  MarketTrade
+} from "./market-data.js";
 
-export interface HyperliquidBookLevel {
-  price: number;
-  size: number;
-  orders: number;
-}
-
-export interface HyperliquidTrade {
-  id: string;
-  coin: string;
-  side: "buy" | "sell";
-  price: number;
-  size: number;
-  time: number;
-}
-
-export interface HyperliquidCandle {
-  id: string;
-  coin: string;
-  interval: string;
-  openTime: number;
-  closeTime: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  tradeCount: number;
-}
-
-export interface HyperliquidAssetContext {
-  coin: string;
-  markPrice?: number;
-  midPrice?: number;
-  oraclePrice?: number;
-  fundingRate?: number;
-  openInterest?: number;
-  prevDayPrice?: number;
-  dayNotionalVolume?: number;
-  capturedAt: number;
-}
-
-export interface HyperliquidMarketSnapshot {
-  source: "hyperliquid";
-  coin: string;
-  connected: boolean;
-  bestBid?: number;
-  bestAsk?: number;
-  markPrice?: number;
-  book: {
-    bids: HyperliquidBookLevel[];
-    asks: HyperliquidBookLevel[];
-    updatedAt?: number;
-  };
-  trades: HyperliquidTrade[];
-  candles: HyperliquidCandle[];
-  assetCtx?: HyperliquidAssetContext;
-}
+export type HyperliquidBookLevel = MarketBookLevel;
+export type HyperliquidTrade = MarketTrade;
+export type HyperliquidCandle = MarketCandle;
+export type HyperliquidAssetContext = MarketAssetContext;
+export type HyperliquidMarketSnapshot = MarketSnapshot & { source: "hyperliquid" };
 
 interface HyperliquidSubscriptionMessage {
   channel?: string;
@@ -118,12 +75,10 @@ const isWsCandle = (value: unknown): value is HyperliquidWsCandle => {
   return "s" in value && "i" in value && "t" in value;
 };
 
-export interface HyperliquidMarketClientOptions {
+export interface HyperliquidMarketClientOptions extends Omit<MarketDataAdapterConfig, "source"> {
   coin: string;
   candleInterval?: string;
   wsUrl?: string;
-  onTick: (tick: MarketTick) => Promise<void> | void;
-  onSnapshot: (snapshot: HyperliquidMarketSnapshot) => void;
 }
 
 const HYPERLIQUID_WS_URL = "wss://api.hyperliquid.xyz/ws";
@@ -135,7 +90,7 @@ const toLevel = (level: HyperliquidWsLevel): HyperliquidBookLevel => ({
   orders: level.n
 });
 
-export class HyperliquidMarketClient {
+export class HyperliquidMarketClient implements MarketDataAdapter {
   private readonly coin: string;
 
   private readonly candleInterval: string;
@@ -156,16 +111,16 @@ export class HyperliquidMarketClient {
 
   private lastTradePrice?: number;
 
-  private book: HyperliquidMarketSnapshot["book"] = {
+  private book: MarketSnapshot["book"] = {
     bids: [],
     asks: []
   };
 
-  private trades: HyperliquidTrade[] = [];
+  private trades: MarketTrade[] = [];
 
-  private candles: HyperliquidCandle[] = [];
+  private candles: MarketCandle[] = [];
 
-  private assetCtx?: HyperliquidAssetContext;
+  private assetCtx?: MarketAssetContext;
 
   constructor(options: HyperliquidMarketClientOptions) {
     this.coin = options.coin;
@@ -323,7 +278,7 @@ export class HyperliquidMarketClient {
 
     this.lastTradePrice = parsedTrades[0]?.price ?? this.lastTradePrice;
     this.trades = [...parsedTrades, ...this.trades]
-      .reduce<HyperliquidTrade[]>((accumulator, trade) => {
+      .reduce<MarketTrade[]>((accumulator, trade) => {
         if (accumulator.some((entry) => entry.id === trade.id)) {
           return accumulator;
         }
@@ -365,7 +320,7 @@ export class HyperliquidMarketClient {
     }
 
     this.candles = [...parsedCandles, ...this.candles]
-      .reduce<HyperliquidCandle[]>((accumulator, candle) => {
+      .reduce<MarketCandle[]>((accumulator, candle) => {
         if (accumulator.some((entry) => entry.id === candle.id)) {
           return accumulator;
         }

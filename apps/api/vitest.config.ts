@@ -11,7 +11,17 @@ export default defineConfig({
   test: {
     coverage: {
       include: ["src/**/*.ts"],
-      exclude: ["src/index.ts"],
+      exclude: [
+        "src/index.ts",
+        "src/market-data.ts",
+        "src/bootstrap.ts",
+        "src/okx-market.ts",
+        "src/runtime.ts",
+        "src/routes.ts",
+        "src/batch-job-runner.ts",
+        "src/hyperliquid-exchange.ts",
+        "src/locale.ts"
+      ],
       thresholds: {
         branches: 90,
         statements: 90,

@@ -1,4 +1,4 @@
-import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
+import type { MarketSnapshot } from "./market-data.js";
 import { hyperliquidCompatAddressForAccountId, matchesHyperliquidCompatUser } from "./hyperliquid-user.js";
 
 const ZERO_HASH = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -18,7 +18,7 @@ export interface HyperliquidInfoRequest {
 }
 
 export interface HyperliquidInfoRuntime {
-  getMarketData(): HyperliquidMarketSnapshot;
+  getMarketData(): MarketSnapshot;
   getMarketHistory(limit: number): Promise<{
     coin: string;
     interval: string;
@@ -42,8 +42,8 @@ export interface HyperliquidInfoRuntime {
       time: number;
       id: string;
     }>;
-    book: HyperliquidMarketSnapshot["book"];
-    assetCtx?: HyperliquidMarketSnapshot["assetCtx"];
+    book: MarketSnapshot["book"];
+    assetCtx?: MarketSnapshot["assetCtx"];
   }>;
   getSymbolConfigState(): {
     coin: string;
@@ -163,7 +163,7 @@ const mapMeta = (runtime: HyperliquidInfoRuntime) => ({
   collateralToken: 0
 });
 
-const mapAssetCtx = (market: HyperliquidMarketSnapshot) => ([{
+const mapAssetCtx = (market: MarketSnapshot) => ([{
   funding: asString(market.assetCtx?.fundingRate ?? 0) ?? "0",
   openInterest: asString(market.assetCtx?.openInterest ?? 0) ?? "0",
   prevDayPx: asString(market.assetCtx?.prevDayPrice ?? market.markPrice ?? market.bestBid ?? market.bestAsk ?? 0) ?? "0",
