@@ -6,6 +6,7 @@ import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type B
 import { loadApiBootstrapState } from "./bootstrap.js";
 import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime.js";
 import {
+  createPositionReplayPayload,
   createReplayPayload,
   createSocketBootstrapPayload,
   createSocketEventsPayload,
@@ -101,6 +102,26 @@ export class ApiRuntime {
     return this.tradingRuntime.getFillHistoryEvents(accountId);
   }
 
+  async getFillHistoryPayload(accountId: string) {
+    const persistedEvents = await this.repository.listFillHistoryEvents(accountId);
+    const liveEvents = this.tradingRuntime.getFillHistoryEvents(accountId);
+    const merged = new Map<string, AnyEventEnvelope>();
+
+    for (const event of [...persistedEvents, ...liveEvents]) {
+      const payload = event.payload as { fillId?: string };
+      const mergeKey = payload.fillId ? `fill:${payload.fillId}` : `event:${event.eventId}`;
+      merged.set(mergeKey, event);
+    }
+
+    return {
+      sessionId: this.tradingRuntime.getEngineState(accountId).simulationSessionId,
+      events: [...merged.values()].sort((left, right) => {
+        const timeDelta = new Date(left.occurredAt).getTime() - new Date(right.occurredAt).getTime();
+        return timeDelta !== 0 ? timeDelta : left.sequence - right.sequence;
+      })
+    };
+  }
+
   getMarketData() {
     return this.marketRuntime.getMarketData();
   }
@@ -157,11 +178,13 @@ export class ApiRuntime {
     };
   }
 
-  getReplayPayload(accountId: string, sessionId: string) {
+  async getReplayPayload(accountId: string, sessionId: string) {
+    const replay = await this.tradingRuntime.getReplayData(accountId, sessionId);
+
     return createReplayPayload(
       sessionId,
-      this.tradingRuntime.getReplayState(accountId),
-      this.tradingRuntime.getEventStore(accountId),
+      replay.state,
+      replay.events,
       this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
       this.platformSettings,
@@ -169,6 +192,19 @@ export class ApiRuntime {
         runningJobs: this.runningBatchJobs,
         lastExecution: this.lastBatchJobExecution
       }
+    );
+  }
+
+  async getPositionReplayPayload(accountId: string, fillId: string) {
+    const replay = await this.tradingRuntime.getPositionReplayData(accountId, fillId);
+
+    return createPositionReplayPayload(
+      replay.sessionId,
+      fillId,
+      replay.fills,
+      replay.events,
+      replay.marketEvents,
+      replay.state
     );
   }
 

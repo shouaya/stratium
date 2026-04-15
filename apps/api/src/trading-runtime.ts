@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick, TradingSymbolConfig } from "@stratium/shared";
+import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick, OrderView, TradingSymbolConfig } from "@stratium/shared";
 import { TradingEngine, createInitialTradingState, replayEventsFromState } from "@stratium/trading-core";
 import type { SymbolConfigState } from "./market-runtime.js";
 import { TradingRepository } from "./repository.js";
@@ -62,6 +62,20 @@ interface AccountRuntimeSlot {
   lastSnapshotMinuteKey: string | null;
 }
 
+interface PositionReplaySegment {
+  fillIds: Set<string>;
+  orderIds: Set<string>;
+  fillEvents: AnyEventEnvelope[];
+}
+
+interface PositionReplayResolution {
+  fills: AnyEventEnvelope[];
+  events: AnyEventEnvelope[];
+  marketEvents: AnyEventEnvelope[];
+  replayableEvents?: AnyEventEnvelope[];
+  state?: ReturnType<TradingEngine["getState"]>;
+}
+
 const createSessionId = (accountId: string): string => `session-${accountId}`;
 const BOOTSTRAP_SNAPSHOT_MINUTE_KEY = "bootstrap";
 const toMinuteKey = (value: string): string => value.slice(0, 16);
@@ -73,6 +87,8 @@ const resolveSnapshotMinuteKey = (
 
   return timestamp ? toMinuteKey(timestamp) : null;
 };
+const eventsToSorted = (events: AnyEventEnvelope[]): AnyEventEnvelope[] =>
+  [...events].sort((left, right) => left.sequence - right.sequence);
 
 export class TradingRuntime {
   private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
@@ -134,6 +150,262 @@ export class TradingRuntime {
 
   getReplayState(accountId: string) {
     return this.getRequiredRuntime(accountId).engine.getState();
+  }
+
+  async getReplayData(accountId: string, sessionId: string): Promise<{
+    initialState: ReturnType<typeof createInitialTradingState>;
+    state: ReturnType<TradingEngine["getState"]>;
+    events: AnyEventEnvelope[];
+  }> {
+    const runtime = this.getRequiredRuntime(accountId);
+
+    if (runtime.sessionId !== sessionId) {
+      throw new Error(`Replay session ${sessionId} is not available for account ${accountId}.`);
+    }
+
+    const persistedSnapshot = await this.options.repository.loadSimulationSnapshot(sessionId);
+    const persistedEvents = await this.options.repository.loadEvents(sessionId, persistedSnapshot?.lastSequence);
+    const engineOptions = {
+      sessionId,
+      accountId,
+      symbolConfig: this.symbolConfig ?? undefined
+    };
+    const initialState = persistedSnapshot?.state ?? createInitialTradingState(engineOptions);
+    const replay = replayEventsFromState(initialState, persistedEvents);
+
+    return {
+      initialState,
+      state: replay.state,
+      events: replay.events
+    };
+  }
+
+  async getPositionReplayData(accountId: string, fillId: string): Promise<{
+    sessionId: string;
+    fills: AnyEventEnvelope[];
+    events: AnyEventEnvelope[];
+    marketEvents: AnyEventEnvelope[];
+    state: ReturnType<TradingEngine["getState"]>;
+  }> {
+    const runtime = this.getRequiredRuntime(accountId);
+    const engineOptions = {
+      sessionId: runtime.sessionId,
+      accountId,
+      symbolConfig: this.symbolConfig ?? undefined
+    };
+    const replay = await this.getReplayData(accountId, runtime.sessionId);
+    const persistedReplay = this.resolvePositionReplay(eventsToSorted(replay.events), fillId);
+
+    if (persistedReplay) {
+      return {
+        sessionId: runtime.sessionId,
+        fills: persistedReplay.fills,
+        events: persistedReplay.events,
+        marketEvents: persistedReplay.marketEvents,
+        state: replayEventsFromState(replay.initialState, persistedReplay.replayableEvents ?? []).state
+      };
+    }
+
+    const liveReplay = this.resolvePositionReplay(eventsToSorted(runtime.eventStore), fillId);
+
+    if (liveReplay) {
+      return {
+        sessionId: runtime.sessionId,
+        fills: liveReplay.fills,
+        events: liveReplay.events,
+        marketEvents: liveReplay.marketEvents,
+        state: replayEventsFromState(
+          createInitialTradingState(engineOptions),
+          liveReplay.replayableEvents ?? []
+        ).state
+      };
+    }
+
+    const persistedHistoryReplay = await this.resolvePersistedPositionReplay(accountId, fillId);
+
+    if (!persistedHistoryReplay) {
+      throw new Error(`Completed position replay not found for fill ${fillId}.`);
+    }
+
+    return {
+      sessionId: runtime.sessionId,
+      fills: persistedHistoryReplay.fills,
+      events: persistedHistoryReplay.events,
+      marketEvents: persistedHistoryReplay.marketEvents,
+      state: persistedHistoryReplay.state ?? runtime.engine.getState()
+    };
+  }
+
+  private resolvePositionReplay(
+    events: AnyEventEnvelope[],
+    fillId: string,
+    orderSideMap = new Map<string, OrderView["side"]>()
+  ): PositionReplayResolution | null {
+    const orderMap = new Map(
+      events
+        .filter((event) => event.eventType === "OrderRequested")
+        .map((event) => [event.payload.orderId, event.payload])
+    );
+    const fillEvents = events.filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
+
+    let signedPositionQuantity = 0;
+    let activeSegment: PositionReplaySegment | null = null;
+    const segments: PositionReplaySegment[] = [];
+
+    for (const event of fillEvents) {
+      const payload = event.payload;
+      const order = orderMap.get(payload.orderId);
+      const orderSide = order?.side ?? orderSideMap.get(payload.orderId) ?? "buy";
+      const signedFillQuantity = orderSide === "buy"
+        ? payload.fillQuantity
+        : -payload.fillQuantity;
+      const nextSignedQuantity = signedPositionQuantity + signedFillQuantity;
+      const closesPosition = signedPositionQuantity !== 0
+        && (nextSignedQuantity === 0 || Math.sign(nextSignedQuantity) !== Math.sign(signedPositionQuantity));
+
+      if (!activeSegment && nextSignedQuantity !== 0) {
+        activeSegment = {
+          fillIds: new Set<string>(),
+          orderIds: new Set<string>(),
+          fillEvents: []
+        };
+      }
+
+      if (activeSegment) {
+        activeSegment.fillIds.add(payload.fillId);
+        activeSegment.orderIds.add(payload.orderId);
+        activeSegment.fillEvents.push(event);
+      }
+
+      signedPositionQuantity = nextSignedQuantity;
+
+      if (activeSegment && closesPosition) {
+        segments.push(activeSegment);
+        activeSegment = nextSignedQuantity === 0 ? null : {
+          fillIds: new Set<string>([payload.fillId]),
+          orderIds: new Set<string>([payload.orderId]),
+          fillEvents: [event]
+        };
+      }
+    }
+
+    const segment = segments.find((entry) => entry.fillIds.has(fillId));
+
+    if (!segment) {
+      return null;
+    }
+
+    const relatedOrderEvents = events.filter((event) => {
+      if (event.eventType === "MarketTickReceived" || !event.payload || typeof event.payload !== "object") {
+        return false;
+      }
+
+      return "orderId" in event.payload && segment.orderIds.has((event.payload as { orderId?: string }).orderId ?? "");
+    });
+    const sequenceFloor = Math.min(
+      segment.fillEvents[0]?.sequence ?? Number.MAX_SAFE_INTEGER,
+      ...relatedOrderEvents.map((event) => event.sequence)
+    );
+    const sequenceCeiling = segment.fillEvents[segment.fillEvents.length - 1]?.sequence ?? 0;
+    const replayableEvents = events.filter((event) => event.sequence <= sequenceCeiling);
+
+    return {
+      fills: segment.fillEvents,
+      events: events.filter((event) =>
+        event.eventType !== "MarketTickReceived"
+        && event.sequence >= sequenceFloor
+        && event.sequence <= sequenceCeiling
+      ),
+      marketEvents: events.filter((event) =>
+        event.eventType === "MarketTickReceived"
+        && event.sequence >= sequenceFloor
+        && event.sequence <= sequenceCeiling
+      ),
+      replayableEvents
+    };
+  }
+
+  private async resolvePersistedPositionReplay(accountId: string, fillId: string): Promise<PositionReplayResolution | null> {
+    const persistedFillEvents = eventsToSorted(await this.options.repository.listFillHistoryEvents(accountId));
+    if (persistedFillEvents.length === 0) {
+      return null;
+    }
+
+    const persistedOrders = await this.options.repository.listOrderHistoryViews(accountId);
+    const replay = this.resolvePositionReplay(
+      persistedFillEvents,
+      fillId,
+      new Map(persistedOrders.map((order) => [order.id, order.side]))
+    );
+
+    if (!replay) {
+      return null;
+    }
+
+    const relatedOrders = persistedOrders.filter((order) =>
+      replay.fills.some((event) => (event.payload as { orderId?: string }).orderId === order.id)
+    );
+    const syntheticOrderEvents = relatedOrders.map((order, index) => this.createSyntheticOrderRequestedEvent(order, index + 1));
+    const startAt = syntheticOrderEvents[0]?.occurredAt ?? replay.fills[0]?.occurredAt;
+    const endAt = replay.fills[replay.fills.length - 1]?.occurredAt ?? startAt;
+    const symbol = replay.fills[0]?.symbol ?? relatedOrders[0]?.symbol;
+    const marketEvents = symbol && startAt && endAt
+      ? await this.options.repository.listMarketTickEvents(symbol, startAt, endAt)
+      : [];
+    const timelineEvents = [...syntheticOrderEvents, ...replay.fills].sort((left, right) => {
+      const timeDelta = new Date(left.occurredAt).getTime() - new Date(right.occurredAt).getTime();
+      if (timeDelta !== 0) {
+        return timeDelta;
+      }
+
+      if (left.eventType === right.eventType) {
+        return left.sequence - right.sequence;
+      }
+
+      return left.eventType === "OrderRequested" ? -1 : 1;
+    }).map((event, index) => ({ ...event, sequence: index + 1 })) as AnyEventEnvelope[];
+
+    const engineState = this.getRequiredRuntime(accountId).engine.getState();
+
+    return {
+      fills: replay.fills,
+      events: timelineEvents,
+      marketEvents,
+      state: {
+        ...engineState,
+        position: {
+          ...engineState.position,
+          side: "flat",
+          quantity: 0,
+          averageEntryPrice: 0,
+          initialMargin: 0,
+          maintenanceMargin: 0,
+          liquidationPrice: 0
+        }
+      }
+    };
+  }
+
+  private createSyntheticOrderRequestedEvent(order: OrderView, sequence: number): AnyEventEnvelope {
+    return {
+      eventId: `persisted-order-${order.id}`,
+      eventType: "OrderRequested",
+      occurredAt: order.createdAt,
+      sequence,
+      simulationSessionId: `persisted-${order.accountId}`,
+      accountId: order.accountId,
+      symbol: order.symbol,
+      source: "replay",
+      payload: {
+        orderId: order.id,
+        clientOrderId: order.clientOrderId,
+        side: order.side,
+        orderType: order.orderType,
+        quantity: order.quantity,
+        limitPrice: order.limitPrice,
+        submittedAt: order.createdAt
+      }
+    };
   }
 
   async bootstrap(input: BootstrapTradingRuntimeInput): Promise<void> {

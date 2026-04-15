@@ -108,7 +108,9 @@ describe("registerRoutes", () => {
     getEngineState: vi.fn(),
     getEventStore: vi.fn(),
     getFillHistoryEvents: vi.fn(),
+    getFillHistoryPayload: vi.fn(),
     getReplayPayload: vi.fn(),
+    getPositionReplayPayload: vi.fn(),
     getMarketSimulatorState: vi.fn(),
     getSymbolConfigState: vi.fn(),
     getAdminStatePayload: vi.fn(),
@@ -224,7 +226,19 @@ describe("registerRoutes", () => {
     });
     runtime.getEventStore.mockReturnValue([]);
     runtime.getFillHistoryEvents.mockReturnValue([]);
+    runtime.getFillHistoryPayload.mockResolvedValue({
+      sessionId: "session-1",
+      events: []
+    });
     runtime.getReplayPayload.mockReturnValue({ sessionId: "session-1" });
+    runtime.getPositionReplayPayload.mockResolvedValue({
+      sessionId: "session-1",
+      fillId: "fill_1",
+      fills: [],
+      events: [],
+      marketEvents: [],
+      state: { simulationSessionId: "session-1" }
+    });
     runtime.getMarketSimulatorState.mockReturnValue({ enabled: false });
     runtime.getSymbolConfigState.mockReturnValue({
       symbol: "BTC-USD",
@@ -369,6 +383,26 @@ describe("registerRoutes", () => {
       url: "/api/replay/session-2",
       headers: { authorization: `Bearer ${frontendSession.token}` }
     })).json()).toEqual({ sessionId: "session-1" });
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fill-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).json()).toEqual({
+      sessionId: "session-1",
+      events: []
+    });
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fills/fill_1/replay",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).json()).toEqual({
+      sessionId: "session-1",
+      fillId: "fill_1",
+      fills: [],
+      events: [],
+      marketEvents: [],
+      state: { simulationSessionId: "session-1" }
+    });
   });
 
   it("serves hyperliquid-compatible info endpoints", async () => {
@@ -1284,6 +1318,11 @@ describe("registerRoutes", () => {
       method: "POST",
       url: "/api/orders/ord_1/cancel",
       payload: {}
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fills/fill_1/replay"
     })).statusCode).toBe(401);
 
     const exchangeBadPayload = await app.inject({

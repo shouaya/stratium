@@ -215,6 +215,7 @@ export type PersonalFill = {
   entryPrice: number;
   exitPrice?: number;
   realizedPnl: number;
+  closesPosition: boolean;
 };
 
 export type DashboardViewProps = {

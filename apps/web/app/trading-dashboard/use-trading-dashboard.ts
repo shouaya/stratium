@@ -529,6 +529,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       const signedFillQuantity = orderSide === "buy" ? payload.fillQuantity : -payload.fillQuantity;
       const nextSignedQuantity = signedPositionQuantity + signedFillQuantity;
       const isClosingFill = signedPositionQuantity !== 0 && Math.sign(signedPositionQuantity) !== Math.sign(signedFillQuantity);
+      const closesPosition = signedPositionQuantity !== 0
+        && (nextSignedQuantity === 0 || Math.sign(nextSignedQuantity) !== Math.sign(signedPositionQuantity));
 
       if (isClosingFill) {
         const closingQuantity = Math.min(Math.abs(signedPositionQuantity), Math.abs(signedFillQuantity));
@@ -568,7 +570,8 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
         filledAt: payload.filledAt,
         entryPrice: isClosingFill ? entryPrice : payload.fillPrice,
         exitPrice: isClosingFill ? payload.fillPrice : undefined,
-        realizedPnl
+        realizedPnl,
+        closesPosition
       });
     });
 

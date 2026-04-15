@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import {
+  type AreaData,
   ColorType,
   CrosshairMode,
   createChart,
@@ -35,7 +36,9 @@ export function CandlestickChart({
   dark = false,
   priceDigits = 4,
   position,
-  triggerOrders = []
+  triggerOrders = [],
+  chartType = "candlestick",
+  height = 360
 }: {
   data: CandlestickData<UTCTimestamp>[];
   volumeData?: HistogramData<UTCTimestamp>[];
@@ -43,11 +46,13 @@ export function CandlestickChart({
   priceDigits?: number;
   position?: PositionView | null;
   triggerOrders?: FrontendOpenOrder[];
+  chartType?: "candlestick" | "line";
+  height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick" | "Area"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const hasFitInitialContentRef = useRef(false);
@@ -122,26 +127,40 @@ export function CandlestickChart({
       }
     });
 
-    const candles = chart.addCandlestickSeries({
-      upColor: "#2dd4bf",
-      borderUpColor: "#2dd4bf",
-      wickUpColor: "#2dd4bf",
-      downColor: "#f87171",
-      borderDownColor: "#f87171",
-      wickDownColor: "#f87171"
-    });
+    const candles = chartType === "line"
+      ? chart.addAreaSeries({
+        lineColor: "#38bdf8",
+        topColor: "rgba(56, 189, 248, 0.32)",
+        bottomColor: "rgba(56, 189, 248, 0.02)",
+        lineWidth: 3,
+        priceLineVisible: true,
+        crosshairMarkerVisible: true,
+        lastValueVisible: true
+      })
+      : chart.addCandlestickSeries({
+        upColor: "#2dd4bf",
+        borderUpColor: "#2dd4bf",
+        wickUpColor: "#2dd4bf",
+        downColor: "#f87171",
+        borderDownColor: "#f87171",
+        wickDownColor: "#f87171"
+      });
 
-    const volumes = chart.addHistogramSeries({
-      priceScaleId: "",
-      base: 0
-    });
+    const volumes = chartType === "line"
+      ? null
+      : chart.addHistogramSeries({
+        priceScaleId: "",
+        base: 0
+      });
 
-    chart.priceScale("").applyOptions({
-      scaleMargins: {
-        top: 0.78,
-        bottom: 0
-      }
-    });
+    if (volumes) {
+      chart.priceScale("").applyOptions({
+        scaleMargins: {
+          top: 0.78,
+          bottom: 0
+        }
+      });
+    }
 
     chartRef.current = chart;
     candleRef.current = candles;
@@ -158,9 +177,31 @@ export function CandlestickChart({
       }
 
       const pointData = param?.seriesData
-        ? (param.seriesData.get(candles as unknown as ISeriesApi<"Candlestick">) as CandlestickData<UTCTimestamp> | undefined)
+        ? param.seriesData.get(candles as never) as CandlestickData<UTCTimestamp> | AreaData<UTCTimestamp> | undefined
         : undefined;
-      const active = pointData ?? data[data.length - 1];
+
+      if (chartType === "line") {
+        const activeLine = pointData as AreaData<UTCTimestamp> | undefined;
+        const fallback = data[data.length - 1];
+        const activeValue = activeLine?.value ?? fallback?.close;
+        const previousClose = data.length > 1 ? data[data.length - 2]?.close : undefined;
+        const change = previousClose != null && activeValue != null ? activeValue - previousClose : 0;
+        const changePct = previousClose ? (change / previousClose) * 100 : 0;
+
+        legendRef.current.style.color = change > 0
+          ? "#2dd4bf"
+          : change < 0
+            ? "#f87171"
+            : dark
+              ? "#8ca1ad"
+              : "#34545d";
+
+        const activeLabel = activeLine?.time ? formatTokyoTime(Number(activeLine.time), true) : fallback?.time ? formatTokyoTime(Number(fallback.time), true) : "";
+        legendRef.current.textContent = `${activeLabel}  Price ${formatPrice(activeValue ?? 0)}  ${change >= 0 ? "+" : ""}${formatPrice(change)} (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)`;
+        return;
+      }
+
+      const active = (pointData as CandlestickData<UTCTimestamp> | undefined) ?? data[data.length - 1];
 
       if (!active) {
         legendRef.current.textContent = "";
@@ -201,11 +242,20 @@ export function CandlestickChart({
       candleRef.current = null;
       volumeRef.current = null;
     };
-  }, [dark, priceDigits, data]);
+  }, [chartType, dark, priceDigits, data]);
 
   useEffect(() => {
-    candleRef.current?.setData(data);
-    volumeRef.current?.setData(volumeData);
+    if (chartType === "line") {
+      candleRef.current?.setData(
+        data.map((entry) => ({
+          time: entry.time,
+          value: entry.close
+        }))
+      );
+    } else {
+      candleRef.current?.setData(data);
+      volumeRef.current?.setData(volumeData);
+    }
 
     const chart = chartRef.current;
 
@@ -217,7 +267,7 @@ export function CandlestickChart({
       chart.timeScale().fitContent();
       hasFitInitialContentRef.current = true;
     }
-  }, [data, volumeData]);
+  }, [chartType, data, volumeData]);
 
   useEffect(() => {
     const candles = candleRef.current;
@@ -301,7 +351,7 @@ export function CandlestickChart({
           fontVariantNumeric: "tabular-nums"
         }}
       />
-      <div ref={containerRef} style={{ width: "100%", height: 360, borderRadius: 12, overflow: "hidden" }} />
+      <div ref={containerRef} style={{ width: "100%", height, borderRadius: 12, overflow: "hidden" }} />
     </div>
   );
 }

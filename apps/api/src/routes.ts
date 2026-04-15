@@ -298,17 +298,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       return;
     }
 
-    return {
-      sessionId: runtime.getEngineState(session.user.tradingAccountId as string).simulationSessionId,
-      events: runtime.getFillHistoryEvents(session.user.tradingAccountId as string)
-    };
+    return await runtime.getFillHistoryPayload(session.user.tradingAccountId as string);
   });
   app.get("/api/replay/:sessionId", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;
     }
-    return runtime.getReplayPayload(session.user.tradingAccountId as string, (request.params as { sessionId: string }).sessionId);
+    return await runtime.getReplayPayload(session.user.tradingAccountId as string, (request.params as { sessionId: string }).sessionId);
   });
 
   app.get("/api/order-history", async (request, reply) => {
@@ -741,6 +738,16 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     });
 
     return reply.code(202).send(result);
+  });
+
+  app.get("/api/fills/:id/replay", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    const params = request.params as { id: string };
+    return await runtime.getPositionReplayPayload(session.user.tradingAccountId as string, params.id);
   });
 
   app.register(async (instance) => {

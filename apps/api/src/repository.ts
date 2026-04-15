@@ -341,6 +341,120 @@ export class TradingRepository {
     };
   }
 
+  async listFillHistoryEvents(accountId: string): Promise<AnyEventEnvelope[]> {
+    const fills = await prisma.fill.findMany({
+      where: { accountId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+    });
+
+    if (fills.length === 0) {
+      return [];
+    }
+
+    const orders = await prisma.order.findMany({
+      where: {
+        accountId,
+        id: {
+          in: fills.map((fill) => orderRowId(accountId, fill.orderId))
+        }
+      }
+    });
+    const orderMap = new Map(
+      orders.map((order) => [order.id, order])
+    );
+    const fillIdPrefix = `${accountId}:`;
+
+    return fills.map((fill, index) => {
+      const order = orderMap.get(orderRowId(accountId, fill.orderId));
+      const fillPrice = toNumber(fill.price);
+      const fillQuantity = toNumber(fill.quantity);
+      const fee = toNumber(fill.fee);
+      const notional = fillPrice * fillQuantity;
+      const rawFillId = fill.id.startsWith(fillIdPrefix) ? fill.id.slice(fillIdPrefix.length) : fill.id;
+
+      return {
+        eventId: `persisted-${fill.id}`,
+        eventType: "OrderFilled",
+        occurredAt: fill.createdAt.toISOString(),
+        sequence: index + 1,
+        simulationSessionId: `persisted-${accountId}`,
+        accountId,
+        symbol: fill.symbol,
+        source: "system",
+        payload: {
+          orderId: fill.orderId,
+          fillId: rawFillId,
+          fillPrice,
+          fillQuantity,
+          filledQuantityTotal: fillQuantity,
+          remainingQuantity: 0,
+          slippage: toNumber(fill.slippage),
+          fee,
+          feeRate: notional > 0 ? Number((fee / notional).toFixed(8)) : 0,
+          liquidityRole: order?.orderType === "limit" ? "maker" : "taker",
+          filledAt: fill.createdAt.toISOString()
+        }
+      } as AnyEventEnvelope;
+    });
+  }
+
+  async listOrderHistoryViews(accountId: string): Promise<OrderView[]> {
+    const rows = await prisma.order.findMany({
+      where: { accountId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+    });
+
+    return rows.map((row) => ({
+      id: row.id.startsWith(`${accountId}:`) ? row.id.slice(`${accountId}:`.length) : row.id,
+      accountId: row.accountId,
+      symbol: row.symbol,
+      side: row.side as OrderView["side"],
+      orderType: row.orderType as OrderView["orderType"],
+      status: row.status as OrderView["status"],
+      quantity: toNumber(row.quantity),
+      limitPrice: row.limitPrice == null ? undefined : toNumber(row.limitPrice),
+      filledQuantity: toNumber(row.filledQuantity),
+      remainingQuantity: toNumber(row.remainingQuantity),
+      averageFillPrice: row.averageFillPrice == null ? undefined : toNumber(row.averageFillPrice),
+      rejectionCode: row.rejectionCode == null ? undefined : row.rejectionCode as OrderView["rejectionCode"],
+      rejectionMessage: row.rejectionMessage ?? undefined,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString()
+    }));
+  }
+
+  async listMarketTickEvents(symbol: string, from: string, to: string): Promise<AnyEventEnvelope[]> {
+    const rows = await prisma.marketTick.findMany({
+      where: {
+        symbol,
+        tickTime: {
+          gte: new Date(from),
+          lte: new Date(to)
+        }
+      },
+      orderBy: [{ tickTime: "asc" }, { id: "asc" }]
+    });
+
+    return rows.map((row, index) => ({
+      eventId: `persisted-market-${row.id}`,
+      eventType: "MarketTickReceived",
+      occurredAt: row.tickTime.toISOString(),
+      sequence: index + 1,
+      simulationSessionId: `persisted-market-${symbol}`,
+      accountId: "",
+      symbol: row.symbol,
+      source: "market",
+      payload: {
+        bid: toNumber(row.bid),
+        ask: toNumber(row.ask),
+        last: toNumber(row.last),
+        spread: toNumber(row.spread),
+        tickTime: row.tickTime.toISOString(),
+        volatilityTag: row.volatilityTag ?? undefined
+      }
+    }) as AnyEventEnvelope);
+  }
+
   async loadSymbolConfig(symbol: string): Promise<TradingSymbolConfig | null> {
     const row = await prisma.symbolConfig.findUnique({
       where: { symbol }

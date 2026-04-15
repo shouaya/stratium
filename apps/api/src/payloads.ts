@@ -51,6 +51,15 @@ export interface ReplayPayload {
   batch: BatchJobPayload;
 }
 
+export interface PositionReplayPayload {
+  sessionId: string;
+  fillId: string;
+  fills: AnyEventEnvelope[];
+  events: AnyEventEnvelope[];
+  marketEvents: AnyEventEnvelope[];
+  state: TradingStateLike;
+}
+
 export interface SocketBootstrapPayload {
   type: "bootstrap";
   state: TradingStateLike;
@@ -102,6 +111,22 @@ export const createReplayPayload = (
   market,
   platform,
   batch
+});
+
+export const createPositionReplayPayload = (
+  sessionId: string,
+  fillId: string,
+  fills: AnyEventEnvelope[],
+  events: AnyEventEnvelope[],
+  marketEvents: AnyEventEnvelope[],
+  state: TradingStateLike
+): PositionReplayPayload => ({
+  sessionId,
+  fillId,
+  fills,
+  events,
+  marketEvents,
+  state
 });
 
 export const createSocketBootstrapPayload = (
