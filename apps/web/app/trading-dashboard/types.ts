@@ -10,18 +10,6 @@ export type TickPayload = {
   volatilityTag?: string;
 };
 
-export type MarketSimulatorState = {
-  enabled: boolean;
-  symbol: string;
-  intervalMs: number;
-  driftBps: number;
-  volatilityBps: number;
-  anchorPrice: number;
-  lastPrice: number;
-  tickCount: number;
-  lastGeneratedAt?: string;
-};
-
 export type MarketLevel = {
   price: number;
   size: number;
@@ -38,7 +26,7 @@ export type MarketTapeTrade = {
 };
 
 export type MarketState = {
-  source: "hyperliquid" | "simulator";
+  source: "hyperliquid";
   coin: string;
   connected: boolean;
   bestBid?: number;
@@ -82,7 +70,6 @@ export type State = {
   position: PositionView | null;
   latestTick: (TickPayload & { symbol?: string }) | null;
   events: AnyEventEnvelope[];
-  simulator?: MarketSimulatorState;
   market?: MarketState;
   symbolConfig?: {
     symbol: string;

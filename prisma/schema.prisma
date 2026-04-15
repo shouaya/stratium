@@ -42,7 +42,6 @@ model PlatformSettings {
   maintenanceMode       Boolean  @default(false)
   allowFrontendTrading  Boolean  @default(true)
   allowManualTicks      Boolean  @default(true)
-  allowSimulatorControl Boolean  @default(true)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }

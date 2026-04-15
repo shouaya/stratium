@@ -71,8 +71,7 @@ const main = async () => {
         activeSymbol: options.symbol,
         maintenanceMode: false,
         allowFrontendTrading: true,
-        allowManualTicks: true,
-        allowSimulatorControl: true
+        allowManualTicks: true
       },
       create: {
         id: "platform",
@@ -82,8 +81,7 @@ const main = async () => {
         activeSymbol: options.symbol,
         maintenanceMode: false,
         allowFrontendTrading: true,
-        allowManualTicks: true,
-        allowSimulatorControl: true
+        allowManualTicks: true
       }
     });
 

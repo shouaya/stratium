@@ -125,8 +125,7 @@ describe("TradingRepository", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: false,
-      allowManualTicks: false,
-      allowSimulatorControl: false
+      allowManualTicks: false
     });
     prismaMock.appUser.findUnique.mockResolvedValueOnce({
       id: "user-1",
@@ -174,8 +173,7 @@ describe("TradingRepository", () => {
         activeSymbol: "BTC-USD",
         maintenanceMode: false,
         allowFrontendTrading: false,
-        allowManualTicks: false,
-        allowSimulatorControl: false
+        allowManualTicks: false
       });
 
     await repository.ensureDefaultAccess({
@@ -252,8 +250,7 @@ describe("TradingRepository", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: true
+      allowManualTicks: true
     });
     expect(await repository.getPlatformSettings()).toEqual({
       platformName: "Desk",
@@ -262,8 +259,7 @@ describe("TradingRepository", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: false,
-      allowManualTicks: false,
-      allowSimulatorControl: false
+      allowManualTicks: false
     });
 
     expect(await repository.updatePlatformSettings({
@@ -273,8 +269,7 @@ describe("TradingRepository", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: false,
-      allowManualTicks: false,
-      allowSimulatorControl: false
+      allowManualTicks: false
     })).toEqual({
       platformName: "Desk",
       platformAnnouncement: "Notice",
@@ -282,8 +277,7 @@ describe("TradingRepository", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: false,
-      allowManualTicks: false,
-      allowSimulatorControl: false
+      allowManualTicks: false
     });
   });
 
@@ -448,7 +442,7 @@ describe("TradingRepository", () => {
     }));
 
     await repository.persistMarketSnapshot({
-      source: "simulator",
+      source: "hyperliquid",
       coin: "BTC",
       connected: false,
       book: { bids: [], asks: [] },
@@ -1282,6 +1276,8 @@ describe("TradingRepository", () => {
   });
 
   it("covers repository nullish mapping and fallback branches", async () => {
+    prismaMock.platformSettings.findUnique.mockReset();
+    prismaMock.platformSettings.upsert.mockReset();
     prismaMock.appUser.update.mockResolvedValue({
       id: "user-3",
       username: "blank",
@@ -1310,8 +1306,7 @@ describe("TradingRepository", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: true,
       allowFrontendTrading: true,
-      allowManualTicks: false,
-      allowSimulatorControl: true
+      allowManualTicks: false
     });
     expect(await repository.getPlatformSettings()).toEqual({
       platformName: "Desk",
@@ -1320,8 +1315,7 @@ describe("TradingRepository", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: true,
       allowFrontendTrading: true,
-      allowManualTicks: false,
-      allowSimulatorControl: true
+      allowManualTicks: false
     });
 
     prismaMock.platformSettings.upsert.mockResolvedValue({
@@ -1332,8 +1326,7 @@ describe("TradingRepository", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: false
+      allowManualTicks: true
     });
     expect(await repository.updatePlatformSettings({
       platformName: "Desk",
@@ -1342,8 +1335,7 @@ describe("TradingRepository", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: false
+      allowManualTicks: true
     })).toEqual({
       platformName: "Desk",
       platformAnnouncement: "",
@@ -1351,8 +1343,7 @@ describe("TradingRepository", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: false
+      allowManualTicks: true
     });
     expect(prismaMock.platformSettings.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
       update: expect.objectContaining({

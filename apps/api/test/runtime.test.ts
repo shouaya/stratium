@@ -394,8 +394,7 @@ describe("ApiRuntime", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: true
+      allowManualTicks: true
     });
     repositoryMocks.listFrontendUsers.mockResolvedValue([{
       id: "frontend-user-1",
@@ -435,7 +434,6 @@ describe("ApiRuntime", () => {
     batchJobStateMocks.getRunningJobs.mockReturnValue([]);
     batchJobStateMocks.getLastExecution.mockReturnValue(null);
     process.env.MARKET_SOURCE = "hyperliquid";
-    process.env.ENABLE_MARKET_SIMULATOR = "true";
     process.env.HYPERLIQUID_COIN = "BTC";
     process.env.HYPERLIQUID_CANDLE_INTERVAL = "1m";
     process.env.TRADING_SYMBOL = "BTC-USD";
@@ -516,14 +514,12 @@ describe("ApiRuntime", () => {
   });
 
   it("bootstraps an empty session and persists the initial state", async () => {
-    process.env.MARKET_SOURCE = "simulator";
-
     const runtime = new ApiRuntime(logger as never);
 
     await runtime.bootstrap();
 
     expect(repositoryMocks.persistState).toHaveBeenCalled();
-    expect(runtime.getMarketSimulatorState().enabled).toBe(true);
+    expect(hyperliquidClientState.instances.at(-1)?.connect).toHaveBeenCalled();
   });
 
   it("submits orders, cancels orders, updates leverage, and broadcasts socket payloads", async () => {
@@ -560,6 +556,8 @@ describe("ApiRuntime", () => {
   });
 
   it("validates manual ticks and accepts valid ticks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:30.000Z"));
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
 
@@ -636,10 +634,21 @@ describe("ApiRuntime", () => {
       ask: 70002,
       last: 70001,
       spread: 2,
-      tickTime: "2026-01-01T00:00:00.000Z",
+      tickTime: "2026-01-01T00:00:30.000Z",
       volatilityTag: "high"
     });
     expect(accepted.ok).toBe(true);
+    const manualTickHistory = await runtime.getMarketHistory(20);
+    expect(manualTickHistory.candles).toEqual([
+      expect.objectContaining({
+        openTime: Date.parse("2026-01-01T00:00:00.000Z"),
+        closeTime: Date.parse("2026-01-01T00:01:00.000Z"),
+        open: 70001,
+        high: 70001,
+        low: 70001,
+        close: 70001
+      })
+    ]);
 
     const divergent = await runtime.ingestManualTick({
       symbol: "BTC-USD",
@@ -650,10 +659,7 @@ describe("ApiRuntime", () => {
       tickTime: "2026-01-01T00:01:00.000Z",
       volatilityTag: "spike"
     });
-    expect(divergent).toEqual({
-      ok: false,
-      message: "Manual tick last price is too far from the current market."
-    });
+    expect(divergent.ok).toBe(true);
   });
 
   it("merges live market data with persisted history and delegates volume queries", async () => {
@@ -742,22 +748,23 @@ describe("ApiRuntime", () => {
   it("returns live market history when no persisted snapshot is available", async () => {
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
+    const now = Date.now();
 
     hyperliquidClientState.instances[0]?.options.onSnapshot({
-      source: "simulator",
+      source: "hyperliquid",
       coin: "BTC",
       connected: false,
       bestBid: 10,
       bestAsk: 12,
       markPrice: 11,
       book: { bids: [], asks: [], updatedAt: 1 },
-      trades: [{ id: "trade-live", coin: "BTC", side: "buy", price: 11, size: 1, time: 1 }],
+      trades: [{ id: "trade-live", coin: "BTC", side: "buy", price: 11, size: 1, time: now }],
       candles: [{
         id: "candle-live",
         coin: "BTC",
         interval: "1m",
-        openTime: 1,
-        closeTime: 2,
+        openTime: now - 60_000,
+        closeTime: now,
         open: 10,
         high: 12,
         low: 9,
@@ -775,40 +782,11 @@ describe("ApiRuntime", () => {
       interval: "1m",
       candles: expect.any(Array),
       trades: expect.any(Array),
-      book: { bids: [], asks: [], updatedAt: 1 },
+      book: { bids: [], asks: [] },
       assetCtx: undefined
     });
     expect(history.candles).toHaveLength(1);
     expect(history.trades).toHaveLength(1);
-  });
-
-  it("runs and stops the market simulator while guarding concurrent simulation ticks", async () => {
-    vi.useFakeTimers();
-    process.env.MARKET_SOURCE = "simulator";
-    process.env.ENABLE_MARKET_SIMULATOR = "false";
-
-    const runtime = new ApiRuntime(logger as never);
-    await runtime.bootstrap();
-
-    const ingestSpy = vi.spyOn((runtime as never).engine, "ingestMarketTick");
-    const firstCall = runtime.startMarketSimulator({
-      intervalMs: 50,
-      driftBps: 1,
-      volatilityBps: 5,
-      anchorPrice: 50000
-    });
-
-    expect(firstCall.enabled).toBe(true);
-
-    await (runtime as never).runMarketSimulationTick();
-    expect(ingestSpy).toHaveBeenCalled();
-
-    runtime.setMarketSimulatorRunning(true);
-    await runtime.runMarketSimulationTick();
-    expect(ingestSpy).toHaveBeenCalledTimes(1);
-
-    const stopped = runtime.stopMarketSimulator();
-    expect(stopped.enabled).toBe(false);
   });
 
   it("handles hyperliquid tick ingestion locks and shutdown", async () => {
@@ -941,7 +919,7 @@ describe("ApiRuntime", () => {
     expect(repositoryMocks.persistClosedMinuteCandles).toHaveBeenCalledTimes(2);
   });
 
-  it("forwards explicit socket and simulator control helpers", async () => {
+  it("forwards explicit socket helpers", async () => {
     const runtime = new ApiRuntime(logger as never);
     const socket = {
       send: vi.fn(),
@@ -952,7 +930,6 @@ describe("ApiRuntime", () => {
     runtime.addSocket(socket, frontendSession);
     runtime.removeSocket(socket);
     runtime.setMarketTickInFlight(true);
-    runtime.setMarketSimulatorRunning(false);
 
     expect(socket.send).toHaveBeenCalledTimes(1);
   });
@@ -1120,15 +1097,10 @@ describe("ApiRuntime", () => {
     };
     privateRuntime.marketRuntime = {
       getMarketData: vi.fn(() => ({ markPrice: 70000 })),
-      getMarketSimulatorState: vi.fn(() => ({ enabled: false })),
       getHyperliquidCoin: vi.fn(() => "BTC"),
       getHyperliquidCandleInterval: vi.fn(() => "1m"),
       getMarketHistory: vi.fn(async () => ({ candles: [], trades: [], book: { bids: [], asks: [] } })),
       getMarketVolume: vi.fn(async () => ({ records: [] })),
-      startMarketSimulator: vi.fn(() => ({ enabled: true })),
-      stopMarketSimulator: vi.fn(() => ({ enabled: false })),
-      runMarketSimulationTick: vi.fn(async () => undefined),
-      setMarketSimulatorRunning: vi.fn(),
       setMarketTickInFlight: vi.fn(),
       shutdown: vi.fn(async () => undefined)
     };
@@ -1153,6 +1125,15 @@ describe("ApiRuntime", () => {
       removeSocket: vi.fn(),
       broadcast: vi.fn()
     };
+    privateRuntime.repository = {
+      loadEvents: vi.fn(async () => []),
+      getNextTriggerOrderOid: vi.fn(async (base?: number) => (base ?? 1000000000) + 1),
+      listAvailableSymbolConfigMeta: vi.fn(async () => []),
+      upsertTriggerOrderHistory: vi.fn(async (input: unknown) => input),
+      listTriggerOrderHistory: vi.fn(async () => [{ oid: 1000000001 }]),
+      listPendingTriggerOrders: vi.fn(async () => [{ oid: 1000000002 }]),
+      findTriggerOrder: vi.fn(async () => ({ oid: 1000000001 }))
+    };
 
     expect(runtime.getEngineState("paper-account-1")).toEqual({
       simulationSessionId: "session-paper-a-btc-usdccount-1-btc-usd",
@@ -1165,7 +1146,6 @@ describe("ApiRuntime", () => {
       events: [{ eventType: "OrderFilled" }]
     });
     expect(runtime.getMarketData()).toEqual({ markPrice: 70000 });
-    expect(runtime.getMarketSimulatorState()).toEqual({ enabled: false });
     expect(runtime.getHyperliquidCoin()).toBe("BTC");
     expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
     expect(runtime.getAccountIds()).toEqual(["paper-account-1"]);
@@ -1193,9 +1173,6 @@ describe("ApiRuntime", () => {
     expect(await runtime.findTriggerOrder("paper-account-1", 1000000001)).toEqual({ oid: 1000000001 });
     expect(await runtime.getMarketHistory(10)).toEqual({ candles: [], trades: [], book: { bids: [], asks: [] } });
     expect(await runtime.getMarketVolume(10, "1m", "BTC")).toEqual({ records: [] });
-    expect(runtime.startMarketSimulator()).toEqual({ enabled: true });
-    expect(runtime.stopMarketSimulator()).toEqual({ enabled: false });
-    runtime.setMarketSimulatorRunning(true);
     runtime.setMarketTickInFlight(true);
     expect(await runtime.login("demo", "demo123456", "frontend")).toEqual(frontendSession);
     runtime.logout(frontendSession.token);
@@ -1216,8 +1193,7 @@ describe("ApiRuntime", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: true
+      allowManualTicks: true
     })).toMatchObject({ platformName: "Desk" });
     expect(runtime.listBatchJobs()).toEqual([{ id: "db-bootstrap" }]);
     expect(await runtime.runBatchJob("db-bootstrap")).toEqual({ executionId: "exec-1" });

@@ -6,7 +6,7 @@ import { TradingRepository } from "./repository.js";
 
 const validateManualTick = (
   tick: MarketTick,
-  referenceTick: MarketTick | undefined,
+  _referenceTick: MarketTick | undefined,
   expectedSymbol: string
 ): string | null => {
   if (tick.symbol !== expectedSymbol) {
@@ -29,14 +29,6 @@ const validateManualTick = (
 
   if (tick.last < tick.bid || tick.last > tick.ask) {
     return "Manual tick last price must stay between bid and ask.";
-  }
-
-  if (referenceTick) {
-    const divergence = Math.abs(tick.last - referenceTick.last) / referenceTick.last;
-
-    if (divergence > 0.05) {
-      return "Manual tick last price is too far from the current market.";
-    }
   }
 
   return null;

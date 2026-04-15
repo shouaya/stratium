@@ -35,8 +35,7 @@ describe("registerRoutes", () => {
     activeSymbol: "BTC-USD",
     maintenanceMode: false,
     allowFrontendTrading: true,
-    allowManualTicks: true,
-    allowSimulatorControl: true
+    allowManualTicks: true
   };
   const canonicalStringify = (value: unknown): string => {
     if (Array.isArray(value)) {
@@ -115,7 +114,6 @@ describe("registerRoutes", () => {
     getFillHistoryPayload: vi.fn(),
     getReplayPayload: vi.fn(),
     getPositionReplayPayload: vi.fn(),
-    getMarketSimulatorState: vi.fn(),
     getSymbolConfigState: vi.fn(),
     getAdminStatePayload: vi.fn(),
     listBatchJobs: vi.fn(),
@@ -128,8 +126,6 @@ describe("registerRoutes", () => {
     updatePlatformSettings: vi.fn(),
     updateLeverage: vi.fn(),
     cancelAllOpenOrders: vi.fn(),
-    startMarketSimulator: vi.fn(),
-    stopMarketSimulator: vi.fn(),
     ingestManualTick: vi.fn(),
     submitOrder: vi.fn(),
     cancelOrder: vi.fn(),
@@ -243,7 +239,6 @@ describe("registerRoutes", () => {
       marketEvents: [],
       state: { simulationSessionId: "session-1" }
     });
-    runtime.getMarketSimulatorState.mockReturnValue({ enabled: false });
     runtime.getSymbolConfigState.mockReturnValue({
       symbol: "BTC-USD",
       coin: "BTC",
@@ -295,8 +290,6 @@ describe("registerRoutes", () => {
     runtime.updateFrontendUser.mockResolvedValue(frontendSession.user);
     runtime.updatePlatformSettings.mockResolvedValue(platformSettings);
     runtime.updateLeverage.mockResolvedValue(undefined);
-    runtime.startMarketSimulator.mockReturnValue({ enabled: true });
-    runtime.stopMarketSimulator.mockReturnValue({ enabled: false });
     runtime.ingestManualTick.mockResolvedValue({ ok: true, result: { events: [] } });
     runtime.submitOrder.mockImplementation(async (input: {
       accountId: string;
@@ -433,6 +426,112 @@ describe("registerRoutes", () => {
     });
     expect(frontendMarketHistoryResponse.statusCode).toBe(503);
 
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/market-volume",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/bot-credentials",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/account",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/orders",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/positions",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/events",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fill-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/replay/session-1",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/order-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/leverage",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { leverage: 5 }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { symbol: "BTC-USD", side: "buy", orderType: "market", quantity: 1 }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders/cancel",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { orderId: "ord_1" }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders/ord_1/cancel",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {}
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fills/fill_1/replay",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/info",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: { type: "openOrders", user: "paper-account-1" }
+    })).statusCode).toBe(503);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: { type: "order", orders: [] },
+        nonce: 1,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    })).statusCode).toBe(503);
+
     const adminPlatformSettingsResponse = await app.inject({
       method: "GET",
       url: "/api/admin/platform-settings",
@@ -443,6 +542,30 @@ describe("registerRoutes", () => {
       ...platformSettings,
       maintenanceMode: true
     });
+  });
+
+  it("rejects unauthenticated admin-only maintenance controls", async () => {
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/running"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/exec-1"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-refresh-hl-day/run",
+      payload: {}
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/market-ticks",
+      payload: { symbol: "BTC-USD" }
+    })).statusCode).toBe(401);
   });
 
   it("serves hyperliquid-compatible info endpoints", async () => {
@@ -824,26 +947,7 @@ describe("registerRoutes", () => {
     expect(runtime.updateLeverage).toHaveBeenCalledWith("BTC-USD", 5);
   });
 
-  it("handles simulator controls and manual ticks", async () => {
-    expect((await app.inject({
-      method: "POST",
-      url: "/api/market-simulator/start",
-      headers: { authorization: `Bearer ${adminSession.token}` },
-      payload: { intervalMs: 500 }
-    })).json()).toEqual({
-      status: "started",
-      simulator: { enabled: true }
-    });
-
-    expect((await app.inject({
-      method: "POST",
-      url: "/api/market-simulator/stop",
-      headers: { authorization: `Bearer ${adminSession.token}` }
-    })).json()).toEqual({
-      status: "stopped",
-      simulator: { enabled: false }
-    });
-
+  it("handles manual ticks", async () => {
     runtime.ingestManualTick.mockResolvedValueOnce({ ok: false, message: "bad tick" });
     expect((await app.inject({
       method: "POST",
@@ -1081,8 +1185,7 @@ describe("registerRoutes", () => {
         activeSymbol: "ETH-USD",
         maintenanceMode: true,
         allowFrontendTrading: false,
-        allowManualTicks: true,
-        allowSimulatorControl: false
+        allowManualTicks: true
       }
     });
     expect(settingsResponse.statusCode).toBe(200);
@@ -1093,8 +1196,7 @@ describe("registerRoutes", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: true,
       allowFrontendTrading: false,
-      allowManualTicks: true,
-      allowSimulatorControl: false
+      allowManualTicks: true
     });
 
     const adminStateResponse = await app.inject({
@@ -1206,17 +1308,6 @@ describe("registerRoutes", () => {
       url: "/api/orders",
       headers: { authorization: `Bearer ${frontendSession.token}` },
       payload: { symbol: "BTC-USD", side: "buy", orderType: "market", quantity: 1 }
-    })).statusCode).toBe(403);
-
-    runtime.getPlatformSettings.mockReturnValueOnce({
-      ...platformSettings,
-      allowSimulatorControl: false
-    });
-    expect((await app.inject({
-      method: "POST",
-      url: "/api/market-simulator/start",
-      headers: { authorization: `Bearer ${adminSession.token}` },
-      payload: {}
     })).statusCode).toBe(403);
 
     runtime.getPlatformSettings.mockReturnValueOnce({
@@ -1338,11 +1429,6 @@ describe("registerRoutes", () => {
 
     expect((await app.inject({
       method: "GET",
-      url: "/api/market-simulator"
-    })).statusCode).toBe(401);
-
-    expect((await app.inject({
-      method: "GET",
       url: "/api/admin/state",
       headers: { authorization: `Bearer ${frontendSession.token}` }
     })).statusCode).toBe(401);
@@ -1417,14 +1503,6 @@ describe("registerRoutes", () => {
       events: []
     });
 
-    const simulatorStateResponse = await app.inject({
-      method: "GET",
-      url: "/api/market-simulator",
-      headers: { authorization: `Bearer ${adminSession.token}` }
-    });
-    expect(simulatorStateResponse.statusCode).toBe(200);
-    expect(simulatorStateResponse.json()).toEqual({ enabled: false });
-
     const adminPlatformSettingsResponse = await app.inject({
       method: "GET",
       url: "/api/admin/platform-settings",
@@ -1470,8 +1548,7 @@ describe("registerRoutes", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: true
+      allowManualTicks: true
     });
 
     runtime.runBatchJob
@@ -1526,16 +1603,6 @@ describe("registerRoutes", () => {
       status: "unauthorized",
       message: "Custom auth backend error"
     });
-
-    runtime.getPlatformSettings.mockReturnValueOnce({
-      ...platformSettings,
-      allowSimulatorControl: false
-    });
-    expect((await app.inject({
-      method: "POST",
-      url: "/api/market-simulator/stop",
-      headers: { authorization: `Bearer ${adminSession.token}` }
-    })).statusCode).toBe(403);
 
     const cancelByIdResponse = await app.inject({
       method: "POST",

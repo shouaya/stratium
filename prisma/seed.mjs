@@ -23,8 +23,7 @@ const DEFAULT_PLATFORM_SETTINGS = {
   activeExchange: process.env.TRADING_EXCHANGE ?? process.env.MARKET_SOURCE ?? "hyperliquid",
   activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
   allowFrontendTrading: true,
-  allowManualTicks: true,
-  allowSimulatorControl: true
+  allowManualTicks: true
 };
 
 const derivePasswordHash = (password, salt = randomBytes(16).toString("hex")) => {
@@ -78,8 +77,7 @@ async function seedPlatformSettings() {
       activeExchange: DEFAULT_PLATFORM_SETTINGS.activeExchange,
       activeSymbol: DEFAULT_PLATFORM_SETTINGS.activeSymbol,
       allowFrontendTrading: DEFAULT_PLATFORM_SETTINGS.allowFrontendTrading,
-      allowManualTicks: DEFAULT_PLATFORM_SETTINGS.allowManualTicks,
-      allowSimulatorControl: DEFAULT_PLATFORM_SETTINGS.allowSimulatorControl
+      allowManualTicks: DEFAULT_PLATFORM_SETTINGS.allowManualTicks
     },
     create: DEFAULT_PLATFORM_SETTINGS
   });

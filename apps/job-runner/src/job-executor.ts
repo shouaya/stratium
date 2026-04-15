@@ -340,7 +340,7 @@ export class JobExecutor {
         return runBatchShell(`pnpm exec prisma generate && pnpm exec prisma migrate dev --name ${migrationName}`);
       }
       case "db-push":
-        return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db push");
+        return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db push --accept-data-loss");
       case "db-seed":
         return runBatchShell("pnpm exec prisma generate && pnpm exec prisma db seed");
       case "db-clear-runtime-data":

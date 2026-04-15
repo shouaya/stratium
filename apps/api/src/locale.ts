@@ -19,7 +19,6 @@ type MessageSet = {
     createUserFieldsRequired: string;
     batchJobRequestFailed: string;
     maintenanceActive: string;
-    simulatorDisabled: string;
     manualTicksDisabled: string;
     tradingDisabled: string;
   };
@@ -45,7 +44,6 @@ const MESSAGES: Record<AppLocale, MessageSet> = {
       createUserFieldsRequired: "必须提供用户名、密码和显示名称。",
       batchJobRequestFailed: "批处理任务请求失败。",
       maintenanceActive: "系统维护中，前端接口暂时不可用。",
-      simulatorDisabled: "平台设置已禁用模拟器控制。",
       manualTicksDisabled: "平台设置已禁用手动行情。",
       tradingDisabled: "平台设置已禁用前端交易。"
     },
@@ -76,7 +74,6 @@ const MESSAGES: Record<AppLocale, MessageSet> = {
       createUserFieldsRequired: "username、password、displayName は必須です。",
       batchJobRequestFailed: "バッチジョブのリクエストに失敗しました。",
       maintenanceActive: "メンテナンス中のため、フロントエンド API は一時的に利用できません。",
-      simulatorDisabled: "プラットフォーム設定でシミュレーター制御が無効です。",
       manualTicksDisabled: "プラットフォーム設定で手動ティックが無効です。",
       tradingDisabled: "プラットフォーム設定でフロントエンド取引が無効です。"
     },
@@ -107,7 +104,6 @@ const MESSAGES: Record<AppLocale, MessageSet> = {
       createUserFieldsRequired: "username, password, and displayName are required.",
       batchJobRequestFailed: "Batch job request failed.",
       maintenanceActive: "The API is temporarily unavailable during maintenance.",
-      simulatorDisabled: "Simulator control is disabled by platform settings.",
       manualTicksDisabled: "Manual ticks are disabled by platform settings.",
       tradingDisabled: "Trading is disabled by platform settings."
     },

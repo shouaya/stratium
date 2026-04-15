@@ -20,7 +20,6 @@ export type PlatformSettings = {
   maintenanceMode: boolean;
   allowFrontendTrading: boolean;
   allowManualTicks: boolean;
-  allowSimulatorControl: boolean;
 };
 
 export const tokenStorageKey = (role: AuthRole) => `stratium.${role}.token`;

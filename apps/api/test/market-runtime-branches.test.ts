@@ -35,7 +35,7 @@ vi.mock("../src/hyperliquid-market", () => ({
 const { MarketRuntime } = await import("../src/market-runtime");
 
 describe("MarketRuntime branch coverage", () => {
-  const makeRuntime = (marketSource = "simulator") => {
+  const makeRuntime = () => {
     const repository = {
       loadRecentMarketSnapshot: vi.fn(),
       loadRecentVolumeRecords: vi.fn(),
@@ -43,18 +43,18 @@ describe("MarketRuntime branch coverage", () => {
     };
     const onLiveTick = vi.fn(async () => undefined);
     const onBroadcast = vi.fn();
+    const logger = {
+      error: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      fatal: vi.fn(),
+      trace: vi.fn(),
+      child: vi.fn()
+    };
     const runtime = new MarketRuntime({
-      logger: {
-        error: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        debug: vi.fn(),
-        fatal: vi.fn(),
-        trace: vi.fn(),
-        child: vi.fn()
-      } as never,
+      logger: logger as never,
       repository: repository as never,
-      marketSource,
       hyperliquidCoin: "BTC",
       hyperliquidCandleInterval: "1m",
       configuredTradingSymbol: "BTC-USD",
@@ -62,12 +62,11 @@ describe("MarketRuntime branch coverage", () => {
       onBroadcast
     });
 
-    return { runtime, repository, onLiveTick, onBroadcast };
+    return { runtime, repository, onBroadcast, logger };
   };
 
   beforeEach(() => {
     clientState.instances.length = 0;
-    process.env.ENABLE_MARKET_SIMULATOR = "true";
   });
 
   afterEach(() => {
@@ -75,93 +74,31 @@ describe("MarketRuntime branch coverage", () => {
     vi.useRealTimers();
   });
 
-  it("covers bootstrap anchor price and configured source startup branches", () => {
-    const { runtime: btcRuntime } = makeRuntime("hyperliquid");
-    btcRuntime.setBootstrapState("BTC-USD", 500, null);
-    expect(btcRuntime.getMarketSimulatorState().anchorPrice).toBe(69830);
-
-    process.env.ENABLE_MARKET_SIMULATOR = "false";
-    btcRuntime.maybeStartConfiguredSource();
-    expect(clientState.instances[0]?.connect).not.toHaveBeenCalled();
-
-    process.env.ENABLE_MARKET_SIMULATOR = "true";
-    btcRuntime.maybeStartConfiguredSource();
-    expect(clientState.instances[0]?.connect).toHaveBeenCalledOnce();
-
-    const { runtime: ethRuntime } = makeRuntime();
-    ethRuntime.setBootstrapState("ETH-USD", 500, null);
-    expect(ethRuntime.getMarketSimulatorState().anchorPrice).toBe(500);
-    ethRuntime.setBootstrapState("ETH-USD", undefined, null);
-    expect(ethRuntime.getMarketSimulatorState().anchorPrice).toBe(69830);
-  });
-
-  it("covers simulator payload fallbacks and synthetic volatility tags", () => {
-    const { runtime, onBroadcast } = makeRuntime();
+  it("connects the live source, reconfigures the active coin, and keeps null bootstrap state as-is", () => {
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    const { runtime } = makeRuntime();
 
-    runtime.startMarketSimulator({
-      intervalMs: 50,
-      driftBps: Number.NaN,
-      volatilityBps: Number.POSITIVE_INFINITY,
-      anchorPrice: 0
-    }, {
-      symbol: "BTC-USD",
-      bid: 99,
-      ask: 101,
-      last: 100,
-      spread: 2,
-      tickTime: "2026-01-01T00:00:00.000Z",
-      volatilityTag: "normal"
-    });
+    runtime.setBootstrapState("BTC-USD", 70000, null);
+    runtime.maybeStartConfiguredSource();
+    runtime.maybeStartConfiguredSource();
 
-    expect(runtime.getMarketSimulatorState().enabled).toBe(true);
-    expect(runtime.getMarketSimulatorState().intervalMs).toBe(1200);
-    expect(runtime.getMarketSimulatorState().lastPrice).toBeGreaterThan(0);
-
-    runtime.startMarketSimulator({ intervalMs: 500 }, {
-      symbol: "BTC-USD",
-      bid: 69999,
-      ask: 70001,
-      last: 70000,
-      spread: 2,
-      tickTime: "2026-01-01T00:00:00.000Z",
-      volatilityTag: "normal"
-    });
+    expect(clientState.instances[0]?.connect).toHaveBeenCalledTimes(2);
     expect(clearIntervalSpy).toHaveBeenCalled();
 
-    const runtimeAny = runtime as never;
-    const randomSpy = vi.spyOn(Math, "random");
-    runtimeAny.marketSimulatorState = {
-      ...runtimeAny.marketSimulatorState,
-      symbol: "ETH-USD",
-      anchorPrice: 100,
-      lastPrice: 100
-    };
-
-    runtimeAny.marketSimulatorState.volatilityBps = 1;
-    randomSpy.mockReturnValueOnce(0.5).mockReturnValueOnce(0);
-    expect(runtimeAny.buildSyntheticTick().volatilityTag).toBe("calm");
-
-    runtimeAny.marketSimulatorState.volatilityBps = 10;
-    randomSpy.mockReturnValueOnce(1).mockReturnValueOnce(0);
-    expect(runtimeAny.buildSyntheticTick().volatilityTag).toBe("normal");
-
-    runtimeAny.marketSimulatorState.volatilityBps = 20;
-    randomSpy.mockReturnValueOnce(1).mockReturnValueOnce(0);
-    expect(runtimeAny.buildSyntheticTick().volatilityTag).toBe("high");
-
-    runtimeAny.marketSimulatorState.volatilityBps = 100;
-    randomSpy.mockReturnValueOnce(1).mockReturnValueOnce(0);
-    expect(runtimeAny.buildSyntheticTick().volatilityTag).toBe("spike");
-
-    runtime.stopMarketSimulator();
-    expect(onBroadcast).toHaveBeenCalled();
+    runtime.configureActiveMarket("ETH-USD", "ETH");
+    expect(clientState.instances[0]?.close).toHaveBeenCalledOnce();
+    expect(runtime.getHyperliquidCoin()).toBe("ETH");
+    expect(runtime.getMarketData()).toMatchObject({
+      source: "hyperliquid",
+      coin: "ETH",
+      connected: false
+    });
   });
 
-  it("covers snapshot merge fallbacks and closed-candle flush branches", async () => {
+  it("merges live snapshots, falls back to prior values, and persists only new closed candles", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T12:02:05.000Z"));
-    const { runtime, repository } = makeRuntime("hyperliquid");
+    const { runtime, repository, onBroadcast } = makeRuntime();
     const runtimeAny = runtime as never;
 
     runtimeAny.handleMarketSnapshot({
@@ -230,7 +167,9 @@ describe("MarketRuntime branch coverage", () => {
       assetCtx: undefined
     });
 
+    expect(onBroadcast).toHaveBeenCalledTimes(2);
     expect(runtime.getMarketData()).toMatchObject({
+      source: "hyperliquid",
       bestBid: 100,
       bestAsk: 101,
       markPrice: 100.5,
@@ -245,28 +184,122 @@ describe("MarketRuntime branch coverage", () => {
     expect(repository.persistClosedMinuteCandles).toHaveBeenCalledOnce();
     expect(runtimeAny.lastFlushedClosedCandleOpenTime).toBe(Date.parse("2026-04-09T12:01:00.000Z"));
 
-    runtimeAny.marketData = {
-      source: "simulator",
-      coin: "BTC",
-      connected: false,
-      book: { bids: [], asks: [] },
-      trades: [],
-      candles: []
-    };
     await runtimeAny.flushClosedMinuteCandles();
     expect(repository.persistClosedMinuteCandles).toHaveBeenCalledTimes(1);
+  });
 
-    runtimeAny.handleMarketSnapshot({
-      source: "simulator",
+  it("loads persisted history, forwards volume queries, and flushes again during shutdown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:02:05.000Z"));
+    const { runtime, repository, logger } = makeRuntime();
+    const runtimeAny = runtime as never;
+
+    repository.loadRecentMarketSnapshot.mockResolvedValue({
+      source: "hyperliquid",
       coin: "BTC",
       connected: false,
-      book: { bids: [], asks: [] },
-      trades: [],
-      candles: []
+      bestBid: 90,
+      bestAsk: 91,
+      markPrice: 90.5,
+      book: { bids: [{ price: 90, size: 2, orders: 2 }], asks: [{ price: 91, size: 2, orders: 1 }], updatedAt: 2 },
+      trades: [{ id: "persisted-trade", coin: "BTC", side: "sell", price: 90.5, size: 2, time: 2 }],
+      candles: [{
+        id: "persisted-candle",
+        coin: "BTC",
+        interval: "1m",
+        openTime: Date.parse("2026-04-09T12:01:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:02:00.000Z"),
+        open: 90,
+        high: 92,
+        low: 89,
+        close: 90.5,
+        volume: 20,
+        tradeCount: 4
+      }],
+      assetCtx: { coin: "BTC", capturedAt: 2, markPrice: 90.5 }
     });
-    expect(runtime.getMarketData().source).toBe("simulator");
+    repository.loadRecentVolumeRecords.mockResolvedValue([{ id: "vol-1" }]);
+    repository.persistClosedMinuteCandles.mockRejectedValueOnce(new Error("persist failed"));
+
+    runtimeAny.handleMarketSnapshot({
+      source: "hyperliquid",
+      coin: "BTC",
+      connected: true,
+      bestBid: 100,
+      bestAsk: 101,
+      markPrice: 100.5,
+      book: { bids: [], asks: [], updatedAt: 1 },
+      trades: [{ id: "live-trade", coin: "BTC", side: "buy", price: 100.5, size: 1, time: 3 }],
+      candles: [{
+        id: "live-candle",
+        coin: "BTC",
+        interval: "1m",
+        openTime: Date.parse("2026-04-09T12:00:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:01:00.000Z"),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100.5,
+        volume: 10,
+        tradeCount: 2
+      }],
+      assetCtx: undefined
+    });
+
+    const history = await runtime.getMarketHistory(50);
+    expect(history.trades.map((entry) => entry.id)).toEqual(["live-trade", "persisted-trade"]);
+    expect(history.book.bids[0]?.price).toBe(90);
+    expect((await runtime.getMarketVolume(10, "5m", "ETH")).records).toEqual([{ id: "vol-1" }]);
 
     await runtime.shutdown();
+    expect(logger.error).toHaveBeenCalled();
     expect(clientState.instances[0]?.close).toHaveBeenCalled();
+  });
+
+  it("projects manual ticks into the live book and current candle", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-09T12:00:30.000Z"));
+    const { runtime, onBroadcast } = makeRuntime();
+
+    runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 100,
+      ask: 102,
+      last: 101,
+      spread: 2,
+      tickTime: "2026-04-09T12:00:30.000Z",
+      volatilityTag: "manual"
+    });
+    runtime.ingestManualTick({
+      symbol: "BTC-USD",
+      bid: 101,
+      ask: 103,
+      last: 102,
+      spread: 2,
+      tickTime: "2026-04-09T12:00:45.000Z",
+      volatilityTag: "manual"
+    });
+
+    expect(onBroadcast).toHaveBeenCalledTimes(2);
+    expect(runtime.getMarketData()).toMatchObject({
+      bestBid: 101,
+      bestAsk: 103,
+      markPrice: 102,
+      book: {
+        bids: [{ price: 101, size: 0, orders: 1 }],
+        asks: [{ price: 103, size: 0, orders: 1 }]
+      }
+    });
+    expect(runtime.getMarketData().candles).toEqual([
+      expect.objectContaining({
+        openTime: Date.parse("2026-04-09T12:00:00.000Z"),
+        closeTime: Date.parse("2026-04-09T12:01:00.000Z"),
+        open: 101,
+        high: 102,
+        low: 101,
+        close: 102,
+        tradeCount: 2
+      })
+    ]);
   });
 });

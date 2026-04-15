@@ -86,8 +86,7 @@ export class TradingRepository {
         activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
         maintenanceMode: false,
         allowFrontendTrading: true,
-        allowManualTicks: true,
-        allowSimulatorControl: true
+        allowManualTicks: true
       }
     });
   }
@@ -229,8 +228,7 @@ export class TradingRepository {
         activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
         maintenanceMode: false,
         allowFrontendTrading: true,
-        allowManualTicks: true,
-        allowSimulatorControl: true
+        allowManualTicks: true
       };
     }
 
@@ -241,8 +239,7 @@ export class TradingRepository {
       activeSymbol: settings.activeSymbol,
       maintenanceMode: settings.maintenanceMode,
       allowFrontendTrading: settings.allowFrontendTrading,
-      allowManualTicks: settings.allowManualTicks,
-      allowSimulatorControl: settings.allowSimulatorControl
+      allowManualTicks: settings.allowManualTicks
     };
   }
 
@@ -256,8 +253,7 @@ export class TradingRepository {
         activeSymbol: input.activeSymbol,
         maintenanceMode: input.maintenanceMode,
         allowFrontendTrading: input.allowFrontendTrading,
-        allowManualTicks: input.allowManualTicks,
-        allowSimulatorControl: input.allowSimulatorControl
+        allowManualTicks: input.allowManualTicks
       },
       create: {
         id: "platform",
@@ -267,8 +263,7 @@ export class TradingRepository {
         activeSymbol: input.activeSymbol,
         maintenanceMode: input.maintenanceMode,
         allowFrontendTrading: input.allowFrontendTrading,
-        allowManualTicks: input.allowManualTicks,
-        allowSimulatorControl: input.allowSimulatorControl
+        allowManualTicks: input.allowManualTicks
       }
     });
 
@@ -279,8 +274,7 @@ export class TradingRepository {
       activeSymbol: settings.activeSymbol,
       maintenanceMode: settings.maintenanceMode,
       allowFrontendTrading: settings.allowFrontendTrading,
-      allowManualTicks: settings.allowManualTicks,
-      allowSimulatorControl: settings.allowSimulatorControl
+      allowManualTicks: settings.allowManualTicks
     };
   }
 
@@ -562,7 +556,7 @@ export class TradingRepository {
     candles: HyperliquidCandle[],
     source = "hyperliquid"
   ): Promise<void> {
-    if (source !== "hyperliquid" || candles.length === 0) {
+    if (candles.length === 0) {
       return;
     }
 
@@ -614,10 +608,6 @@ export class TradingRepository {
   }
 
   async persistMarketSnapshot(snapshot: HyperliquidMarketSnapshot): Promise<void> {
-    if (snapshot.source !== "hyperliquid") {
-      return;
-    }
-
     await this.persistClosedMinuteCandles(snapshot.candles, snapshot.source);
   }
 

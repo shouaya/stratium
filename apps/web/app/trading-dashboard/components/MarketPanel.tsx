@@ -42,13 +42,13 @@ export function MarketPanel({
               <div>
                 <div style={{ fontSize: 20, fontWeight: 700 }}>{vm.contractCoin} Perp</div>
                 <div style={{ color: "#7e97a5", fontSize: 12 }}>
-                  {message || state.platform?.platformAnnouncement || `${getLocaleText(locale, "已就绪", "準備完了", "Ready")} · ${vm.selectedTimeframe.label} mode · ${state.market?.connected ? "Hyperliquid" : getLocaleText(locale, "合成回退", "合成フォールバック", "Synthetic fallback")}`}
+                  {message || state.platform?.platformAnnouncement || `${getLocaleText(locale, "已就绪", "準備完了", "Ready")} · ${vm.selectedTimeframe.label} mode · Hyperliquid`}
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ color: vm.stats.change && vm.stats.change < 0 ? "#f87171" : "#2dd4bf", fontSize: 22, fontWeight: 700 }}>{fmt(vm.stats.last, vm.priceDigits)}</div>
                 <div style={{ color: "#7e97a5", fontSize: 12 }}>
-                  {getLocaleText(locale, "点差", "スプレッド", "Spread")} {fmt(state.latestTick?.spread, 4)} · {state.market?.connected ? "Hyperliquid live" : state.simulator?.enabled ? getLocaleText(locale, "模拟器运行中", "シミュレーター稼働中", "simulator live") : getLocaleText(locale, "暂停", "停止中", "paused")} · {vm.selectedTimeframe.hint}
+                  {getLocaleText(locale, "点差", "スプレッド", "Spread")} {fmt(state.latestTick?.spread, 4)} · {state.market?.connected ? "Hyperliquid live" : getLocaleText(locale, "等待实时行情", "ライブ相場待機中", "waiting for live market")} · {vm.selectedTimeframe.hint}
                 </div>
               </div>
             </div>

@@ -16,18 +16,8 @@ describe("WebSocketHub", () => {
       type: "bootstrap" as const,
       state: { id: "state-1" },
       events: [],
-      simulator: {
-        enabled: false,
-        symbol: "BTC-USD",
-        intervalMs: 1000,
-        driftBps: 0,
-        volatilityBps: 10,
-        anchorPrice: 70000,
-        lastPrice: 70000,
-        tickCount: 0
-      },
       market: {
-        source: "simulator" as const,
+        source: "hyperliquid" as const,
         coin: "BTC",
         connected: false,
         book: { bids: [], asks: [] },
@@ -64,18 +54,8 @@ describe("WebSocketHub", () => {
       type: "events" as const,
       state: { id: "state-2" },
       events: [],
-      simulator: {
-        enabled: false,
-        symbol: "BTC-USD",
-        intervalMs: 1000,
-        driftBps: 0,
-        volatilityBps: 10,
-        anchorPrice: 70000,
-        lastPrice: 70000,
-        tickCount: 0
-      },
       market: {
-        source: "simulator" as const,
+        source: "hyperliquid" as const,
         coin: "BTC",
         connected: false,
         book: { bids: [], asks: [] },
@@ -96,8 +76,7 @@ describe("WebSocketHub", () => {
         activeSymbol: "BTC-USD",
         maintenanceMode: false,
         allowFrontendTrading: true,
-        allowManualTicks: true,
-        allowSimulatorControl: true
+        allowManualTicks: true
       }
     }));
 
@@ -129,18 +108,8 @@ describe("WebSocketHub", () => {
       type: "events" as const,
       state: { id: "state-3" },
       events: [],
-      simulator: {
-        enabled: false,
-        symbol: "BTC-USD",
-        intervalMs: 1000,
-        driftBps: 0,
-        volatilityBps: 10,
-        anchorPrice: 70000,
-        lastPrice: 70000,
-        tickCount: 0
-      },
       market: {
-        source: "simulator" as const,
+        source: "hyperliquid" as const,
         coin: "BTC",
         connected: false,
         book: { bids: [], asks: [] },

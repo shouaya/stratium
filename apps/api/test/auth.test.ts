@@ -10,8 +10,7 @@ describe("AuthRuntime", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: true,
-      allowManualTicks: true,
-      allowSimulatorControl: true
+      allowManualTicks: true
     })),
     findUserByUsername: vi.fn(),
     listFrontendUsers: vi.fn(async () => []),
@@ -194,8 +193,7 @@ describe("AuthRuntime", () => {
       activeSymbol: "BTC-USD",
       maintenanceMode: false,
       allowFrontendTrading: false,
-      allowManualTicks: false,
-      allowSimulatorControl: false
+      allowManualTicks: false
     })).toMatchObject({
       platformName: "Desk",
       activeSymbol: "BTC-USD",

@@ -42,7 +42,7 @@ export interface HyperliquidAssetContext {
 }
 
 export interface HyperliquidMarketSnapshot {
-  source: "hyperliquid" | "simulator";
+  source: "hyperliquid";
   coin: string;
   connected: boolean;
   bestBid?: number;

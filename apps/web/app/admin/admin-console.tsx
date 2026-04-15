@@ -18,18 +18,6 @@ type TickPayload = {
   symbol?: string;
 };
 
-type MarketSimulatorState = {
-  enabled: boolean;
-  symbol: string;
-  intervalMs: number;
-  driftBps: number;
-  volatilityBps: number;
-  anchorPrice: number;
-  lastPrice: number;
-  tickCount: number;
-  lastGeneratedAt?: string;
-};
-
 type FrontendUser = AuthUser & { role: "frontend" };
 type AdminMenu = "dashboard" | "users" | "platform" | "market" | "batch";
 
@@ -71,7 +59,6 @@ type RunningBatchJob = {
 
 type AdminState = {
   latestTick?: TickPayload;
-  simulator?: MarketSimulatorState;
   platform?: PlatformSettings;
   runningBatchJobs?: RunningBatchJob[];
   lastBatchJobExecution?: BatchJobRunResult | null;
@@ -94,7 +81,7 @@ const MENU_ITEMS: Array<{ id: AdminMenu; label: string; hint: string }> = [
   { id: "dashboard", label: "Dashboard", hint: "Overview and quick actions" },
   { id: "users", label: "User Management", hint: "Issue and edit frontend users" },
   { id: "platform", label: "Platform Settings", hint: "Control trading and admin switches" },
-  { id: "market", label: "Market Operations", hint: "Simulator and manual tick control" },
+  { id: "market", label: "Market Operations", hint: "Manual tick control" },
   { id: "batch", label: "Batch Jobs", hint: "Run data import and refresh jobs" }
 ];
 
@@ -134,7 +121,6 @@ export function AdminConsole({
   const [symbolOptions, setSymbolOptions] = useState<SymbolOption[]>([]);
   const [jobResult, setJobResult] = useState<BatchJobRunResult | null>(null);
   const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
-  const [simForm, setSimForm] = useState({ intervalMs: "1200", volatilityBps: "22", driftBps: "0", anchorPrice: "69830" });
   const [tickForm, setTickForm] = useState({ symbol: "BTC-USD", bid: "", ask: "", last: "", spread: "" });
   const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "" });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -146,8 +132,7 @@ export function AdminConsole({
     activeSymbol: "BTC-USD",
     maintenanceMode: false,
     allowFrontendTrading: true,
-    allowManualTicks: true,
-    allowSimulatorControl: true
+    allowManualTicks: true
   });
   const [batchForm, setBatchForm] = useState({
     exchange: DEFAULT_EXCHANGE,
@@ -158,6 +143,8 @@ export function AdminConsole({
   });
   const sectionLoadTokenRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsDirtyRef = useRef(false);
+  const tickFormDirtyRef = useRef(false);
   const ui = getUiText(locale);
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
@@ -206,7 +193,6 @@ export function AdminConsole({
 
     const handlePayload = (payload: {
       state?: { latestTick?: TickPayload };
-      simulator?: MarketSimulatorState;
       platform?: PlatformSettings;
       batch?: {
         runningJobs?: RunningBatchJob[];
@@ -216,19 +202,19 @@ export function AdminConsole({
       if (payload.state) {
         setState((current) => ({
           latestTick: payload.state?.latestTick ?? current.latestTick,
-          simulator: payload.simulator ?? current.simulator,
           platform: payload.platform ?? current.platform
         }));
-      } else if (payload.simulator || payload.platform) {
+      } else if (payload.platform) {
         setState((current) => ({
           ...current,
-          simulator: payload.simulator ?? current.simulator,
           platform: payload.platform ?? current.platform
         }));
       }
 
       if (payload.platform) {
-        setSettingsForm(payload.platform);
+        if (!settingsDirtyRef.current) {
+          setSettingsForm(payload.platform);
+        }
       }
 
       if (payload.batch) {
@@ -287,6 +273,10 @@ export function AdminConsole({
 
   useEffect(() => {
     if (!state.latestTick) {
+      return;
+    }
+
+    if (tickFormDirtyRef.current) {
       return;
     }
 
@@ -411,6 +401,7 @@ export function AdminConsole({
     }
 
     setSettingsForm(payload);
+    settingsDirtyRef.current = false;
     return true;
   };
 
@@ -471,37 +462,6 @@ export function AdminConsole({
     }
   };
 
-  const updateSimulator = async (action: "start" | "stop") => {
-    setBusy(true);
-
-    try {
-      const response = await fetch(buildApiUrl(apiBaseUrl, `/api/market-simulator/${action}`), {
-        method: "POST",
-        headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
-        body: action === "start" ? JSON.stringify({
-          intervalMs: Number(simForm.intervalMs),
-          volatilityBps: Number(simForm.volatilityBps),
-          driftBps: Number(simForm.driftBps),
-          anchorPrice: Number(simForm.anchorPrice)
-        }) : undefined
-      });
-      const payload = await response.json().catch(() => ({})) as { simulator?: MarketSimulatorState; message?: string };
-
-      if (!response.ok) {
-        setMessage(payload.message ?? ui.admin.failedRolling);
-        return;
-      }
-
-      setState((current) => ({
-        ...current,
-        simulator: payload.simulator ?? current.simulator
-      }));
-      setMessage(action === "start" ? ui.admin.rollingStarted : ui.admin.rollingStopped);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const submitTick = async () => {
     setBusy(true);
 
@@ -521,6 +481,9 @@ export function AdminConsole({
       });
 
       const payload = await response.json().catch(() => ({})) as { message?: string };
+      if (response.ok) {
+        tickFormDirtyRef.current = false;
+      }
       setMessage(response.ok ? ui.admin.manualTickAccepted : payload.message ?? ui.admin.manualTickRejected);
     } finally {
       setBusy(false);
@@ -609,6 +572,7 @@ export function AdminConsole({
       }
 
       setSettingsForm(payload);
+      settingsDirtyRef.current = false;
       setMessage(ui.admin.platformUpdated);
     } finally {
       setBusy(false);
@@ -690,7 +654,6 @@ export function AdminConsole({
         <MetricCard label={ui.admin.frontendUsers} value={String(users.length)} detail={`${activeUserCount} ${ui.admin.activeUsers.toLowerCase()}`} />
         <MetricCard label={ui.admin.trading} value={settingsForm.allowFrontendTrading ? ui.common.active : ui.common.disabled} detail="frontend order switch" tone={settingsForm.allowFrontendTrading ? "good" : "bad"} />
         <MetricCard label={ui.admin.maintenanceMode} value={settingsForm.maintenanceMode ? ui.common.active : ui.common.disabled} detail="frontend access gate" tone={settingsForm.maintenanceMode ? "bad" : "good"} />
-        <MetricCard label={ui.admin.simulator} value={state.simulator?.enabled ? ui.common.active : ui.common.disabled} detail={state.simulator?.enabled ? `${state.simulator.tickCount} ticks` : "market simulator"} tone={state.simulator?.enabled ? "good" : undefined} />
         <MetricCard label={ui.admin.lastPrice} value={fmt(state.latestTick?.last, 2)} detail={`${settingsForm.activeExchange}:${settingsForm.activeSymbol} · ${stamp(state.latestTick?.tickTime)}`} />
       </div>
 
@@ -703,7 +666,6 @@ export function AdminConsole({
             <StatusRow label={ui.admin.activeSymbol} value={settingsForm.activeSymbol} />
             <StatusRow label={ui.admin.maintenanceMode} value={settingsForm.maintenanceMode ? ui.common.active : ui.common.disabled} />
             <StatusRow label={ui.admin.allowManualTicks} value={settingsForm.allowManualTicks ? ui.common.active : ui.common.disabled} />
-            <StatusRow label={ui.admin.allowSimulatorControl} value={settingsForm.allowSimulatorControl ? ui.common.active : ui.common.disabled} />
             <StatusRow label={`${ui.admin.currentBid} / ${ui.admin.currentAsk}`} value={`${fmt(state.latestTick?.bid, 2)} / ${fmt(state.latestTick?.ask, 2)}`} />
             <StatusRow label={ui.admin.symbol} value={tickForm.symbol} />
           </div>
@@ -712,9 +674,6 @@ export function AdminConsole({
         <section style={panel}>
           <div style={panelTitle}>{ui.admin.quickActions}</div>
           <div style={{ display: "grid", gap: 10 }}>
-            <button onClick={() => void updateSimulator(state.simulator?.enabled ? "stop" : "start")} style={primaryButton} disabled={busy}>
-              {state.simulator?.enabled ? `${ui.admin.stop} ${ui.admin.simulator}` : `${ui.admin.start} ${ui.admin.simulator}`}
-            </button>
             <button onClick={() => router.push(ADMIN_SECTION_PATHS.platform)} style={ghostButton}>{ui.admin.platform}</button>
             <button onClick={() => router.push(ADMIN_SECTION_PATHS.market)} style={ghostButton}>{ui.admin.market}</button>
             <button onClick={() => void runBatchJob("batch-refresh-hl-day")} style={ghostButton} disabled={busy}>Refresh Hyperliquid Day</button>
@@ -773,49 +732,101 @@ export function AdminConsole({
     <section style={panel}>
       <div style={panelTitle}>{ui.admin.platform}</div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 640px)", gap: 12 }}>
-        <Field label={ui.admin.platformName} value={settingsForm.platformName} onChange={(value) => setSettingsForm((current) => ({ ...current, platformName: value }))} />
-        <Field label={ui.admin.announcement} value={settingsForm.platformAnnouncement} onChange={(value) => setSettingsForm((current) => ({ ...current, platformAnnouncement: value }))} />
+        <Field
+          label={ui.admin.platformName}
+          value={settingsForm.platformName}
+          onChange={(value) => {
+            settingsDirtyRef.current = true;
+            setSettingsForm((current) => ({ ...current, platformName: value }));
+          }}
+        />
+        <Field
+          label={ui.admin.announcement}
+          value={settingsForm.platformAnnouncement}
+          onChange={(value) => {
+            settingsDirtyRef.current = true;
+            setSettingsForm((current) => ({ ...current, platformAnnouncement: value }));
+          }}
+        />
         <Field label={ui.admin.activeExchange} value={settingsForm.activeExchange} onChange={() => undefined} readOnly />
         <Field label={ui.admin.activeSymbol} value={settingsForm.activeSymbol} onChange={() => undefined} readOnly />
-        <Toggle label={ui.admin.maintenanceMode} checked={settingsForm.maintenanceMode} onChange={(checked) => setSettingsForm((current) => ({ ...current, maintenanceMode: checked }))} />
-        <Toggle label={ui.admin.allowFrontendTrading} checked={settingsForm.allowFrontendTrading} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowFrontendTrading: checked }))} />
-        <Toggle label={ui.admin.allowManualTicks} checked={settingsForm.allowManualTicks} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowManualTicks: checked }))} />
-        <Toggle label={ui.admin.allowSimulatorControl} checked={settingsForm.allowSimulatorControl} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowSimulatorControl: checked }))} />
+        <Toggle
+          label={ui.admin.maintenanceMode}
+          checked={settingsForm.maintenanceMode}
+          onChange={(checked) => {
+            settingsDirtyRef.current = true;
+            setSettingsForm((current) => ({ ...current, maintenanceMode: checked }));
+          }}
+        />
+        <Toggle
+          label={ui.admin.allowFrontendTrading}
+          checked={settingsForm.allowFrontendTrading}
+          onChange={(checked) => {
+            settingsDirtyRef.current = true;
+            setSettingsForm((current) => ({ ...current, allowFrontendTrading: checked }));
+          }}
+        />
+        <Toggle
+          label={ui.admin.allowManualTicks}
+          checked={settingsForm.allowManualTicks}
+          onChange={(checked) => {
+            settingsDirtyRef.current = true;
+            setSettingsForm((current) => ({ ...current, allowManualTicks: checked }));
+          }}
+        />
         <button onClick={() => void saveSettings()} style={primaryButton} disabled={busy}>{ui.admin.savePlatform}</button>
       </div>
     </section>
   );
 
   const renderMarket = () => (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 420px) minmax(320px, 420px)", gap: 16 }}>
-      <section style={panel}>
-        <div style={panelTitle}>{ui.admin.simulator}</div>
-        <div style={stack}>
-          <StatusRow label={ui.admin.status} value={state.simulator?.enabled ? ui.common.active : ui.common.disabled} />
-          <StatusRow label={ui.admin.lastPrice} value={fmt(state.simulator?.lastPrice, 2)} />
-          <StatusRow label="Ticks" value={String(state.simulator?.tickCount ?? 0)} />
-          <Field label={ui.admin.tickInterval} value={simForm.intervalMs} onChange={(value) => setSimForm((current) => ({ ...current, intervalMs: value }))} />
-          <Field label={ui.admin.volatilityBps} value={simForm.volatilityBps} onChange={(value) => setSimForm((current) => ({ ...current, volatilityBps: value }))} />
-          <Field label={ui.admin.driftBps} value={simForm.driftBps} onChange={(value) => setSimForm((current) => ({ ...current, driftBps: value }))} />
-          <Field label={ui.admin.anchorPrice} value={simForm.anchorPrice} onChange={(value) => setSimForm((current) => ({ ...current, anchorPrice: value }))} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <button onClick={() => void updateSimulator("start")} style={primaryButton} disabled={busy}>{ui.admin.start}</button>
-            <button onClick={() => void updateSimulator("stop")} style={ghostButton} disabled={busy}>{ui.admin.stop}</button>
-          </div>
-        </div>
-      </section>
-
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 420px)", gap: 16 }}>
       <section style={panel}>
         <div style={panelTitle}>{ui.admin.pushManualTick}</div>
         <div style={stack}>
           <StatusRow label={ui.admin.currentBid} value={fmt(state.latestTick?.bid, 2)} />
           <StatusRow label={ui.admin.currentAsk} value={fmt(state.latestTick?.ask, 2)} />
           <StatusRow label={ui.admin.currentLast} value={fmt(state.latestTick?.last, 2)} />
-          <Field label={ui.admin.symbol} value={tickForm.symbol} onChange={(value) => setTickForm((current) => ({ ...current, symbol: value }))} />
-          <Field label={ui.admin.bid} value={tickForm.bid} onChange={(value) => setTickForm((current) => ({ ...current, bid: value }))} />
-          <Field label={ui.admin.ask} value={tickForm.ask} onChange={(value) => setTickForm((current) => ({ ...current, ask: value }))} />
-          <Field label={ui.admin.last} value={tickForm.last} onChange={(value) => setTickForm((current) => ({ ...current, last: value }))} />
-          <Field label={ui.admin.spread} value={tickForm.spread} onChange={(value) => setTickForm((current) => ({ ...current, spread: value }))} />
+          <Field
+            label={ui.admin.symbol}
+            value={tickForm.symbol}
+            onChange={(value) => {
+              tickFormDirtyRef.current = true;
+              setTickForm((current) => ({ ...current, symbol: value }));
+            }}
+          />
+          <Field
+            label={ui.admin.bid}
+            value={tickForm.bid}
+            onChange={(value) => {
+              tickFormDirtyRef.current = true;
+              setTickForm((current) => ({ ...current, bid: value }));
+            }}
+          />
+          <Field
+            label={ui.admin.ask}
+            value={tickForm.ask}
+            onChange={(value) => {
+              tickFormDirtyRef.current = true;
+              setTickForm((current) => ({ ...current, ask: value }));
+            }}
+          />
+          <Field
+            label={ui.admin.last}
+            value={tickForm.last}
+            onChange={(value) => {
+              tickFormDirtyRef.current = true;
+              setTickForm((current) => ({ ...current, last: value }));
+            }}
+          />
+          <Field
+            label={ui.admin.spread}
+            value={tickForm.spread}
+            onChange={(value) => {
+              tickFormDirtyRef.current = true;
+              setTickForm((current) => ({ ...current, spread: value }));
+            }}
+          />
           <button onClick={() => void submitTick()} style={primaryButton} disabled={busy}>{ui.admin.pushManualTick}</button>
         </div>
       </section>

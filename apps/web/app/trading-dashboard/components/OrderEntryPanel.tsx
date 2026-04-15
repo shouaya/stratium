@@ -31,7 +31,6 @@ export function OrderEntryPanel({ vm, popup, open, onClose }: { vm: any; popup?:
       </div>
       <div style={{ padding: "0 14px 14px", display: "grid", gap: 12 }}>
         <Line label={t.leverage} value={`${vm.leverageInUse}x / max ${state.symbolConfig?.maxLeverage ?? vm.leverageDraft}x`} />
-        <Line label={t.rollingMarket} value={state.simulator?.enabled ? `${t.running} · ${state.simulator.intervalMs}ms` : t.stopped} />
         <label style={{ display: "grid", gap: 6 }}>
           <span style={{ color: "#7e97a5", fontSize: 12 }}>{t.adjustLeverage}</span>
           <input type="range" min={1} max={state.symbolConfig?.maxLeverage ?? 10} step={1} value={vm.leverageDraft} onChange={(event) => vm.setLeverageDraft(Number(event.target.value))} />

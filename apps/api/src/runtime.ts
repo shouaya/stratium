@@ -4,7 +4,7 @@ import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, ty
 import { BatchJobStateFeed } from "./batch-job-state.js";
 import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner.js";
 import { loadApiBootstrapState } from "./bootstrap.js";
-import { MarketRuntime, type MarketSimulatorState, type SocketLike, type SymbolConfigState } from "./market-runtime.js";
+import { MarketRuntime, type SocketLike, type SymbolConfigState } from "./market-runtime.js";
 import {
   createPositionReplayPayload,
   createReplayPayload,
@@ -15,7 +15,7 @@ import {
 import { TradingRepository } from "./repository.js";
 import { TradingRuntime } from "./trading-runtime.js";
 import { WebSocketHub } from "./websocket-hub.js";
-export type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime.js";
+export type { SocketLike, SymbolConfigState } from "./market-runtime.js";
 
 export class ApiRuntime {
   private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
@@ -33,11 +33,8 @@ export class ApiRuntime {
     activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
     maintenanceMode: false,
     allowFrontendTrading: true,
-    allowManualTicks: true,
-    allowSimulatorControl: true
+    allowManualTicks: true
   };
-
-  private readonly marketSource = process.env.MARKET_SOURCE ?? "hyperliquid";
 
   private readonly hyperliquidCoin = process.env.HYPERLIQUID_COIN ?? "BTC";
 
@@ -67,7 +64,6 @@ export class ApiRuntime {
     this.marketRuntime = new MarketRuntime({
       logger,
       repository: this.repository,
-      marketSource: this.marketSource,
       hyperliquidCoin: this.hyperliquidCoin,
       hyperliquidCandleInterval: this.hyperliquidCandleInterval,
       configuredTradingSymbol: this.configuredTradingSymbol,
@@ -172,10 +168,8 @@ export class ApiRuntime {
 
   async getFillHistoryPayload(accountId: string) {
     const sessionId = this.tradingRuntime.getEngineState(accountId).simulationSessionId;
-    const persistedEvents = typeof this.repository.loadEvents === "function"
-      ? (await this.repository.loadEvents(sessionId))
-        .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
-      : await this.repository.listFillHistoryEvents(accountId);
+    const persistedEvents = (await this.repository.loadEvents(sessionId))
+      .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
     const liveEvents = this.tradingRuntime.getFillHistoryEvents(accountId);
     const merged = new Map<string, AnyEventEnvelope>();
 
@@ -196,10 +190,6 @@ export class ApiRuntime {
 
   getMarketData() {
     return this.marketRuntime.getMarketData();
-  }
-
-  getMarketSimulatorState() {
-    return this.marketRuntime.getMarketSimulatorState();
   }
 
   getSymbolConfigState() {
@@ -226,7 +216,6 @@ export class ApiRuntime {
     return createStatePayload({
       state: this.tradingRuntime.getEngineState(accountId),
       events: this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
-      simulator: this.marketRuntime.getMarketSimulatorState(),
       market: this.marketRuntime.getMarketData(),
       symbolConfig: this.symbolConfigState,
       platform: this.platformSettings,
@@ -242,7 +231,6 @@ export class ApiRuntime {
 
     return {
       latestTick: primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick : null,
-      simulator: this.marketRuntime.getMarketSimulatorState(),
       platform: this.platformSettings,
       accountIds: this.tradingRuntime.getAccountIds(),
       runningBatchJobs: this.runningBatchJobs,
@@ -257,7 +245,6 @@ export class ApiRuntime {
       sessionId,
       replay.state,
       replay.events,
-      this.marketRuntime.getMarketSimulatorState(),
       this.marketRuntime.getMarketData(),
       this.platformSettings,
       {
@@ -359,7 +346,6 @@ export class ApiRuntime {
             latestTick: null
           },
           [],
-          this.marketRuntime.getMarketSimulatorState(),
           this.marketRuntime.getMarketData(),
           this.platformSettings,
           {
@@ -382,7 +368,6 @@ export class ApiRuntime {
         ? createSocketBootstrapPayload(
           state,
           this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
-          this.marketRuntime.getMarketSimulatorState(),
           this.marketRuntime.getMarketData(),
           this.platformSettings,
           {
@@ -393,7 +378,6 @@ export class ApiRuntime {
         : createSocketEventsPayload(
           state,
           filteredEvents,
-          this.marketRuntime.getMarketSimulatorState(),
           this.marketRuntime.getMarketData(),
           this.symbolConfigState,
           this.platformSettings,
@@ -474,8 +458,7 @@ export class ApiRuntime {
         ...previousSettings,
         maintenanceMode: true,
         allowFrontendTrading: false,
-        allowManualTicks: false,
-        allowSimulatorControl: false
+        allowManualTicks: false
       });
 
       try {
@@ -533,10 +516,17 @@ export class ApiRuntime {
     | { ok: true; result: ReturnType<ReturnType<TradingRuntime["getEngine"]>["ingestMarketTick"]> }
     | { ok: false; message: string }
   > {
-    return this.tradingRuntime.ingestManualTick(
+    const result = await this.tradingRuntime.ingestManualTick(
       tick,
-      this.marketRuntime.getMarketSimulatorState().symbol
+      this.symbolConfigState.symbol
     );
+
+    if (result.ok) {
+      this.marketRuntime.ingestManualTick(tick);
+      this.broadcast();
+    }
+
+    return result;
   }
 
   async updateLeverage(symbol: string, leverage: number): Promise<void> {
@@ -576,31 +566,6 @@ export class ApiRuntime {
 
   async findTriggerOrder(accountId: string, oidOrCloid: number | string) {
     return this.repository.findTriggerOrder(accountId, oidOrCloid);
-  }
-
-  startMarketSimulator(
-    payload: Partial<Pick<MarketSimulatorState, "intervalMs" | "driftBps" | "volatilityBps" | "anchorPrice">> = {}
-  ): MarketSimulatorState {
-    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
-    return this.marketRuntime.startMarketSimulator(
-      payload,
-      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick : undefined
-    );
-  }
-
-  stopMarketSimulator(): MarketSimulatorState {
-    return this.marketRuntime.stopMarketSimulator();
-  }
-
-  async runMarketSimulationTick(): Promise<void> {
-    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
-    await this.marketRuntime.runMarketSimulationTick(
-      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick ?? undefined : undefined
-    );
-  }
-
-  setMarketSimulatorRunning(value: boolean): void {
-    this.marketRuntime.setMarketSimulatorRunning(value);
   }
 
   setMarketTickInFlight(value: boolean): void {

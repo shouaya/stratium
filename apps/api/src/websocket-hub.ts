@@ -1,13 +1,12 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
 import type { BatchJobPayload } from "./payloads.js";
 import type { HyperliquidMarketSnapshot } from "./hyperliquid-market.js";
-import type { MarketSimulatorState, SocketLike, SymbolConfigState } from "./market-runtime.js";
+import type { SocketLike, SymbolConfigState } from "./market-runtime.js";
 
 interface BroadcastPayload {
   type: "bootstrap" | "events";
   state: unknown;
   events: AnyEventEnvelope[];
-  simulator: MarketSimulatorState;
   market: HyperliquidMarketSnapshot;
   symbolConfig?: SymbolConfigState;
   batch?: BatchJobPayload;

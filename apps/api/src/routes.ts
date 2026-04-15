@@ -5,7 +5,7 @@ import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "./hyp
 import { HyperliquidExchangeCompat } from "./hyperliquid-exchange.js";
 import { HyperliquidPrivateWsHub } from "./hyperliquid-private-ws.js";
 import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js";
-import type { ApiRuntime, MarketSimulatorState } from "./runtime.js";
+import type { ApiRuntime } from "./runtime.js";
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
   const exchangeCompat = "getNextTriggerOrderOid" in runtime
@@ -435,13 +435,6 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return [...orders, ...triggerOrders]
       .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
   });
-  app.get("/api/market-simulator", async (request, reply) => {
-    if (!requireRole(request, reply, "admin")) {
-      return;
-    }
-    return runtime.getMarketSimulatorState();
-  });
-
   app.get("/api/admin/users", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;
@@ -591,7 +584,6 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       maintenanceMode?: boolean;
       allowFrontendTrading?: boolean;
       allowManualTicks?: boolean;
-      allowSimulatorControl?: boolean;
     };
 
     return runtime.updatePlatformSettings({
@@ -601,8 +593,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       activeSymbol: payload.activeSymbol?.trim().toUpperCase() || runtime.getPlatformSettings().activeSymbol,
       maintenanceMode: payload.maintenanceMode ?? false,
       allowFrontendTrading: payload.allowFrontendTrading ?? true,
-      allowManualTicks: payload.allowManualTicks ?? true,
-      allowSimulatorControl: payload.allowSimulatorControl ?? true
+      allowManualTicks: payload.allowManualTicks ?? true
     });
   });
 
@@ -691,52 +682,6 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       symbolConfig: runtime.getSymbolConfigState(),
       account: runtime.getEngineState(session.user.tradingAccountId as string).account,
       position: runtime.getEngineState(session.user.tradingAccountId as string).position
-    });
-  });
-
-  app.post("/api/market-simulator/start", async (request, reply) => {
-    if (!requireRole(request, reply, "admin")) {
-      return;
-    }
-    const locale = resolveLocale(request as never);
-    const messages = getMessages(locale);
-
-    if (!runtime.getPlatformSettings().allowSimulatorControl) {
-      return reply.code(403).send({
-        status: "rejected",
-        message: messages.admin.simulatorDisabled
-      });
-    }
-
-    const payload = (request.body as Partial<Pick<MarketSimulatorState, "intervalMs" | "driftBps" | "volatilityBps" | "anchorPrice">>) ?? {};
-    const simulator = runtime.startMarketSimulator(payload);
-
-    return reply.code(202).send({
-      status: "started",
-      simulator
-    });
-  });
-
-  app.post("/api/market-simulator/stop", async (_request, reply) => {
-    const request = _request;
-    if (!requireRole(request, reply, "admin")) {
-      return;
-    }
-    const locale = resolveLocale(request as never);
-    const messages = getMessages(locale);
-
-    if (!runtime.getPlatformSettings().allowSimulatorControl) {
-      return reply.code(403).send({
-        status: "rejected",
-        message: messages.admin.simulatorDisabled
-      });
-    }
-
-    const simulator = runtime.stopMarketSimulator();
-
-    return reply.code(202).send({
-      status: "stopped",
-      simulator
     });
   });
 

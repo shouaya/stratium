@@ -10,7 +10,9 @@ const app = Fastify({
 const runtime = new ApiRuntime(app.log);
 
 await app.register(cors, {
-  origin: true
+  origin: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Stratium-Locale"]
 });
 
 await app.register(websocket);

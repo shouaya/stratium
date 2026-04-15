@@ -641,8 +641,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
               activeSymbol: "",
               maintenanceMode: true,
               allowFrontendTrading: false,
-              allowManualTicks: false,
-              allowSimulatorControl: false
+              allowManualTicks: false
             }
         }));
         setMessage(maintenanceMessage);
@@ -687,7 +686,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       if (!active) return;
       socket = new WebSocket(buildWebSocketUrl(apiBaseUrl, authToken));
       socket.addEventListener("message", (event) => {
-        const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; simulator?: State["simulator"]; market?: State["market"]; symbolConfig?: State["symbolConfig"]; platform?: State["platform"] };
+        const payload = JSON.parse(event.data) as { state?: Partial<State>; events?: AnyEventEnvelope[]; market?: State["market"]; symbolConfig?: State["symbolConfig"]; platform?: State["platform"] };
         if (!payload.state) return;
 
         const nextState = payload.state;
@@ -697,7 +696,6 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
           position: nextState.position ?? current.position,
           latestTick: nextState.latestTick ?? current.latestTick,
           events: mergeEvents(current.events, payload.events),
-          simulator: payload.simulator ?? current.simulator,
           market: payload.market ?? current.market,
           symbolConfig: payload.symbolConfig ?? current.symbolConfig,
           platform: payload.platform ?? current.platform

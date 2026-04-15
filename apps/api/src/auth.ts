@@ -20,7 +20,6 @@ export interface PlatformSettingsView {
   maintenanceMode: boolean;
   allowFrontendTrading: boolean;
   allowManualTicks: boolean;
-  allowSimulatorControl: boolean;
 }
 
 export interface FrontendUserView extends AuthUserProfile {
