@@ -7,6 +7,7 @@ import { filterCandlesToRecent24Hours } from "../market-window";
 import { getUiText } from "../i18n";
 import { fetchDashboardSnapshot, fetchOrderActivity, submitSignedExchangeRequest, updateLeverageRequest } from "./api";
 import { buildCandlesFromMarket, buildCandlesFromTicks, buildVolumeFromMarket, buildVolumeFromTicks, mergeCandlesWithTicks } from "./chart-data";
+import { buildBook, buildEnrichedTicks, buildStats, buildSyntheticBook, buildTrades } from "./dashboard-derived";
 import { calculateMarginPreview, createAdvancedOrdersBody, createAdvancedTriggerWireOrder, createCancelOrderBody, createClosePositionBody, createModifyTriggerOrderBody, createOcoOrdersBody, createSimpleOrderBody, hasInsufficientMargin } from "./model";
 import type { AdvancedOrderForm, DashboardViewProps, EnrichedTick, FrontendOpenOrder, HistoricalOrder, OcoOrderForm, PersonalFill, State, TickPayload } from "./types";
 import { TIMEFRAMES, coinFromSymbol, extractExchangeMessage, fmt, mergeEvents, priceDigitsForSymbol, toOid } from "./utils";
@@ -78,33 +79,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
   const limitPriceValue = Number(orderForm.limitPrice);
   const availableBalance = state.account?.availableBalance ?? 0;
 
-  const ticks = useMemo<EnrichedTick[]>(() => {
-    const marketTicks = state.events
-      .filter((event) => event.eventType === "MarketTickReceived")
-      .map((event) => ({ symbol: event.symbol, ...(event.payload as TickPayload) }));
-
-    let previousLast: number | undefined;
-    let previousVolume = 0.18;
-    const acceptedTicks: EnrichedTick[] = [];
-
-    for (const tick of marketTicks) {
-      const priceMoveRatio = previousLast ? Math.abs(tick.last - previousLast) / previousLast : 0;
-      const spreadRatio = tick.last > 0 ? tick.spread / tick.last : 0;
-      const baseVolume = 0.12 + Math.min(priceMoveRatio * 60, 0.22) + Math.min(spreadRatio * 220, 0.08);
-      const smoothedVolume = Number((previousVolume * 0.72 + baseVolume * 0.28).toFixed(4));
-
-      acceptedTicks.push({
-        ...tick,
-        syntheticVolume: smoothedVolume,
-        aggressorSide: previousLast && tick.last < previousLast ? "sell" : "buy"
-      });
-
-      previousLast = tick.last;
-      previousVolume = smoothedVolume;
-    }
-
-    return acceptedTicks;
-  }, [state.events]);
+  const ticks = useMemo<EnrichedTick[]>(() => buildEnrichedTicks(state.events), [state.events]);
 
   const recentMarketCandles = useMemo(() => state.market ? filterCandlesToRecent24Hours(state.market.candles) : [], [state.market]);
 
@@ -127,52 +102,17 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     return buildVolumeFromTicks(ticks, selectedTimeframe.bucketMs);
   }, [recentMarketCandles, selectedTimeframe.bucketMs, ticks]);
 
-  const stats = useMemo(() => {
-    const lastCandle = candles[candles.length - 1];
+  const stats = useMemo(() => buildStats({
+    market: state.market,
+    latestTickLast: state.latestTick?.last,
+    candles,
+    recentMarketCandles,
+    ticks
+  }), [candles, recentMarketCandles, state.latestTick?.last, state.market, ticks]);
 
-    if (state.market?.assetCtx) {
-      const reference = state.market.assetCtx.prevDayPrice ?? candles[0]?.open;
-      const last = state.latestTick?.last ?? lastCandle?.close ?? state.market.assetCtx.markPrice ?? state.market.markPrice;
-      return {
-        last,
-        change: last && reference ? ((last - reference) / reference) * 100 : undefined,
-        low: candles.length > 0 ? Math.min(...candles.map((candle) => candle.low)) : undefined,
-        high: candles.length > 0 ? Math.max(...candles.map((candle) => candle.high)) : undefined
-      };
-    }
+  const syntheticBook = useMemo(() => buildSyntheticBook(state.latestTick), [state.latestTick]);
 
-    if (!candles.length) {
-      return { last: undefined, change: undefined, low: undefined, high: undefined };
-    }
-
-    const first = candles[0]?.open ?? 0;
-    const last = lastCandle?.close;
-    return {
-      last,
-      change: first && last ? ((last - first) / first) * 100 : 0,
-      low: Math.min(...candles.map((candle) => candle.low)),
-      high: Math.max(...candles.map((candle) => candle.high))
-    };
-  }, [candles, state.latestTick?.last, state.market?.assetCtx, state.market?.markPrice]);
-
-  const syntheticBook = useMemo(() => {
-    const mid = state.latestTick?.last ?? 100;
-    const step = Math.max((state.latestTick?.spread ?? 1) / 2, 0.001);
-    return {
-      asks: Array.from({ length: 8 }, (_, index) => ({ price: Number((mid + step * (8 - index)).toFixed(4)), size: Number((0.25 + index * 0.08).toFixed(4)) })),
-      bids: Array.from({ length: 8 }, (_, index) => ({ price: Number((mid - step * (index + 1)).toFixed(4)), size: Number((0.22 + index * 0.09).toFixed(4)) }))
-    };
-  }, [state.latestTick]);
-
-  const book = useMemo(() => {
-    if (state.market && state.market.book.asks.length > 0 && state.market.book.bids.length > 0) {
-      return {
-        asks: state.market.book.asks.map((level) => ({ price: level.price, size: level.size })),
-        bids: state.market.book.bids.map((level) => ({ price: level.price, size: level.size }))
-      };
-    }
-    return syntheticBook;
-  }, [state.market, syntheticBook]);
+  const book = useMemo(() => buildBook(state.market, syntheticBook), [state.market, syntheticBook]);
 
   const bookWithDepth = useMemo(() => {
     let askRunningTotal = 0;
@@ -190,23 +130,12 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
     return { asks, bids, maxAskTotal: Math.max(...asks.map((level) => level.total), 0), maxBidTotal: Math.max(...bids.map((level) => level.total), 0) };
   }, [book]);
 
-  const trades = useMemo(() => {
-    if (state.market && state.market.trades.length > 0) {
-      return state.market.trades.map((trade) => ({ id: trade.id, time: new Date(trade.time).toISOString(), price: trade.price, size: trade.size, side: trade.side, source: "market" as const }));
-    }
-
-    const fillTrades = state.events
-      .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
-      .slice()
-      .reverse()
-      .map((event) => {
-        const payload = event.payload as { fillPrice: number; fillQuantity: number; orderId: string };
-        const order = state.orders.find((entry) => entry.id === payload.orderId);
-        return { id: event.eventId, time: event.occurredAt, price: payload.fillPrice, size: payload.fillQuantity, side: order?.side ?? "buy", source: "fill" as const };
-      });
-    const tapeTrades = ticks.slice(-24).reverse().map((tick, index) => ({ id: `tick-${tick.tickTime}-${index}`, time: tick.tickTime, price: tick.last, size: Number((tick.syntheticVolume * (0.92 + index * 0.025)).toFixed(4)), side: tick.aggressorSide, source: "tape" as const }));
-    return [...fillTrades, ...tapeTrades].sort((left, right) => new Date(right.time).getTime() - new Date(left.time).getTime()).slice(0, 24);
-  }, [state.events, state.market, state.orders, ticks]);
+  const trades = useMemo(() => buildTrades({
+    market: state.market,
+    events: state.events,
+    orders: state.orders,
+    ticks
+  }), [state.events, state.market, state.orders, ticks]);
 
   const activeOrders = useMemo(() => state.orders.filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED"), [state.orders]);
   const openOrderRows = useMemo(() => {

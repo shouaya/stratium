@@ -7,25 +7,25 @@ import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } fro
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "../i18n";
 import { formatTokyoDateTime } from "../time";
 import { buildApiUrl, buildWebSocketUrl } from "../api-base-url";
-
-type TickPayload = {
-  bid: number;
-  ask: number;
-  last: number;
-  spread: number;
-  tickTime: string;
-  volatilityTag?: string;
-  symbol?: string;
-};
+import {
+  buildActiveSymbolSelectOptions,
+  buildCoinSelectOptions,
+  buildExchangeSelectOptions,
+  filterSymbolsForExchange,
+  filterVisibleBatchJobs,
+  normalizeBatchFormForSymbolOptions,
+  syncBatchFormWithActiveSymbol,
+  syncTickFormFromLatestTick,
+  updateBatchFormForCoin,
+  updateBatchFormForExchange,
+  updateBatchFormForSymbol,
+  type BatchJobDefinition,
+  type SymbolOption,
+  type TickPayload
+} from "./admin-console-helpers";
 
 type FrontendUser = AuthUser & { role: "frontend" };
 type AdminMenu = "dashboard" | "users" | "platform" | "market" | "batch";
-
-type BatchJobDefinition = {
-  id: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day" | "batch-switch-active-symbol";
-  label: string;
-  description: string;
-};
 
 type BatchJobRunResult = {
   executionId?: string;
@@ -64,16 +64,6 @@ type AdminState = {
   lastBatchJobExecution?: BatchJobRunResult | null;
 };
 
-type SymbolOption = {
-  source: string;
-  symbol: string;
-  coin: string;
-  leverage: number;
-  maxLeverage: number;
-  szDecimals: number;
-  quoteAsset: string;
-};
-
 const fmt = (n?: number | null, d = 2) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const stamp = (value?: string) => formatTokyoDateTime(value);
 
@@ -94,11 +84,6 @@ const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
 };
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
 const DEFAULT_EXCHANGE = "hyperliquid";
-const HIDDEN_BATCH_JOB_IDS: BatchJobDefinition["id"][] = [
-  "db-bootstrap",
-  "batch-clear-kline",
-  "batch-import-hl-day"
-];
 
 export function AdminConsole({
   apiBaseUrl,
@@ -156,43 +141,21 @@ export function AdminConsole({
   const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
   const switchSymbolJobId: BatchJobDefinition["id"] = "batch-switch-active-symbol";
   const visibleJobs = useMemo(
-    () => jobs.filter((job) => !HIDDEN_BATCH_JOB_IDS.includes(job.id)),
+    () => filterVisibleBatchJobs(jobs),
     [jobs]
   );
   const exchangeSelectOptions = useMemo(() => {
-    const options = [...new Set(symbolOptions.map((entry) => entry.source))]
-      .map((value) => ({ value, label: value }));
-
-    if (batchForm.exchange && !options.some((entry) => entry.value === batchForm.exchange)) {
-      options.unshift({ value: batchForm.exchange, label: batchForm.exchange });
-    }
-
-    return options;
+    return buildExchangeSelectOptions(symbolOptions, batchForm.exchange);
   }, [batchForm.exchange, symbolOptions]);
   const symbolsForSelectedExchange = useMemo(
-    () => symbolOptions.filter((entry) => entry.source === batchForm.exchange),
+    () => filterSymbolsForExchange(symbolOptions, batchForm.exchange),
     [batchForm.exchange, symbolOptions]
   );
   const activeSymbolSelectOptions = useMemo(() => {
-    const scopedSymbols = symbolsForSelectedExchange.filter((entry) => entry.coin === batchForm.coin);
-    const options = (scopedSymbols.length > 0 ? scopedSymbols : symbolsForSelectedExchange)
-      .map((entry) => ({ value: entry.symbol, label: entry.symbol }));
-
-    if (batchForm.symbol && !options.some((entry) => entry.value === batchForm.symbol)) {
-      options.unshift({ value: batchForm.symbol, label: batchForm.symbol });
-    }
-
-    return options;
+    return buildActiveSymbolSelectOptions(symbolsForSelectedExchange, batchForm.coin, batchForm.symbol);
   }, [batchForm.coin, batchForm.symbol, symbolsForSelectedExchange]);
   const coinSelectOptions = useMemo(() => {
-    const options = [...new Set(symbolsForSelectedExchange.map((entry) => entry.coin))]
-      .map((value) => ({ value, label: value }));
-
-    if (batchForm.coin && !options.some((entry) => entry.value === batchForm.coin)) {
-      options.unshift({ value: batchForm.coin, label: batchForm.coin });
-    }
-
-    return options;
+    return buildCoinSelectOptions(symbolsForSelectedExchange, batchForm.coin);
   }, [batchForm.coin, symbolsForSelectedExchange]);
 
   useEffect(() => {
@@ -289,13 +252,7 @@ export function AdminConsole({
       return;
     }
 
-    setTickForm((current) => ({
-      symbol: state.latestTick?.symbol ?? current.symbol,
-      bid: state.latestTick?.bid.toFixed(2) ?? current.bid,
-      ask: state.latestTick?.ask.toFixed(2) ?? current.ask,
-      last: state.latestTick?.last.toFixed(2) ?? current.last,
-      spread: state.latestTick?.spread.toFixed(2) ?? current.spread
-    }));
+    setTickForm((current) => syncTickFormFromLatestTick(current, state.latestTick));
   }, [state.latestTick?.tickTime]);
 
   useEffect(() => {
@@ -303,26 +260,7 @@ export function AdminConsole({
       return;
     }
 
-    setBatchForm((current) => {
-      const symbolMeta = symbolOptions.find((entry) => entry.symbol === settingsForm.activeSymbol);
-      const exchange = settingsForm.activeExchange || symbolMeta?.source || current.exchange;
-      const coin = symbolMeta?.coin ?? settingsForm.activeSymbol.replace(/-USD$/i, "");
-
-      if (
-        current.exchange === exchange
-        && current.symbol === settingsForm.activeSymbol
-        && current.coin === coin
-      ) {
-        return current;
-      }
-
-      return {
-        ...current,
-        exchange,
-        symbol: settingsForm.activeSymbol,
-        coin
-      };
-    });
+    setBatchForm((current) => syncBatchFormWithActiveSymbol(current, settingsForm, symbolOptions));
   }, [settingsForm.activeExchange, settingsForm.activeSymbol, symbolOptions]);
 
   useEffect(() => {
@@ -330,37 +268,7 @@ export function AdminConsole({
       return;
     }
 
-    setBatchForm((current) => {
-      const activeSymbolMeta = symbolOptions.find((entry) => entry.symbol === settingsForm.activeSymbol);
-      const exchange = symbolsForSelectedExchange.length > 0
-        ? current.exchange
-        : settingsForm.activeExchange && symbolOptions.some((entry) => entry.source === settingsForm.activeExchange)
-          ? settingsForm.activeExchange
-          : activeSymbolMeta?.source ?? symbolOptions[0]?.source ?? current.exchange;
-      const exchangeSymbols = symbolOptions.filter((entry) => entry.source === exchange);
-      const coin = exchangeSymbols.some((entry) => entry.coin === current.coin)
-        ? current.coin
-        : activeSymbolMeta?.source === exchange
-          ? activeSymbolMeta.coin
-          : exchangeSymbols[0]?.coin ?? current.coin;
-      const coinSymbols = exchangeSymbols.filter((entry) => entry.coin === coin);
-      const symbol = coinSymbols.some((entry) => entry.symbol === current.symbol)
-        ? current.symbol
-        : activeSymbolMeta?.source === exchange && activeSymbolMeta.coin === coin
-          ? activeSymbolMeta.symbol
-          : coinSymbols[0]?.symbol ?? exchangeSymbols[0]?.symbol ?? current.symbol;
-
-      if (exchange === current.exchange && symbol === current.symbol && coin === current.coin) {
-        return current;
-      }
-
-      return {
-        ...current,
-        exchange,
-        symbol,
-        coin
-      };
-    });
+    setBatchForm((current) => normalizeBatchFormForSymbolOptions(current, settingsForm, symbolOptions, symbolsForSelectedExchange));
   }, [settingsForm.activeExchange, settingsForm.activeSymbol, symbolOptions, symbolsForSelectedExchange.length]);
 
   const fetchJson = async <T,>(path: string): Promise<T | null> => {
@@ -851,51 +759,19 @@ export function AdminConsole({
             label={ui.admin.exchange}
             value={batchForm.exchange}
             options={exchangeSelectOptions}
-            onChange={(value) => setBatchForm((current) => {
-              const exchangeSymbols = symbolOptions.filter((entry) => entry.source === value);
-              const coin = exchangeSymbols.some((entry) => entry.coin === current.coin)
-                ? current.coin
-                : exchangeSymbols[0]?.coin ?? current.coin;
-              const symbol = exchangeSymbols.find((entry) => entry.coin === coin)?.symbol
-                ?? exchangeSymbols[0]?.symbol
-                ?? current.symbol;
-
-              return {
-                ...current,
-                exchange: value,
-                coin,
-                symbol
-              };
-            })}
+            onChange={(value) => setBatchForm((current) => updateBatchFormForExchange(current, symbolOptions, value))}
           />
           <SelectField
             label={ui.admin.activeSymbol}
             value={batchForm.symbol}
             options={activeSymbolSelectOptions}
-            onChange={(value) => setBatchForm((current) => {
-              const symbolMeta = symbolOptions.find((entry) => entry.symbol === value);
-
-              return {
-                ...current,
-                exchange: symbolMeta?.source ?? current.exchange,
-                symbol: value,
-                coin: symbolMeta?.coin ?? value.replace(/-USD$/i, "")
-              };
-            })}
+            onChange={(value) => setBatchForm((current) => updateBatchFormForSymbol(current, symbolOptions, value))}
           />
           <SelectField
             label={ui.admin.coin}
             value={batchForm.coin}
             options={coinSelectOptions}
-            onChange={(value) => setBatchForm((current) => {
-              const coinSymbols = symbolOptions.filter((entry) => entry.source === current.exchange && entry.coin === value);
-
-              return {
-                ...current,
-                coin: value,
-                symbol: coinSymbols.find((entry) => entry.symbol === current.symbol)?.symbol ?? coinSymbols[0]?.symbol ?? current.symbol
-              };
-            })}
+            onChange={(value) => setBatchForm((current) => updateBatchFormForCoin(current, symbolOptions, value))}
           />
           <SelectField
             label="Refresh Window"
