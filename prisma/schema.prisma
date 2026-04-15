@@ -37,6 +37,9 @@ model PlatformSettings {
   id                    String   @id
   platformName          String
   platformAnnouncement  String?
+  activeExchange        String   @default("hyperliquid")
+  activeSymbol          String   @default("BTC-USD")
+  maintenanceMode       Boolean  @default(false)
   allowFrontendTrading  Boolean  @default(true)
   allowManualTicks      Boolean  @default(true)
   allowSimulatorControl Boolean  @default(true)

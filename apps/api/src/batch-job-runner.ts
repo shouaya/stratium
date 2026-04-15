@@ -2,7 +2,8 @@ export type BatchJobId =
   | "db-bootstrap"
   | "batch-clear-kline"
   | "batch-import-hl-day"
-  | "batch-refresh-hl-day";
+  | "batch-refresh-hl-day"
+  | "batch-switch-active-symbol";
 
 export interface BatchJobDefinition {
   id: BatchJobId;
@@ -11,7 +12,9 @@ export interface BatchJobDefinition {
 }
 
 export interface BatchJobRunInput {
+  exchange?: string;
   coin?: string;
+  symbol?: string;
   date?: string;
   interval?: string;
 }
@@ -66,6 +69,11 @@ const JOB_DEFINITIONS: BatchJobDefinition[] = [
     id: "batch-refresh-hl-day",
     label: "Refresh Hyperliquid Day",
     description: "Stop API, refresh the latest 24 hours of Hyperliquid 1-minute candles, then restart API."
+  },
+  {
+    id: "batch-switch-active-symbol",
+    label: "Switch Active Symbol",
+    description: "Switch the active trading symbol, import the latest 24 hours of candles, and restart API."
   }
 ];
 

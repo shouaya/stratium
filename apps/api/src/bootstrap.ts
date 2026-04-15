@@ -5,7 +5,7 @@ import { TradingRepository } from "./repository.js";
 
 export interface ApiBootstrapConfig {
   configuredTradingSymbol: string;
-  hyperliquidCoin: string;
+  fallbackHyperliquidCoin: string;
   hyperliquidCandleInterval: string;
 }
 
@@ -21,8 +21,11 @@ export const loadApiBootstrapState = async (
 ): Promise<ApiBootstrapState> => {
   const persistedSymbolConfig = await repository.loadSymbolConfig(config.configuredTradingSymbol);
   const persistedSymbolMeta = await repository.loadSymbolConfigMeta(config.configuredTradingSymbol);
+  const resolvedCoin = persistedSymbolMeta?.coin
+    ?? config.configuredTradingSymbol.replace(/-USD$/i, "")
+    ?? config.fallbackHyperliquidCoin;
   const persistedMarketSnapshot = await repository.loadRecentMarketSnapshot(
-    config.hyperliquidCoin,
+    resolvedCoin,
     config.hyperliquidCandleInterval
   );
 

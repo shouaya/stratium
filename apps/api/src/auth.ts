@@ -15,6 +15,9 @@ export interface AuthUserProfile {
 export interface PlatformSettingsView {
   platformName: string;
   platformAnnouncement: string;
+  activeExchange: string;
+  activeSymbol: string;
+  maintenanceMode: boolean;
   allowFrontendTrading: boolean;
   allowManualTicks: boolean;
   allowSimulatorControl: boolean;

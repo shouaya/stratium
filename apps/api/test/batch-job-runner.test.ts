@@ -67,7 +67,8 @@ describe("BatchJobRunner", () => {
       "db-bootstrap",
       "batch-clear-kline",
       "batch-import-hl-day",
-      "batch-refresh-hl-day"
+      "batch-refresh-hl-day",
+      "batch-switch-active-symbol"
     ]);
     expect(await runner.run("batch-refresh-hl-day", { coin: "BTC" })).toMatchObject({
       executionId: "exec-1"
@@ -88,6 +89,7 @@ describe("BatchJobRunner", () => {
     await expect(disabledRunner.getExecution("x")).rejects.toThrow("Batch job runner is disabled.");
 
     vi.resetModules();
+    fetchMock.mockReset();
     delete process.env.BATCH_JOB_RUNNER_ENABLED;
     const module = await import("../src/batch-job-runner");
     const runner = new module.BatchJobRunner();
@@ -118,6 +120,7 @@ describe("BatchJobRunner", () => {
     process.env.JOB_RUNNER_BASE_URL = " http://runner.example ";
     process.env.JOB_RUNNER_TOKEN = " token-123 ";
     vi.resetModules();
+    fetchMock.mockReset();
     const module = await import("../src/batch-job-runner");
     const runner = new module.BatchJobRunner();
 

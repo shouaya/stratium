@@ -6,6 +6,9 @@ describe("AuthRuntime", () => {
     getPlatformSettings: vi.fn(async () => ({
       platformName: "Stratium Demo",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: true
@@ -187,11 +190,16 @@ describe("AuthRuntime", () => {
     expect(await runtime.updatePlatformSettings({
       platformName: "Desk",
       platformAnnouncement: "Notice",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false,
       allowManualTicks: false,
       allowSimulatorControl: false
     })).toMatchObject({
       platformName: "Desk",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false
     });
   });

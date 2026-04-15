@@ -121,6 +121,9 @@ describe("TradingRepository", () => {
       id: "platform",
       platformName: "Desk",
       platformAnnouncement: "Notice",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false,
       allowManualTicks: false,
       allowSimulatorControl: false
@@ -167,6 +170,9 @@ describe("TradingRepository", () => {
         id: "platform",
         platformName: "Desk",
         platformAnnouncement: "Notice",
+        activeExchange: "hyperliquid",
+        activeSymbol: "BTC-USD",
+        maintenanceMode: false,
         allowFrontendTrading: false,
         allowManualTicks: false,
         allowSimulatorControl: false
@@ -242,6 +248,9 @@ describe("TradingRepository", () => {
     expect(await repository.getPlatformSettings()).toEqual({
       platformName: "Stratium Demo",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: true
@@ -249,6 +258,9 @@ describe("TradingRepository", () => {
     expect(await repository.getPlatformSettings()).toEqual({
       platformName: "Desk",
       platformAnnouncement: "Notice",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false,
       allowManualTicks: false,
       allowSimulatorControl: false
@@ -257,12 +269,18 @@ describe("TradingRepository", () => {
     expect(await repository.updatePlatformSettings({
       platformName: "Desk",
       platformAnnouncement: "Notice",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false,
       allowManualTicks: false,
       allowSimulatorControl: false
     })).toEqual({
       platformName: "Desk",
       platformAnnouncement: "Notice",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: false,
       allowManualTicks: false,
       allowSimulatorControl: false
@@ -329,6 +347,7 @@ describe("TradingRepository", () => {
         enginePartialFillEnabled: false
       })
       .mockResolvedValueOnce({
+        source: "hyperliquid",
         symbol: "BTC-USD",
         coin: "BTC",
         engineDefaultLeverage: 8,
@@ -350,6 +369,7 @@ describe("TradingRepository", () => {
     }]);
     expect(await repository.loadSimulationSnapshot("session-1")).toEqual({
       lastSequence: 12,
+      createdAt: "2026-01-01T00:12:00.000Z",
       updatedAt: "2026-01-01T00:12:00.000Z",
       state: {
         simulationSessionId: "session-1",
@@ -404,6 +424,7 @@ describe("TradingRepository", () => {
       partialFillEnabled: false
     });
     expect(await repository.loadSymbolConfigMeta("BTC-USD")).toEqual({
+      source: "hyperliquid",
       symbol: "BTC-USD",
       coin: "BTC",
       leverage: 8,
@@ -1285,6 +1306,9 @@ describe("TradingRepository", () => {
       id: "platform",
       platformName: "Desk",
       platformAnnouncement: null,
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: true,
       allowFrontendTrading: true,
       allowManualTicks: false,
       allowSimulatorControl: true
@@ -1292,6 +1316,9 @@ describe("TradingRepository", () => {
     expect(await repository.getPlatformSettings()).toEqual({
       platformName: "Desk",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: true,
       allowFrontendTrading: true,
       allowManualTicks: false,
       allowSimulatorControl: true
@@ -1301,6 +1328,9 @@ describe("TradingRepository", () => {
       id: "platform",
       platformName: "Desk",
       platformAnnouncement: null,
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: false
@@ -1308,12 +1338,18 @@ describe("TradingRepository", () => {
     expect(await repository.updatePlatformSettings({
       platformName: "Desk",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: false
     })).toEqual({
       platformName: "Desk",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: false

@@ -34,7 +34,7 @@ type FrontendUser = AuthUser & { role: "frontend" };
 type AdminMenu = "dashboard" | "users" | "platform" | "market" | "batch";
 
 type BatchJobDefinition = {
-  id: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day";
+  id: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day" | "batch-switch-active-symbol";
   label: string;
   description: string;
 };
@@ -77,6 +77,16 @@ type AdminState = {
   lastBatchJobExecution?: BatchJobRunResult | null;
 };
 
+type SymbolOption = {
+  source: string;
+  symbol: string;
+  coin: string;
+  leverage: number;
+  maxLeverage: number;
+  szDecimals: number;
+  quoteAsset: string;
+};
+
 const fmt = (n?: number | null, d = 2) => n == null ? "-" : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const stamp = (value?: string) => formatTokyoDateTime(value);
 
@@ -95,6 +105,8 @@ const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
   market: "/admin/market",
   batch: "/admin/batch"
 };
+const INTERVAL_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
+const DEFAULT_EXCHANGE = "hyperliquid";
 
 export function AdminConsole({
   apiBaseUrl,
@@ -119,6 +131,7 @@ export function AdminConsole({
   const [busy, setBusy] = useState(false);
   const [users, setUsers] = useState<FrontendUser[]>([]);
   const [jobs, setJobs] = useState<BatchJobDefinition[]>([]);
+  const [symbolOptions, setSymbolOptions] = useState<SymbolOption[]>([]);
   const [jobResult, setJobResult] = useState<BatchJobRunResult | null>(null);
   const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
   const [simForm, setSimForm] = useState({ intervalMs: "1200", volatilityBps: "22", driftBps: "0", anchorPrice: "69830" });
@@ -129,11 +142,16 @@ export function AdminConsole({
   const [settingsForm, setSettingsForm] = useState<PlatformSettings>({
     platformName: "Stratium Demo",
     platformAnnouncement: "",
+    activeExchange: DEFAULT_EXCHANGE,
+    activeSymbol: "BTC-USD",
+    maintenanceMode: false,
     allowFrontendTrading: true,
     allowManualTicks: true,
     allowSimulatorControl: true
   });
   const [batchForm, setBatchForm] = useState({
+    exchange: DEFAULT_EXCHANGE,
+    symbol: "BTC-USD",
     coin: "BTC",
     date: new Date().toISOString().slice(0, 10),
     interval: "1m"
@@ -144,6 +162,42 @@ export function AdminConsole({
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
   const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
+  const switchSymbolJobId: BatchJobDefinition["id"] = "batch-switch-active-symbol";
+  const exchangeSelectOptions = useMemo(() => {
+    const options = [...new Set(symbolOptions.map((entry) => entry.source))]
+      .map((value) => ({ value, label: value }));
+
+    if (batchForm.exchange && !options.some((entry) => entry.value === batchForm.exchange)) {
+      options.unshift({ value: batchForm.exchange, label: batchForm.exchange });
+    }
+
+    return options;
+  }, [batchForm.exchange, symbolOptions]);
+  const symbolsForSelectedExchange = useMemo(
+    () => symbolOptions.filter((entry) => entry.source === batchForm.exchange),
+    [batchForm.exchange, symbolOptions]
+  );
+  const activeSymbolSelectOptions = useMemo(() => {
+    const scopedSymbols = symbolsForSelectedExchange.filter((entry) => entry.coin === batchForm.coin);
+    const options = (scopedSymbols.length > 0 ? scopedSymbols : symbolsForSelectedExchange)
+      .map((entry) => ({ value: entry.symbol, label: entry.symbol }));
+
+    if (batchForm.symbol && !options.some((entry) => entry.value === batchForm.symbol)) {
+      options.unshift({ value: batchForm.symbol, label: batchForm.symbol });
+    }
+
+    return options;
+  }, [batchForm.coin, batchForm.symbol, symbolsForSelectedExchange]);
+  const coinSelectOptions = useMemo(() => {
+    const options = [...new Set(symbolsForSelectedExchange.map((entry) => entry.coin))]
+      .map((value) => ({ value, label: value }));
+
+    if (batchForm.coin && !options.some((entry) => entry.value === batchForm.coin)) {
+      options.unshift({ value: batchForm.coin, label: batchForm.coin });
+    }
+
+    return options;
+  }, [batchForm.coin, symbolsForSelectedExchange]);
 
   useEffect(() => {
     let active = true;
@@ -245,6 +299,71 @@ export function AdminConsole({
     }));
   }, [state.latestTick?.tickTime]);
 
+  useEffect(() => {
+    if (!settingsForm.activeSymbol) {
+      return;
+    }
+
+    setBatchForm((current) => {
+      const symbolMeta = symbolOptions.find((entry) => entry.symbol === settingsForm.activeSymbol);
+      const exchange = settingsForm.activeExchange || symbolMeta?.source || current.exchange;
+      const coin = symbolMeta?.coin ?? settingsForm.activeSymbol.replace(/-USD$/i, "");
+
+      if (
+        current.exchange === exchange
+        && current.symbol === settingsForm.activeSymbol
+        && current.coin === coin
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        exchange,
+        symbol: settingsForm.activeSymbol,
+        coin
+      };
+    });
+  }, [settingsForm.activeExchange, settingsForm.activeSymbol, symbolOptions]);
+
+  useEffect(() => {
+    if (symbolOptions.length === 0) {
+      return;
+    }
+
+    setBatchForm((current) => {
+      const activeSymbolMeta = symbolOptions.find((entry) => entry.symbol === settingsForm.activeSymbol);
+      const exchange = symbolsForSelectedExchange.length > 0
+        ? current.exchange
+        : settingsForm.activeExchange && symbolOptions.some((entry) => entry.source === settingsForm.activeExchange)
+          ? settingsForm.activeExchange
+          : activeSymbolMeta?.source ?? symbolOptions[0]?.source ?? current.exchange;
+      const exchangeSymbols = symbolOptions.filter((entry) => entry.source === exchange);
+      const coin = exchangeSymbols.some((entry) => entry.coin === current.coin)
+        ? current.coin
+        : activeSymbolMeta?.source === exchange
+          ? activeSymbolMeta.coin
+          : exchangeSymbols[0]?.coin ?? current.coin;
+      const coinSymbols = exchangeSymbols.filter((entry) => entry.coin === coin);
+      const symbol = coinSymbols.some((entry) => entry.symbol === current.symbol)
+        ? current.symbol
+        : activeSymbolMeta?.source === exchange && activeSymbolMeta.coin === coin
+          ? activeSymbolMeta.symbol
+          : coinSymbols[0]?.symbol ?? exchangeSymbols[0]?.symbol ?? current.symbol;
+
+      if (exchange === current.exchange && symbol === current.symbol && coin === current.coin) {
+        return current;
+      }
+
+      return {
+        ...current,
+        exchange,
+        symbol,
+        coin
+      };
+    });
+  }, [settingsForm.activeExchange, settingsForm.activeSymbol, symbolOptions, symbolsForSelectedExchange.length]);
+
   const fetchJson = async <T,>(path: string): Promise<T | null> => {
       const response = await fetch(buildApiUrl(apiBaseUrl, path), {
       headers: authHeaders(authToken, locale),
@@ -306,25 +425,36 @@ export function AdminConsole({
     return true;
   };
 
+  const loadSymbolOptions = async () => {
+    const payload = await fetchJson<{ symbols: SymbolOption[] }>("/api/admin/symbol-configs");
+
+    if (!payload) {
+      return false;
+    }
+
+    setSymbolOptions(payload.symbols);
+    return true;
+  };
+
   const refreshCurrentSection = async () => {
     const loadToken = ++sectionLoadTokenRef.current;
 
     try {
       switch (currentSection) {
         case "dashboard":
-          await Promise.all([loadAdminState(), loadUsers(), loadPlatformSettings()]);
+          await Promise.all([loadAdminState(), loadUsers(), loadPlatformSettings(), loadSymbolOptions()]);
           break;
         case "users":
           await loadUsers();
           break;
         case "platform":
-          await loadPlatformSettings();
+          await Promise.all([loadPlatformSettings(), loadSymbolOptions()]);
           break;
         case "market":
           await loadAdminState();
           break;
         case "batch":
-          await Promise.all([loadAdminState(), loadBatchJobs()]);
+          await Promise.all([loadAdminState(), loadBatchJobs(), loadSymbolOptions()]);
           break;
         default:
           await loadAdminState();
@@ -495,6 +625,11 @@ export function AdminConsole({
           coin: batchForm.coin,
           interval: batchForm.interval
         }
+        : jobId === switchSymbolJobId
+          ? {
+            exchange: batchForm.exchange,
+            symbol: batchForm.symbol
+          }
         : batchForm;
       const response = await fetch(buildApiUrl(apiBaseUrl, `/api/admin/batch-jobs/${jobId}/run`), {
         method: "POST",
@@ -554,8 +689,9 @@ export function AdminConsole({
       <div style={metricGrid}>
         <MetricCard label={ui.admin.frontendUsers} value={String(users.length)} detail={`${activeUserCount} ${ui.admin.activeUsers.toLowerCase()}`} />
         <MetricCard label={ui.admin.trading} value={settingsForm.allowFrontendTrading ? ui.common.active : ui.common.disabled} detail="frontend order switch" tone={settingsForm.allowFrontendTrading ? "good" : "bad"} />
+        <MetricCard label={ui.admin.maintenanceMode} value={settingsForm.maintenanceMode ? ui.common.active : ui.common.disabled} detail="frontend access gate" tone={settingsForm.maintenanceMode ? "bad" : "good"} />
         <MetricCard label={ui.admin.simulator} value={state.simulator?.enabled ? ui.common.active : ui.common.disabled} detail={state.simulator?.enabled ? `${state.simulator.tickCount} ticks` : "market simulator"} tone={state.simulator?.enabled ? "good" : undefined} />
-        <MetricCard label={ui.admin.lastPrice} value={fmt(state.latestTick?.last, 2)} detail={stamp(state.latestTick?.tickTime)} />
+        <MetricCard label={ui.admin.lastPrice} value={fmt(state.latestTick?.last, 2)} detail={`${settingsForm.activeExchange}:${settingsForm.activeSymbol} · ${stamp(state.latestTick?.tickTime)}`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 16 }}>
@@ -563,6 +699,9 @@ export function AdminConsole({
           <div style={panelTitle}>{ui.admin.quickStatus}</div>
           <div style={stack}>
             <StatusRow label={ui.admin.announcement} value={settingsForm.platformAnnouncement || "-"} />
+            <StatusRow label={ui.admin.activeExchange} value={settingsForm.activeExchange} />
+            <StatusRow label={ui.admin.activeSymbol} value={settingsForm.activeSymbol} />
+            <StatusRow label={ui.admin.maintenanceMode} value={settingsForm.maintenanceMode ? ui.common.active : ui.common.disabled} />
             <StatusRow label={ui.admin.allowManualTicks} value={settingsForm.allowManualTicks ? ui.common.active : ui.common.disabled} />
             <StatusRow label={ui.admin.allowSimulatorControl} value={settingsForm.allowSimulatorControl ? ui.common.active : ui.common.disabled} />
             <StatusRow label={`${ui.admin.currentBid} / ${ui.admin.currentAsk}`} value={`${fmt(state.latestTick?.bid, 2)} / ${fmt(state.latestTick?.ask, 2)}`} />
@@ -636,6 +775,9 @@ export function AdminConsole({
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 640px)", gap: 12 }}>
         <Field label={ui.admin.platformName} value={settingsForm.platformName} onChange={(value) => setSettingsForm((current) => ({ ...current, platformName: value }))} />
         <Field label={ui.admin.announcement} value={settingsForm.platformAnnouncement} onChange={(value) => setSettingsForm((current) => ({ ...current, platformAnnouncement: value }))} />
+        <Field label={ui.admin.activeExchange} value={settingsForm.activeExchange} onChange={() => undefined} readOnly />
+        <Field label={ui.admin.activeSymbol} value={settingsForm.activeSymbol} onChange={() => undefined} readOnly />
+        <Toggle label={ui.admin.maintenanceMode} checked={settingsForm.maintenanceMode} onChange={(checked) => setSettingsForm((current) => ({ ...current, maintenanceMode: checked }))} />
         <Toggle label={ui.admin.allowFrontendTrading} checked={settingsForm.allowFrontendTrading} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowFrontendTrading: checked }))} />
         <Toggle label={ui.admin.allowManualTicks} checked={settingsForm.allowManualTicks} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowManualTicks: checked }))} />
         <Toggle label={ui.admin.allowSimulatorControl} checked={settingsForm.allowSimulatorControl} onChange={(checked) => setSettingsForm((current) => ({ ...current, allowSimulatorControl: checked }))} />
@@ -684,10 +826,70 @@ export function AdminConsole({
     <div style={{ display: "grid", gap: 16 }}>
       <section style={panel}>
         <div style={panelTitle}>{ui.admin.batchInputs}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(180px, 240px))", gap: 12 }}>
-          <Field label="Coin" value={batchForm.coin} onChange={(value) => setBatchForm((current) => ({ ...current, coin: value.toUpperCase() }))} />
-          <Field label="Refresh Window" value="Latest 24h" onChange={() => undefined} readOnly />
-          <Field label="Interval" value={batchForm.interval} onChange={(value) => setBatchForm((current) => ({ ...current, interval: value }))} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(180px, 240px))", gap: 12 }}>
+          <SelectField
+            label={ui.admin.exchange}
+            value={batchForm.exchange}
+            options={exchangeSelectOptions}
+            onChange={(value) => setBatchForm((current) => {
+              const exchangeSymbols = symbolOptions.filter((entry) => entry.source === value);
+              const coin = exchangeSymbols.some((entry) => entry.coin === current.coin)
+                ? current.coin
+                : exchangeSymbols[0]?.coin ?? current.coin;
+              const symbol = exchangeSymbols.find((entry) => entry.coin === coin)?.symbol
+                ?? exchangeSymbols[0]?.symbol
+                ?? current.symbol;
+
+              return {
+                ...current,
+                exchange: value,
+                coin,
+                symbol
+              };
+            })}
+          />
+          <SelectField
+            label={ui.admin.activeSymbol}
+            value={batchForm.symbol}
+            options={activeSymbolSelectOptions}
+            onChange={(value) => setBatchForm((current) => {
+              const symbolMeta = symbolOptions.find((entry) => entry.symbol === value);
+
+              return {
+                ...current,
+                exchange: symbolMeta?.source ?? current.exchange,
+                symbol: value,
+                coin: symbolMeta?.coin ?? value.replace(/-USD$/i, "")
+              };
+            })}
+          />
+          <SelectField
+            label={ui.admin.coin}
+            value={batchForm.coin}
+            options={coinSelectOptions}
+            onChange={(value) => setBatchForm((current) => {
+              const coinSymbols = symbolOptions.filter((entry) => entry.source === current.exchange && entry.coin === value);
+
+              return {
+                ...current,
+                coin: value,
+                symbol: coinSymbols.find((entry) => entry.symbol === current.symbol)?.symbol ?? coinSymbols[0]?.symbol ?? current.symbol
+              };
+            })}
+          />
+          <SelectField
+            label="Refresh Window"
+            value="Latest 24h"
+            options={[{ value: "Latest 24h", label: "Latest 24h" }]}
+            onChange={() => undefined}
+            disabled
+          />
+          <SelectField
+            label="Interval"
+            value={batchForm.interval}
+            options={INTERVAL_OPTIONS.map((value) => ({ value, label: value }))}
+            onChange={(value) => setBatchForm((current) => ({ ...current, interval: value }))}
+          />
         </div>
         <div style={{ marginTop: 10, color: "#7e97a5", fontSize: 12 }}>
           {jobs.some((job) => job.id === refreshJobId) ? "Refresh Hyperliquid Day always uses the latest 24 hours." : ""}
@@ -834,6 +1036,43 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
         style={{ borderRadius: 10, border: "1px solid #22343d", background: readOnly ? "#0d171d" : "#101b22", color: "#f8fafc", padding: "11px 12px" }}
       />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  disabled
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ color: "#7e97a5", fontSize: 12 }}>{label}</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        style={{
+          ...selectStyle,
+          padding: "11px 12px",
+          background: disabled ? "#0d171d" : "#101b22",
+          cursor: disabled ? "default" : "pointer"
+        }}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

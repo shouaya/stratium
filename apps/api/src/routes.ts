@@ -60,6 +60,25 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return session;
   };
 
+  const ensureFrontendAvailable = (
+    request: { headers: { authorization?: string | string[] | undefined } },
+    reply: { code(code: number): { send(payload: unknown): unknown } }
+  ): boolean => {
+    const locale = resolveLocale(request as never);
+    const messages = getMessages(locale);
+
+    if (!runtime.getPlatformSettings().maintenanceMode) {
+      return true;
+    }
+
+    reply.code(503).send({
+      status: "maintenance",
+      message: messages.admin.maintenanceActive
+    });
+
+    return false;
+  };
+
   const resolveFrontendAccount = (
     request: { headers: { authorization?: string | string[] | undefined }; query?: unknown; body?: unknown },
     reply: { code(code: number): { send(payload: unknown): unknown } },
@@ -67,10 +86,16 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   ): { accountId: string } | null => {
     const session = runtime.getSession(getToken(request));
     if (session?.user.role === "frontend" && session.user.tradingAccountId) {
+      if (!ensureFrontendAvailable(request, reply)) {
+        return null;
+      }
       return { accountId: session.user.tradingAccountId };
     }
 
     if (options?.allowBotSigner) {
+      if (!ensureFrontendAvailable(request, reply)) {
+        return null;
+      }
       try {
         const bot = botAuth.authenticate(runtime, (request.body ?? {}) as {
           action?: unknown;
@@ -217,6 +242,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     return botAuth.getCredentials(session.user.tradingAccountId as string);
   });
@@ -224,6 +252,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   app.get("/api/state", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
 
@@ -236,6 +267,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const session = runtime.getSession(getToken(request));
     if (!session) {
       return reply.code(401).send({ status: "unauthorized", message: messages.auth.loginRequired });
+    }
+    if (session.user.role === "frontend" && !ensureFrontendAvailable(request, reply)) {
+      return;
     }
 
     const query = request.query as { limit?: string };
@@ -251,6 +285,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return reply.code(401).send({ status: "unauthorized", message: messages.auth.loginRequired });
     }
+    if (session.user.role === "frontend" && !ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     const query = request.query as { limit?: string; interval?: string; coin?: string };
     const limit = Number(query.limit ?? 500);
@@ -265,11 +302,17 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
     return runtime.getEngineState(session.user.tradingAccountId as string).account;
   });
   app.get("/api/orders", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
     return runtime.getEngineState(session.user.tradingAccountId as string).orders;
@@ -279,11 +322,17 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
     return runtime.getEngineState(session.user.tradingAccountId as string).position;
   });
   app.get("/api/events", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
 
@@ -297,12 +346,18 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     return await runtime.getFillHistoryPayload(session.user.tradingAccountId as string);
   });
   app.get("/api/replay/:sessionId", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
     return await runtime.getReplayPayload(session.user.tradingAccountId as string, (request.params as { sessionId: string }).sessionId);
@@ -313,9 +368,15 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     const accountId = session.user.tradingAccountId as string;
-    const triggerHistory = await exchangeCompat.getVirtualOrderHistory(accountId);
+    const activeSymbol = runtime.getSymbolConfigState().symbol;
+    const activeCoin = runtime.getSymbolConfigState().coin;
+    const triggerHistory = (await exchangeCompat.getVirtualOrderHistory(accountId))
+      .filter((order) => `${order.coin}-USD` === activeSymbol);
     const triggerHistoryByCloid = new Map(triggerHistory.filter((order) => order.cloid).map((order) => [order.cloid as string, order]));
     const orders = runtime.getOrders(accountId)
       .slice()
@@ -356,7 +417,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
       kind: "trigger",
       orderId: String(order.oid),
       clientOrderId: order.cloid,
-      symbol: `${order.coin}-USD`,
+      symbol: `${activeCoin}-USD`,
       side: order.side === "B" ? "buy" : "sell",
       orderType: order.triggerCondition.isMarket ? "market" : "limit",
       quantity: Number(order.origSz),
@@ -462,6 +523,16 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return runtime.getPlatformSettings();
   });
 
+  app.get("/api/admin/symbol-configs", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return {
+      symbols: await runtime.listAvailableSymbolConfigMeta()
+    };
+  });
+
   app.get("/api/admin/batch-jobs", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;
@@ -515,6 +586,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const payload = request.body as {
       platformName?: string;
       platformAnnouncement?: string;
+      activeExchange?: string;
+      activeSymbol?: string;
+      maintenanceMode?: boolean;
       allowFrontendTrading?: boolean;
       allowManualTicks?: boolean;
       allowSimulatorControl?: boolean;
@@ -523,6 +597,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return runtime.updatePlatformSettings({
       platformName: payload.platformName?.trim() || "Stratium Demo",
       platformAnnouncement: payload.platformAnnouncement?.trim() ?? "",
+      activeExchange: payload.activeExchange?.trim().toLowerCase() || runtime.getPlatformSettings().activeExchange,
+      activeSymbol: payload.activeSymbol?.trim().toUpperCase() || runtime.getPlatformSettings().activeSymbol,
+      maintenanceMode: payload.maintenanceMode ?? false,
       allowFrontendTrading: payload.allowFrontendTrading ?? true,
       allowManualTicks: payload.allowManualTicks ?? true,
       allowSimulatorControl: payload.allowSimulatorControl ?? true
@@ -536,9 +613,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     const locale = resolveLocale(request as never);
     const messages = getMessages(locale);
 
-    const params = request.params as { jobId: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day" };
+    const params = request.params as { jobId: "db-bootstrap" | "batch-clear-kline" | "batch-import-hl-day" | "batch-refresh-hl-day" | "batch-switch-active-symbol" };
     const payload = request.body as {
+      exchange?: string;
       coin?: string;
+      symbol?: string;
       date?: string;
       interval?: string;
     };
@@ -563,6 +642,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   app.post("/api/leverage", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
     const locale = resolveLocale(request as never);
@@ -690,6 +772,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
     const locale = resolveLocale(request as never);
     const messages = getMessages(locale);
 
@@ -714,6 +799,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     const input = request.body as CancelOrderInput;
     const result = await runtime.cancelOrder({
@@ -727,6 +815,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
   app.post("/api/orders/:id/cancel", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
+      return;
+    }
+    if (!ensureFrontendAvailable(request, reply)) {
       return;
     }
     const params = request.params as { id: string };
@@ -745,6 +836,9 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     if (!session) {
       return;
     }
+    if (!ensureFrontendAvailable(request, reply)) {
+      return;
+    }
 
     const params = request.params as { id: string };
     return await runtime.getPositionReplayPayload(session.user.tradingAccountId as string, params.id);
@@ -754,6 +848,10 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     instance.get("/ws", { websocket: true }, (socket, request) => {
       const session = runtime.getSession(getToken(request as never));
       if (!session) {
+        socket.close();
+        return;
+      }
+      if (session.user.role === "frontend" && runtime.getPlatformSettings().maintenanceMode) {
         socket.close();
         return;
       }

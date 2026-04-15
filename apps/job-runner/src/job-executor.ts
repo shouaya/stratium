@@ -14,10 +14,13 @@ export type JobRunnerJobId =
   | "seed-symbol-configs"
   | "batch-clear-kline"
   | "batch-import-hl-day"
-  | "batch-refresh-hl-day";
+  | "batch-refresh-hl-day"
+  | "batch-switch-active-symbol";
 
 export interface JobRunInput {
+  exchange?: string;
   coin?: string;
+  symbol?: string;
   date?: string;
   interval?: string;
   migrationName?: string;
@@ -81,6 +84,12 @@ const definitions: JobDefinition[] = [
     adminVisible: true
   },
   {
+    id: "batch-switch-active-symbol",
+    label: "Switch Active Symbol",
+    description: "Switch the active trading symbol, import the latest 24 hours of candles, and restart API.",
+    adminVisible: true
+  },
+  {
     id: "db-clear-runtime-data",
     label: "DB Clear Runtime Data",
     description: "Clear runtime event, account, order, position, fill, and trigger tables.",
@@ -117,6 +126,30 @@ const ensureSafeCoin = (value: string | undefined): string => {
 
   if (!/^[A-Z0-9_-]{2,20}$/.test(candidate)) {
     throw new Error("Batch coin must be an uppercase symbol like BTC.");
+  }
+
+  return candidate;
+};
+
+const ensureSafeExchange = (value: string | undefined): string => {
+  const candidate = (value ?? "hyperliquid").trim().toLowerCase();
+
+  if (!/^[a-z0-9_-]{2,32}$/.test(candidate)) {
+    throw new Error("Batch exchange must be a lowercase identifier like hyperliquid.");
+  }
+
+  if (candidate !== "hyperliquid") {
+    throw new Error(`Unsupported exchange: ${candidate}.`);
+  }
+
+  return candidate;
+};
+
+const ensureSafeSymbol = (value: string | undefined): string => {
+  const candidate = (value ?? "").trim().toUpperCase();
+
+  if (!/^[A-Z0-9]{2,20}-[A-Z0-9]{2,10}$/.test(candidate)) {
+    throw new Error("Batch symbol must look like BTC-USD.");
   }
 
   return candidate;
@@ -390,6 +423,63 @@ export class JobExecutor {
 
         if (apiWasRunning) {
           steps.push(await runDocker(["start", apiContainerName]));
+        }
+
+        return combineResults(steps);
+      }
+      case "batch-switch-active-symbol": {
+        const exchange = ensureSafeExchange(input.exchange);
+        const symbol = ensureSafeSymbol(input.symbol);
+        const coin = ensureSafeCoin(symbol.replace(/-USD$/i, ""));
+        const until = new Date();
+        const since = new Date(until.getTime() - (24 * 60 * 60 * 1000));
+        const steps: JobRunResult[] = [];
+        const apiWasRunning = await getContainerRunningState(apiContainerName);
+
+        steps.push(
+          await runBatchNode([
+            "dist/jobs/switch-active-symbol.js",
+            "--exchange",
+            exchange,
+            "--symbol",
+            symbol
+          ])
+        );
+
+        steps.push(
+          await runBatchNode([
+            "dist/jobs/clear-market-history.js",
+            "--coin",
+            coin,
+            "--interval",
+            "1m",
+            "--source",
+            "hyperliquid",
+            "--after",
+            since.toISOString(),
+            "--before",
+            until.toISOString()
+          ])
+        );
+
+        steps.push(
+          await runBatchNode([
+            "dist/jobs/import-hyperliquid-day.js",
+            "--coin",
+            coin,
+            "--interval",
+            "1m",
+            "--since",
+            since.toISOString(),
+            "--until",
+            until.toISOString()
+          ])
+        );
+
+        if (apiWasRunning) {
+          steps.push(await runDocker(["restart", apiContainerName]));
+        } else {
+          steps.push(await runMainCompose(["up", "-d", "api"]));
         }
 
         return combineResults(steps);

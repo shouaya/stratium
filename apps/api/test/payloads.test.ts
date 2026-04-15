@@ -22,6 +22,9 @@ const symbolConfig = { symbol: "BTC-USD", coin: "BTC", leverage: 10, maxLeverage
 const platform = {
   platformName: "Stratium Demo",
   platformAnnouncement: "",
+  activeExchange: "hyperliquid",
+  activeSymbol: "BTC-USD",
+  maintenanceMode: false,
   allowFrontendTrading: true,
   allowManualTicks: true,
   allowSimulatorControl: true

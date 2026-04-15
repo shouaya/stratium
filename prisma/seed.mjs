@@ -20,6 +20,8 @@ const DEFAULT_PLATFORM_SETTINGS = {
   id: "platform",
   platformName: "Stratium Demo",
   platformAnnouncement: "Demo environment. Accounts are issued by admin only.",
+  activeExchange: process.env.TRADING_EXCHANGE ?? process.env.MARKET_SOURCE ?? "hyperliquid",
+  activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
   allowFrontendTrading: true,
   allowManualTicks: true,
   allowSimulatorControl: true
@@ -73,6 +75,8 @@ async function seedPlatformSettings() {
     update: {
       platformName: DEFAULT_PLATFORM_SETTINGS.platformName,
       platformAnnouncement: DEFAULT_PLATFORM_SETTINGS.platformAnnouncement,
+      activeExchange: DEFAULT_PLATFORM_SETTINGS.activeExchange,
+      activeSymbol: DEFAULT_PLATFORM_SETTINGS.activeSymbol,
       allowFrontendTrading: DEFAULT_PLATFORM_SETTINGS.allowFrontendTrading,
       allowManualTicks: DEFAULT_PLATFORM_SETTINGS.allowManualTicks,
       allowSimulatorControl: DEFAULT_PLATFORM_SETTINGS.allowSimulatorControl

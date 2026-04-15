@@ -31,6 +31,9 @@ describe("registerRoutes", () => {
   const platformSettings = {
     platformName: "Stratium Demo",
     platformAnnouncement: "",
+    activeExchange: "hyperliquid",
+    activeSymbol: "BTC-USD",
+    maintenanceMode: false,
     allowFrontendTrading: true,
     allowManualTicks: true,
     allowSimulatorControl: true
@@ -102,6 +105,7 @@ describe("registerRoutes", () => {
     getMarketHistory: vi.fn(),
     getOrders: vi.fn(),
     getOrderByClientOrderId: vi.fn(),
+    getSessionStartedAt: vi.fn(() => "2026-04-09T00:00:00.000Z"),
     getHyperliquidCandleInterval: vi.fn(() => "1m"),
     getHyperliquidCoin: vi.fn(() => "BTC"),
     getMarketVolume: vi.fn(),
@@ -402,6 +406,42 @@ describe("registerRoutes", () => {
       events: [],
       marketEvents: [],
       state: { simulationSessionId: "session-1" }
+    });
+  });
+
+  it("blocks frontend APIs during maintenance while keeping admin access", async () => {
+    runtime.getPlatformSettings.mockReturnValue({
+      ...platformSettings,
+      maintenanceMode: true
+    });
+
+    const frontendStateResponse = await app.inject({
+      method: "GET",
+      url: "/api/state",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(frontendStateResponse.statusCode).toBe(503);
+    expect(frontendStateResponse.json()).toEqual({
+      status: "maintenance",
+      message: "The API is temporarily unavailable during maintenance."
+    });
+
+    const frontendMarketHistoryResponse = await app.inject({
+      method: "GET",
+      url: "/api/market-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(frontendMarketHistoryResponse.statusCode).toBe(503);
+
+    const adminPlatformSettingsResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/platform-settings",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(adminPlatformSettingsResponse.statusCode).toBe(200);
+    expect(adminPlatformSettingsResponse.json()).toEqual({
+      ...platformSettings,
+      maintenanceMode: true
     });
   });
 
@@ -1037,6 +1077,9 @@ describe("registerRoutes", () => {
       payload: {
         platformName: "My Desk",
         platformAnnouncement: "Scheduled maintenance",
+        activeExchange: "hyperliquid",
+        activeSymbol: "ETH-USD",
+        maintenanceMode: true,
         allowFrontendTrading: false,
         allowManualTicks: true,
         allowSimulatorControl: false
@@ -1046,6 +1089,9 @@ describe("registerRoutes", () => {
     expect(runtime.updatePlatformSettings).toHaveBeenCalledWith({
       platformName: "My Desk",
       platformAnnouncement: "Scheduled maintenance",
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: true,
       allowFrontendTrading: false,
       allowManualTicks: true,
       allowSimulatorControl: false
@@ -1146,10 +1192,15 @@ describe("registerRoutes", () => {
       headers: { authorization: `Bearer ${frontendSession.token}` }
     })).statusCode).toBe(401);
 
-    runtime.getPlatformSettings.mockReturnValueOnce({
-      ...platformSettings,
-      allowFrontendTrading: false
-    });
+    runtime.getPlatformSettings
+      .mockReturnValueOnce({
+        ...platformSettings,
+        allowFrontendTrading: false
+      })
+      .mockReturnValueOnce({
+        ...platformSettings,
+        allowFrontendTrading: false
+      });
     expect((await app.inject({
       method: "POST",
       url: "/api/orders",
@@ -1415,6 +1466,9 @@ describe("registerRoutes", () => {
     expect(runtime.updatePlatformSettings).toHaveBeenLastCalledWith({
       platformName: "Stratium Demo",
       platformAnnouncement: "",
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD",
+      maintenanceMode: false,
       allowFrontendTrading: true,
       allowManualTicks: true,
       allowSimulatorControl: true
@@ -1642,6 +1696,22 @@ describe("registerRoutes", () => {
     });
     privateSocket.close();
     await waitForSocketClose(privateSocket);
+  });
+
+  it("closes frontend websocket connections during maintenance", async () => {
+    runtime.getPlatformSettings.mockReturnValue({
+      ...platformSettings,
+      maintenanceMode: true
+    });
+
+    const address = await app.listen({ port: 0, host: "127.0.0.1" });
+    const frontendSocket = new (globalThis as unknown as { WebSocket: new (url: string) => {
+      close: () => void;
+      addEventListener: (event: string, listener: (...args: unknown[]) => void, options?: { once?: boolean }) => void;
+    } }).WebSocket(`${address.replace("http", "ws")}/ws?token=${frontendSession.token}`);
+
+    await waitForSocketClose(frontendSocket);
+    expect(runtime.addSocket).not.toHaveBeenCalled();
   });
 
   it("covers trigger-store route branches, token extraction variants, and non-Error failures", async () => {

@@ -15,6 +15,9 @@ export type AuthUser = {
 export type PlatformSettings = {
   platformName: string;
   platformAnnouncement: string;
+  activeExchange: string;
+  activeSymbol: string;
+  maintenanceMode: boolean;
   allowFrontendTrading: boolean;
   allowManualTicks: boolean;
   allowSimulatorControl: boolean;

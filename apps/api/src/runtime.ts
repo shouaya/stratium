@@ -29,6 +29,9 @@ export class ApiRuntime {
   private platformSettings: PlatformSettingsView = {
     platformName: "Stratium Demo",
     platformAnnouncement: "",
+    activeExchange: process.env.TRADING_EXCHANGE ?? process.env.MARKET_SOURCE ?? "hyperliquid",
+    activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
+    maintenanceMode: false,
     allowFrontendTrading: true,
     allowManualTicks: true,
     allowSimulatorControl: true
@@ -90,6 +93,71 @@ export class ApiRuntime {
     });
   }
 
+  private resolveConfiguredSymbol(): string {
+    return this.platformSettings.activeSymbol?.trim() || this.configuredTradingSymbol;
+  }
+
+  private resolveConfiguredCoin(symbol: string): string {
+    return symbol.replace(/-USD$/i, "") || this.hyperliquidCoin;
+  }
+
+  private async ensureSymbolSwitchAllowed(nextExchange: string, nextSymbol: string): Promise<{ source: string; coin: string }> {
+    const normalizedExchange = nextExchange.trim().toLowerCase();
+    const normalizedSymbol = nextSymbol.trim().toUpperCase();
+
+    if (!normalizedExchange) {
+      throw new Error("Active exchange is required.");
+    }
+
+    if (!normalizedSymbol) {
+      throw new Error("Active symbol is required.");
+    }
+
+    if (
+      normalizedExchange === this.platformSettings.activeExchange
+      && normalizedSymbol === this.platformSettings.activeSymbol
+    ) {
+      throw new Error(`Active symbol is already ${normalizedSymbol} on ${normalizedExchange}.`);
+    }
+
+    const symbolMeta = await this.repository.loadSymbolConfigMeta(normalizedSymbol);
+
+    if (!symbolMeta) {
+      throw new Error(`Symbol config ${normalizedSymbol} was not found in DB.`);
+    }
+
+    if (symbolMeta.source !== normalizedExchange) {
+      throw new Error(`Symbol ${normalizedSymbol} belongs to ${symbolMeta.source}, not ${normalizedExchange}.`);
+    }
+
+    for (const accountId of this.tradingRuntime.getAccountIds()) {
+      const state = this.tradingRuntime.getEngineState(accountId);
+      const hasOpenPosition = Boolean(
+        state.position
+        && state.position.side !== "flat"
+        && state.position.quantity > 0
+      );
+      const hasOpenOrders = state.orders.some((order) =>
+        order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED"
+      );
+
+      if (hasOpenPosition || hasOpenOrders) {
+        throw new Error(`Cannot switch active symbol while account ${accountId} still has open positions or orders.`);
+      }
+    }
+
+    const pendingTriggerOrders = await this.repository.listPendingTriggerOrders();
+
+    if (pendingTriggerOrders.length > 0) {
+      throw new Error("Cannot switch active symbol while pending trigger orders still exist.");
+    }
+
+    return {
+      source: symbolMeta.source,
+      coin: symbolMeta.coin
+    };
+  }
+
   getEngineState(accountId?: string) {
     return this.tradingRuntime.getEngineState(accountId);
   }
@@ -103,7 +171,11 @@ export class ApiRuntime {
   }
 
   async getFillHistoryPayload(accountId: string) {
-    const persistedEvents = await this.repository.listFillHistoryEvents(accountId);
+    const sessionId = this.tradingRuntime.getEngineState(accountId).simulationSessionId;
+    const persistedEvents = typeof this.repository.loadEvents === "function"
+      ? (await this.repository.loadEvents(sessionId))
+        .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")
+      : await this.repository.listFillHistoryEvents(accountId);
     const liveEvents = this.tradingRuntime.getFillHistoryEvents(accountId);
     const merged = new Map<string, AnyEventEnvelope>();
 
@@ -211,12 +283,14 @@ export class ApiRuntime {
   async bootstrap(): Promise<void> {
     await this.repository.connect();
     this.platformSettings = await this.authRuntime.bootstrap();
+    const configuredSymbol = this.resolveConfiguredSymbol();
+    const configuredCoin = this.resolveConfiguredCoin(configuredSymbol);
     await this.batchJobStateFeed.connect();
     this.runningBatchJobs = this.batchJobStateFeed.getRunningJobs();
     this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
     const bootstrapState = await loadApiBootstrapState(this.repository, {
-      configuredTradingSymbol: this.configuredTradingSymbol,
-      hyperliquidCoin: this.hyperliquidCoin,
+      configuredTradingSymbol: configuredSymbol,
+      fallbackHyperliquidCoin: configuredCoin,
       hyperliquidCandleInterval: this.hyperliquidCandleInterval
     });
     const frontendUsers = await this.authRuntime.listFrontendUsers();
@@ -229,17 +303,32 @@ export class ApiRuntime {
     });
 
     if (bootstrapState.persistedSymbolMeta) {
-      this.symbolConfigState = bootstrapState.persistedSymbolMeta;
+      this.symbolConfigState = {
+        symbol: bootstrapState.persistedSymbolMeta.symbol,
+        coin: bootstrapState.persistedSymbolMeta.coin,
+        leverage: bootstrapState.persistedSymbolMeta.leverage,
+        maxLeverage: bootstrapState.persistedSymbolMeta.maxLeverage,
+        szDecimals: bootstrapState.persistedSymbolMeta.szDecimals,
+        quoteAsset: bootstrapState.persistedSymbolMeta.quoteAsset
+      };
     } else if (bootstrapState.persistedSymbolConfig) {
       this.symbolConfigState = {
         ...this.symbolConfigState,
         leverage: bootstrapState.persistedSymbolConfig.leverage
       };
+    } else {
+      this.symbolConfigState = {
+        ...this.symbolConfigState,
+        symbol: configuredSymbol,
+        coin: configuredCoin
+      };
     }
+
+    this.marketRuntime.configureActiveMarket(this.symbolConfigState.symbol, this.symbolConfigState.coin);
 
     const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
     this.marketRuntime.setBootstrapState(
-      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).position.symbol : this.configuredTradingSymbol,
+      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).position.symbol : this.symbolConfigState.symbol,
       primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick?.last : undefined,
       bootstrapState.persistedMarketSnapshot
     );
@@ -375,6 +464,32 @@ export class ApiRuntime {
   }
 
   async runBatchJob(jobId: BatchJobId, input: BatchJobRunInput = {}) {
+    if (jobId === "batch-switch-active-symbol") {
+      const nextExchange = input.exchange?.trim().toLowerCase() || this.platformSettings.activeExchange;
+      const nextSymbol = input.symbol?.trim().toUpperCase() ?? "";
+      const symbolMeta = await this.ensureSymbolSwitchAllowed(nextExchange, nextSymbol);
+
+      const previousSettings = this.platformSettings;
+      await this.updatePlatformSettings({
+        ...previousSettings,
+        maintenanceMode: true,
+        allowFrontendTrading: false,
+        allowManualTicks: false,
+        allowSimulatorControl: false
+      });
+
+      try {
+        return await this.batchJobRunner.run(jobId, {
+          ...input,
+          exchange: symbolMeta.source,
+          symbol: nextSymbol
+        });
+      } catch (error) {
+        await this.updatePlatformSettings(previousSettings);
+        throw error;
+      }
+    }
+
     return this.batchJobRunner.run(jobId, input);
   }
 
@@ -404,6 +519,10 @@ export class ApiRuntime {
 
   getOrderByClientOrderId(accountId: string, clientOrderId: string) {
     return this.tradingRuntime.getOrderByClientOrderId(accountId, clientOrderId);
+  }
+
+  getSessionStartedAt(accountId: string) {
+    return this.tradingRuntime.getSessionStartedAt(accountId);
   }
 
   async cancelAllOpenOrders(accountId: string, requestedAt?: string) {
@@ -437,6 +556,10 @@ export class ApiRuntime {
 
   async getNextTriggerOrderOid(base?: number) {
     return this.repository.getNextTriggerOrderOid(base);
+  }
+
+  async listAvailableSymbolConfigMeta() {
+    return this.repository.listAvailableSymbolConfigMeta();
   }
 
   async upsertTriggerOrderHistory(input: Parameters<TradingRepository["upsertTriggerOrderHistory"]>[0]) {

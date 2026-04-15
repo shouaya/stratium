@@ -623,6 +623,31 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
         onLogout();
         return;
       }
+      if (snapshot.stateResponse.status === 503 || snapshot.fillHistoryResponse.status === 503 || snapshot.botCredentialsResponse.status === 503 || snapshot.openOrdersResponse.status === 503 || snapshot.orderHistoryResponse.status === 503) {
+        const maintenanceMessage = (snapshot.statePayload as { message?: string })?.message
+          ?? (snapshot.fillHistoryPayload as { message?: string })?.message
+          ?? ui.trader.maintenanceBanner;
+        setState((current) => ({
+          ...current,
+          platform: current.platform
+            ? {
+              ...current.platform,
+              maintenanceMode: true
+            }
+            : {
+              platformName: "",
+              platformAnnouncement: "",
+              activeExchange: "hyperliquid",
+              activeSymbol: "",
+              maintenanceMode: true,
+              allowFrontendTrading: false,
+              allowManualTicks: false,
+              allowSimulatorControl: false
+            }
+        }));
+        setMessage(maintenanceMessage);
+        return;
+      }
       setState(snapshot.statePayload);
       setFillHistoryEvents(snapshot.fillHistoryPayload.events ?? []);
       setBotCredentials(snapshot.credentialsPayload);
@@ -640,6 +665,10 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
       if (activity.openOrdersResponse.status === 401 || activity.orderHistoryResponse.status === 401) {
         setMessage(ui.trader.sessionExpired);
         onLogout();
+        return;
+      }
+      if (activity.openOrdersResponse.status === 503 || activity.orderHistoryResponse.status === 503) {
+        setMessage(ui.trader.maintenanceBanner);
         return;
       }
       setFrontendOpenOrders(activity.openOrdersPayload);
@@ -689,6 +718,7 @@ export const useTradingDashboard = ({ apiBaseUrl, authToken, locale, onLogout, v
 
       const scheduleReconnect = () => {
         if (!active || reconnectTimerRef.current) return;
+        setMessage((current) => current || ui.trader.maintenanceBanner);
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
           connect();

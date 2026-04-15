@@ -92,6 +92,9 @@ describe("WebSocketHub", () => {
       platform: {
         platformName: "Stratium Demo",
         platformAnnouncement: "",
+        activeExchange: "hyperliquid",
+        activeSymbol: "BTC-USD",
+        maintenanceMode: false,
         allowFrontendTrading: true,
         allowManualTicks: true,
         allowSimulatorControl: true

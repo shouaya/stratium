@@ -82,6 +82,9 @@ export class TradingRepository {
         id: "platform",
         platformName: "Stratium Demo",
         platformAnnouncement: "Demo environment. Accounts are issued by admin only.",
+        activeExchange: process.env.TRADING_EXCHANGE ?? process.env.MARKET_SOURCE ?? "hyperliquid",
+        activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
+        maintenanceMode: false,
         allowFrontendTrading: true,
         allowManualTicks: true,
         allowSimulatorControl: true
@@ -222,6 +225,9 @@ export class TradingRepository {
       return {
         platformName: "Stratium Demo",
         platformAnnouncement: "",
+        activeExchange: process.env.TRADING_EXCHANGE ?? process.env.MARKET_SOURCE ?? "hyperliquid",
+        activeSymbol: process.env.TRADING_SYMBOL ?? "BTC-USD",
+        maintenanceMode: false,
         allowFrontendTrading: true,
         allowManualTicks: true,
         allowSimulatorControl: true
@@ -231,6 +237,9 @@ export class TradingRepository {
     return {
       platformName: settings.platformName,
       platformAnnouncement: settings.platformAnnouncement ?? "",
+      activeExchange: settings.activeExchange,
+      activeSymbol: settings.activeSymbol,
+      maintenanceMode: settings.maintenanceMode,
       allowFrontendTrading: settings.allowFrontendTrading,
       allowManualTicks: settings.allowManualTicks,
       allowSimulatorControl: settings.allowSimulatorControl
@@ -243,6 +252,9 @@ export class TradingRepository {
       update: {
         platformName: input.platformName,
         platformAnnouncement: input.platformAnnouncement || null,
+        activeExchange: input.activeExchange,
+        activeSymbol: input.activeSymbol,
+        maintenanceMode: input.maintenanceMode,
         allowFrontendTrading: input.allowFrontendTrading,
         allowManualTicks: input.allowManualTicks,
         allowSimulatorControl: input.allowSimulatorControl
@@ -251,6 +263,9 @@ export class TradingRepository {
         id: "platform",
         platformName: input.platformName,
         platformAnnouncement: input.platformAnnouncement || null,
+        activeExchange: input.activeExchange,
+        activeSymbol: input.activeSymbol,
+        maintenanceMode: input.maintenanceMode,
         allowFrontendTrading: input.allowFrontendTrading,
         allowManualTicks: input.allowManualTicks,
         allowSimulatorControl: input.allowSimulatorControl
@@ -260,6 +275,9 @@ export class TradingRepository {
     return {
       platformName: settings.platformName,
       platformAnnouncement: settings.platformAnnouncement ?? "",
+      activeExchange: settings.activeExchange,
+      activeSymbol: settings.activeSymbol,
+      maintenanceMode: settings.maintenanceMode,
       allowFrontendTrading: settings.allowFrontendTrading,
       allowManualTicks: settings.allowManualTicks,
       allowSimulatorControl: settings.allowSimulatorControl
@@ -310,6 +328,7 @@ export class TradingRepository {
 
   async loadSimulationSnapshot(sessionId: string): Promise<null | {
     lastSequence: number;
+    createdAt: string;
     updatedAt: string;
     state: TradingEngineState;
   }> {
@@ -325,6 +344,7 @@ export class TradingRepository {
 
     return {
       lastSequence: row.lastSequence,
+      createdAt: row.createdAt?.toISOString?.() ?? row.updatedAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
       state: {
         ...state,
@@ -476,6 +496,7 @@ export class TradingRepository {
   }
 
   async loadSymbolConfigMeta(symbol: string): Promise<{
+    source: string;
     symbol: string;
     coin: string;
     leverage: number;
@@ -492,6 +513,7 @@ export class TradingRepository {
     }
 
     return {
+      source: row.source,
       symbol: row.symbol,
       coin: row.coin,
       leverage: row.engineDefaultLeverage,
@@ -499,6 +521,31 @@ export class TradingRepository {
       szDecimals: row.szDecimals,
       quoteAsset: row.quoteAsset
     };
+  }
+
+  async listAvailableSymbolConfigMeta(): Promise<Array<{
+    source: string;
+    symbol: string;
+    coin: string;
+    leverage: number;
+    maxLeverage: number;
+    szDecimals: number;
+    quoteAsset: string;
+  }>> {
+    const rows = await prisma.symbolConfig.findMany({
+      where: { isActive: true },
+      orderBy: [{ source: "asc" }, { coin: "asc" }, { symbol: "asc" }]
+    });
+
+    return rows.map((row) => ({
+      source: row.source,
+      symbol: row.symbol,
+      coin: row.coin,
+      leverage: row.engineDefaultLeverage,
+      maxLeverage: row.maxLeverage,
+      szDecimals: row.szDecimals,
+      quoteAsset: row.quoteAsset
+    }));
   }
 
   async updateSymbolLeverage(symbol: string, leverage: number): Promise<void> {

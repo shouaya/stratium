@@ -11,7 +11,7 @@ describe("loadApiBootstrapState", () => {
 
     const state = await loadApiBootstrapState(repository as never, {
       configuredTradingSymbol: "BTC-USD",
-      hyperliquidCoin: "BTC",
+      fallbackHyperliquidCoin: "BTC",
       hyperliquidCandleInterval: "1m"
     });
 
@@ -34,7 +34,7 @@ describe("loadApiBootstrapState", () => {
 
     const state = await loadApiBootstrapState(repository as never, {
       configuredTradingSymbol: "ETH-USD",
-      hyperliquidCoin: "ETH",
+      fallbackHyperliquidCoin: "ETH",
       hyperliquidCandleInterval: "5m"
     });
 

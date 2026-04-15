@@ -56,6 +56,7 @@ interface TradingRuntimeOptions {
 interface AccountRuntimeSlot {
   accountId: string;
   sessionId: string;
+  sessionStartedAt: string;
   engine: TradingEngine;
   eventStore: AnyEventEnvelope[];
   persistQueue: Promise<void>;
@@ -76,7 +77,8 @@ interface PositionReplayResolution {
   state?: ReturnType<TradingEngine["getState"]>;
 }
 
-const createSessionId = (accountId: string): string => `session-${accountId}`;
+const createSessionId = (accountId: string, symbol: string): string =>
+  `session-${accountId}-${symbol.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
 const BOOTSTRAP_SNAPSHOT_MINUTE_KEY = "bootstrap";
 const toMinuteKey = (value: string): string => value.slice(0, 16);
 const resolveSnapshotMinuteKey = (
@@ -150,6 +152,14 @@ export class TradingRuntime {
 
   getReplayState(accountId: string) {
     return this.getRequiredRuntime(accountId).engine.getState();
+  }
+
+  getSessionId(accountId: string): string {
+    return this.getRequiredRuntime(accountId).sessionId;
+  }
+
+  getSessionStartedAt(accountId: string): string {
+    return this.getRequiredRuntime(accountId).sessionStartedAt;
   }
 
   async getReplayData(accountId: string, sessionId: string): Promise<{
@@ -326,12 +336,15 @@ export class TradingRuntime {
   }
 
   private async resolvePersistedPositionReplay(accountId: string, fillId: string): Promise<PositionReplayResolution | null> {
-    const persistedFillEvents = eventsToSorted(await this.options.repository.listFillHistoryEvents(accountId));
+    const runtime = this.getRequiredRuntime(accountId);
+    const persistedFillEvents = eventsToSorted((await this.options.repository.listFillHistoryEvents(accountId))
+      .filter((event) => event.symbol === runtime.engine.getState().position.symbol));
     if (persistedFillEvents.length === 0) {
       return null;
     }
 
-    const persistedOrders = await this.options.repository.listOrderHistoryViews(accountId);
+    const persistedOrders = (await this.options.repository.listOrderHistoryViews(accountId))
+      .filter((order) => order.symbol === runtime.engine.getState().position.symbol);
     const replay = this.resolvePositionReplay(
       persistedFillEvents,
       fillId,
@@ -365,7 +378,7 @@ export class TradingRuntime {
       return left.eventType === "OrderRequested" ? -1 : 1;
     }).map((event, index) => ({ ...event, sequence: index + 1 })) as AnyEventEnvelope[];
 
-    const engineState = this.getRequiredRuntime(accountId).engine.getState();
+    const engineState = runtime.engine.getState();
 
     return {
       fills: replay.fills,
@@ -569,7 +582,8 @@ export class TradingRuntime {
       return existing;
     }
 
-    const sessionId = createSessionId(accountId);
+    const activeSymbol = this.symbolConfig?.symbol ?? "BTC-USD";
+    const sessionId = createSessionId(accountId, activeSymbol);
     const persistedSnapshot = await this.options.repository.loadSimulationSnapshot(sessionId);
     const persistedEvents = await this.options.repository.loadEvents(sessionId, persistedSnapshot?.lastSequence);
     const engineOptions = {
@@ -581,6 +595,7 @@ export class TradingRuntime {
     const slot: AccountRuntimeSlot = {
       accountId,
       sessionId,
+      sessionStartedAt: persistedSnapshot?.createdAt ?? new Date().toISOString(),
       engine: persistedEvents.length > 0
         ? new TradingEngine(replayEventsFromState(initialState, persistedEvents).state, engineOptions)
         : new TradingEngine(initialState, engineOptions),

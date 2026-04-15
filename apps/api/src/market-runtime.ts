@@ -123,29 +123,14 @@ export class MarketRuntime {
 
   private lastFlushedClosedCandleOpenTime = 0;
 
-  private readonly hyperliquidClient: HyperliquidMarketClient;
+  private hyperliquidClient: HyperliquidMarketClient;
+  private activeHyperliquidCoin: string;
+  private readonly activeCandleInterval: string;
 
   constructor(private readonly options: MarketRuntimeOptions) {
-    this.hyperliquidClient = new HyperliquidMarketClient({
-      coin: options.hyperliquidCoin,
-      candleInterval: options.hyperliquidCandleInterval,
-      onTick: async (tick) => {
-        if (this.marketTickInFlight) {
-          return;
-        }
-
-        this.marketTickInFlight = true;
-
-        try {
-          await this.options.onLiveTick(tick);
-        } finally {
-          this.marketTickInFlight = false;
-        }
-      },
-      onSnapshot: (snapshot) => {
-        this.handleMarketSnapshot(snapshot);
-      }
-    });
+    this.activeHyperliquidCoin = options.hyperliquidCoin;
+    this.activeCandleInterval = options.hyperliquidCandleInterval;
+    this.hyperliquidClient = this.createHyperliquidClient(options.hyperliquidCoin);
   }
 
   getMarketData() {
@@ -157,11 +142,33 @@ export class MarketRuntime {
   }
 
   getHyperliquidCoin() {
-    return this.options.hyperliquidCoin;
+    return this.activeHyperliquidCoin;
   }
 
   getHyperliquidCandleInterval() {
-    return this.options.hyperliquidCandleInterval;
+    return this.activeCandleInterval;
+  }
+
+  configureActiveMarket(symbol: string, coin: string) {
+    this.hyperliquidClient.close();
+    this.activeHyperliquidCoin = coin;
+    this.marketData = {
+      source: this.options.marketSource === "hyperliquid" ? "hyperliquid" : "simulator",
+      coin,
+      connected: false,
+      book: {
+        bids: [],
+        asks: []
+      },
+      trades: [],
+      candles: []
+    };
+    this.marketSimulatorState = {
+      ...this.marketSimulatorState,
+      symbol
+    };
+    this.lastFlushedClosedCandleOpenTime = 0;
+    this.hyperliquidClient = this.createHyperliquidClient(coin);
   }
 
   isMarketTickInFlight() {
@@ -180,7 +187,7 @@ export class MarketRuntime {
       };
       this.marketData = filteredMarketData;
       this.lastFlushedClosedCandleOpenTime = filteredMarketData.candles
-        .filter((candle) => candle.interval === this.options.hyperliquidCandleInterval && candle.closeTime <= Date.now())
+        .filter((candle) => candle.interval === this.activeCandleInterval && candle.closeTime <= Date.now())
         .reduce((maxOpenTime, candle) => Math.max(maxOpenTime, candle.openTime), 0);
     }
 
@@ -216,8 +223,8 @@ export class MarketRuntime {
 
   async getMarketHistory(limit: number) {
     const persistedMarketSnapshot = await this.options.repository.loadRecentMarketSnapshot(
-      this.options.hyperliquidCoin,
-      this.options.hyperliquidCandleInterval
+      this.activeHyperliquidCoin,
+      this.activeCandleInterval
     );
     const now = Date.now();
     const sourceMarket = persistedMarketSnapshot
@@ -246,7 +253,7 @@ export class MarketRuntime {
 
     return {
       coin: sourceMarket.coin,
-      interval: this.options.hyperliquidCandleInterval,
+      interval: this.activeCandleInterval,
       candles,
       trades,
       book: sourceMarket.book,
@@ -395,7 +402,7 @@ export class MarketRuntime {
 
     const now = Date.now();
     const candlesToPersist = this.marketData.candles.filter((candle) =>
-      candle.interval === this.options.hyperliquidCandleInterval
+      candle.interval === this.activeCandleInterval
       && candle.closeTime <= now
       && candle.openTime > this.lastFlushedClosedCandleOpenTime
     );
@@ -442,7 +449,7 @@ export class MarketRuntime {
 
     this.marketData = {
       source: "simulator",
-      coin: this.options.hyperliquidCoin,
+      coin: this.activeHyperliquidCoin,
       connected: false,
       bestBid: bid,
       bestAsk: ask,
@@ -465,5 +472,28 @@ export class MarketRuntime {
       tickTime,
       volatilityTag: nextVolatilityTag(Math.abs(nextLast - basePrice) / basePrice)
     };
+  }
+
+  private createHyperliquidClient(coin: string): HyperliquidMarketClient {
+    return new HyperliquidMarketClient({
+      coin,
+      candleInterval: this.activeCandleInterval,
+      onTick: async (tick) => {
+        if (this.marketTickInFlight) {
+          return;
+        }
+
+        this.marketTickInFlight = true;
+
+        try {
+          await this.options.onLiveTick(tick);
+        } finally {
+          this.marketTickInFlight = false;
+        }
+      },
+      onSnapshot: (snapshot) => {
+        this.handleMarketSnapshot(snapshot);
+      }
+    });
   }
 }
