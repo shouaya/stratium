@@ -59,6 +59,11 @@ const prismaMock = vi.hoisted(() => ({
     upsert: vi.fn(),
     findUnique: vi.fn()
   },
+  triggerOrderHistory: {
+    findFirst: vi.fn(),
+    findMany: vi.fn(),
+    upsert: vi.fn()
+  },
   account: {
     upsert: vi.fn(),
     findUnique: vi.fn()
@@ -620,6 +625,199 @@ describe("TradingRepository", () => {
     }));
   });
 
+  it("loads paged events and trigger order history helpers", async () => {
+    prismaMock.simulationEvent.findMany
+      .mockResolvedValueOnce(Array.from({ length: 2000 }, (_, index) => ({
+        id: `evt-${index + 1}`,
+        eventType: "OrderAccepted",
+        occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        sequence: index + 1,
+        simulationSessionId: "session-paged",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: { orderId: `ord-${index + 1}` }
+      })))
+      .mockResolvedValueOnce([{
+        id: "evt-2001",
+        eventType: "OrderFilled",
+        occurredAt: new Date("2026-01-01T00:00:01.000Z"),
+        sequence: 2001,
+        simulationSessionId: "session-paged",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: { orderId: "ord-2001" }
+      }]);
+
+    const events = await repository.loadEvents("session-paged");
+    expect(events).toHaveLength(2001);
+    expect(prismaMock.simulationEvent.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({
+        sequence: { gt: 2000 }
+      })
+    }));
+
+    prismaMock.triggerOrderHistory.findFirst
+      .mockResolvedValueOnce({ oid: 1000000003 })
+      .mockResolvedValueOnce({
+        oid: 1000000001,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: false,
+        triggerPx: 69950,
+        actualTriggerPx: null,
+        isMarket: false,
+        tpsl: "sl",
+        size: 0.5,
+        limitPx: null,
+        reduceOnly: true,
+        cloid: "0xtrigger",
+        status: "triggerPending",
+        createdAt: new Date(1000),
+        updatedAt: new Date(2000)
+      })
+      .mockResolvedValueOnce(null);
+    prismaMock.triggerOrderHistory.findMany
+      .mockResolvedValueOnce([{
+        oid: 1000000001,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: false,
+        triggerPx: 69950,
+        actualTriggerPx: null,
+        isMarket: false,
+        tpsl: "sl",
+        size: 0.5,
+        limitPx: null,
+        reduceOnly: true,
+        cloid: null,
+        status: "triggerPending",
+        createdAt: new Date(1000),
+        updatedAt: new Date(2000)
+      }])
+      .mockResolvedValueOnce([{
+        oid: 1000000002,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: true,
+        triggerPx: 70100,
+        isMarket: true,
+        tpsl: "tp",
+        size: 1,
+        limitPx: 70110,
+        reduceOnly: true,
+        cloid: "0xpending",
+        createdAt: new Date(3000)
+      }]);
+
+    expect(await repository.getNextTriggerOrderOid(1000000000)).toBe(1000000004);
+
+    await repository.upsertTriggerOrderHistory({
+      oid: 1000000001,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      reduceOnly: true,
+      status: "triggerPending"
+    });
+    expect(prismaMock.triggerOrderHistory.upsert).toHaveBeenCalled();
+
+    expect(await repository.listTriggerOrderHistory("paper-account-1")).toEqual([{
+      oid: 1000000001,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      actualTriggerPx: undefined,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      limitPx: undefined,
+      reduceOnly: true,
+      cloid: undefined,
+      status: "triggerPending",
+      createdAt: 1000,
+      updatedAt: 2000
+    }]);
+
+    expect(await repository.listPendingTriggerOrders()).toEqual([{
+      oid: 1000000002,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: true,
+      triggerPx: 70100,
+      isMarket: true,
+      tpsl: "tp",
+      size: 1,
+      limitPx: 70110,
+      reduceOnly: true,
+      cloid: "0xpending",
+      createdAt: 3000
+    }]);
+
+    expect(await repository.findTriggerOrder("paper-account-1", "0xtrigger")).toEqual({
+      oid: 1000000001,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      actualTriggerPx: undefined,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      limitPx: undefined,
+      reduceOnly: true,
+      cloid: "0xtrigger",
+      status: "triggerPending",
+      createdAt: 1000,
+      updatedAt: 2000
+    });
+    expect(await repository.findTriggerOrder("paper-account-1", 1000000009)).toBeNull();
+  });
+
+  it("covers repository mapper fallbacks for nullable values", () => {
+    const repo = repository as never;
+
+    expect(repo.mapOrder({
+      id: "ord_1",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "limit",
+      status: "ACCEPTED",
+      quantity: 1,
+      filledQuantity: 0,
+      remainingQuantity: 1,
+      createdAt: "2026-04-10T00:00:00.000Z",
+      updatedAt: "2026-04-10T00:00:01.000Z"
+    })).toMatchObject({
+      limitPrice: null,
+      averageFillPrice: null,
+      rejectionCode: null,
+      rejectionMessage: null
+    });
+
+    expect(repo.mapAssetContext({
+      coin: "BTC",
+      capturedAt: 1000
+    }, "hyperliquid")).toMatchObject({
+      source: "hyperliquid",
+      coin: "BTC",
+      markPrice: null,
+      midPrice: null,
+      oraclePrice: null,
+      fundingRate: null,
+      openInterest: null,
+      prevDayPrice: null,
+      dayNotionalVolume: null
+    });
+  });
+
   it("maps optional market snapshot fields to undefined and clamps volume query limits", async () => {
     prismaMock.marketBookSnapshot.findFirst.mockResolvedValue({
       id: "snapshot-1",
@@ -1060,5 +1258,245 @@ describe("TradingRepository", () => {
         rejectionMessage: null
       })
     }));
+  });
+
+  it("covers repository nullish mapping and fallback branches", async () => {
+    prismaMock.appUser.update.mockResolvedValue({
+      id: "user-3",
+      username: "blank",
+      passwordHash: "existing-hash",
+      role: "frontend",
+      displayName: "Blank User",
+      tradingAccountId: "paper-blank",
+      isActive: true
+    });
+    await repository.updateFrontendUser("user-3", {
+      passwordHash: "",
+      displayName: undefined,
+      tradingAccountId: undefined,
+      isActive: undefined
+    });
+    expect(prismaMock.appUser.update).toHaveBeenCalledWith({
+      where: { id: "user-3" },
+      data: {}
+    });
+
+    prismaMock.platformSettings.findUnique.mockResolvedValue({
+      id: "platform",
+      platformName: "Desk",
+      platformAnnouncement: null,
+      allowFrontendTrading: true,
+      allowManualTicks: false,
+      allowSimulatorControl: true
+    });
+    expect(await repository.getPlatformSettings()).toEqual({
+      platformName: "Desk",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: false,
+      allowSimulatorControl: true
+    });
+
+    prismaMock.platformSettings.upsert.mockResolvedValue({
+      id: "platform",
+      platformName: "Desk",
+      platformAnnouncement: null,
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: false
+    });
+    expect(await repository.updatePlatformSettings({
+      platformName: "Desk",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: false
+    })).toEqual({
+      platformName: "Desk",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: false
+    });
+    expect(prismaMock.platformSettings.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        platformAnnouncement: null
+      }),
+      create: expect.objectContaining({
+        platformAnnouncement: null
+      })
+    }));
+
+    prismaMock.simulationEvent.findMany.mockResolvedValue([]);
+    expect(await repository.loadEvents("session-empty", 5)).toEqual([]);
+    expect(prismaMock.simulationEvent.findMany).toHaveBeenCalledWith({
+      where: {
+        simulationSessionId: "session-empty",
+        sequence: { gt: 5 }
+      },
+      orderBy: {
+        sequence: "asc"
+      },
+      take: 2000
+    });
+
+    prismaMock.simulationSnapshot.findUnique.mockResolvedValue(null);
+    expect(await repository.loadSimulationSnapshot("missing-session")).toBeNull();
+
+    prismaMock.marketBookSnapshot.findFirst.mockResolvedValue({
+      id: "snapshot-zero",
+      bestBid: 0,
+      bestAsk: 0,
+      capturedAt: new Date(1000)
+    });
+    prismaMock.marketBookLevel.findMany.mockResolvedValue([]);
+    prismaMock.marketTrade.findMany.mockResolvedValue([]);
+    prismaMock.marketCandle.findMany.mockResolvedValue([]);
+    prismaMock.marketAssetContext.findFirst.mockResolvedValue({
+      coin: "BTC",
+      markPrice: null,
+      midPrice: null,
+      oraclePrice: null,
+      fundingRate: null,
+      openInterest: null,
+      prevDayPrice: null,
+      dayNotionalVolume: null,
+      capturedAt: new Date(2000)
+    });
+
+    expect(await repository.loadRecentMarketSnapshot("BTC", "1m")).toEqual({
+      source: "hyperliquid",
+      coin: "BTC",
+      connected: false,
+      bestBid: undefined,
+      bestAsk: undefined,
+      markPrice: undefined,
+      book: {
+        bids: [],
+        asks: [],
+        updatedAt: 1000
+      },
+      trades: [],
+      candles: [],
+      assetCtx: {
+        coin: "BTC",
+        markPrice: undefined,
+        midPrice: undefined,
+        oraclePrice: undefined,
+        fundingRate: undefined,
+        openInterest: undefined,
+        prevDayPrice: undefined,
+        dayNotionalVolume: undefined,
+        capturedAt: 2000
+      }
+    });
+
+    prismaMock.triggerOrderHistory.findFirst.mockResolvedValueOnce({ oid: 1_000_000_005 });
+    expect(await repository.getNextTriggerOrderOid()).toBe(1_000_000_006);
+
+    prismaMock.triggerOrderHistory.findMany
+      .mockResolvedValueOnce([{
+        oid: 101,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: false,
+        triggerPx: 69950,
+        actualTriggerPx: null,
+        isMarket: false,
+        tpsl: "sl",
+        size: 0.5,
+        limitPx: null,
+        reduceOnly: true,
+        cloid: null,
+        status: "triggerPending",
+        createdAt: new Date(1000),
+        updatedAt: new Date(2000)
+      }])
+      .mockResolvedValueOnce([{
+        oid: 102,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: false,
+        triggerPx: 69900,
+        actualTriggerPx: null,
+        isMarket: false,
+        tpsl: "sl",
+        size: 0.25,
+        limitPx: null,
+        reduceOnly: true,
+        cloid: null,
+        status: "triggerPending",
+        createdAt: new Date(3000),
+        updatedAt: new Date(4000)
+      }]);
+    expect(await repository.listTriggerOrderHistory("paper-account-1")).toEqual([{
+      oid: 101,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      actualTriggerPx: undefined,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      limitPx: undefined,
+      reduceOnly: true,
+      cloid: undefined,
+      status: "triggerPending",
+      createdAt: 1000,
+      updatedAt: 2000
+    }]);
+    expect(await repository.listPendingTriggerOrders("paper-account-1" as never)).toEqual([{
+      oid: 102,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69900,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.25,
+      limitPx: undefined,
+      reduceOnly: true,
+      cloid: undefined,
+      createdAt: 3000
+    }]);
+
+    prismaMock.triggerOrderHistory.findFirst
+      .mockResolvedValueOnce({
+        oid: 103,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: true,
+        triggerPx: 71000,
+        actualTriggerPx: null,
+        isMarket: true,
+        tpsl: "tp",
+        size: 1,
+        limitPx: null,
+        reduceOnly: true,
+        cloid: null,
+        status: "filled",
+        createdAt: new Date(5000),
+        updatedAt: new Date(6000)
+      })
+      .mockResolvedValueOnce(null);
+    expect(await repository.findTriggerOrder("paper-account-1", "0xmissing-cloid")).toEqual({
+      oid: 103,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: true,
+      triggerPx: 71000,
+      actualTriggerPx: undefined,
+      isMarket: true,
+      tpsl: "tp",
+      size: 1,
+      limitPx: undefined,
+      reduceOnly: true,
+      cloid: undefined,
+      status: "filled",
+      createdAt: 5000,
+      updatedAt: 6000
+    });
+    expect(await repository.findTriggerOrder("paper-account-1", 999)).toBeNull();
   });
 });

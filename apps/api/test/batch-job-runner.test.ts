@@ -113,4 +113,36 @@ describe("BatchJobRunner", () => {
     });
     await expect(runner.getExecution("bad id")).rejects.toThrow("invalid execution response");
   });
+
+  it("uses trimmed runner env vars and formats non-Error fetch failures", async () => {
+    process.env.JOB_RUNNER_BASE_URL = " http://runner.example ";
+    process.env.JOB_RUNNER_TOKEN = " token-123 ";
+    vi.resetModules();
+    const module = await import("../src/batch-job-runner");
+    const runner = new module.BatchJobRunner();
+
+    fetchMock.mockResolvedValueOnce({
+      status: 202,
+      json: async () => ({
+        executionId: "exec-env",
+        command: "cmd",
+        args: [],
+        stdout: "",
+        stderr: "",
+        code: 0
+      })
+    });
+    await runner.run("db-bootstrap");
+    expect(fetchMock).toHaveBeenCalledWith("http://runner.example/jobs/run", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token-123"
+      })
+    }));
+
+    fetchMock.mockRejectedValueOnce("network down");
+    await expect(runner.listRunningJobs()).rejects.toThrow("Failed to reach job runner at http://runner.example: network down");
+
+    fetchMock.mockRejectedValueOnce("network down");
+    await expect(runner.getExecution("exec-env")).rejects.toThrow("Failed to reach job runner at http://runner.example: network down");
+  });
 });

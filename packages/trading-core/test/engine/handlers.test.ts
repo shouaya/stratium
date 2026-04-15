@@ -190,6 +190,136 @@ describe("engine handlers", () => {
     expect(applyPostFill).toHaveBeenCalledOnce();
   });
 
+  it("skips fill handling when the order is missing, inactive, or lacks an executable tick", () => {
+    const buildContext = (state: TradingEngineState) => {
+      const stateRef = createMutableState(state);
+      const emitAndApplySpy = vi.fn();
+      const incrementNextFillId = vi.fn(() => 1);
+      const applyPostFill = vi.fn();
+
+      return {
+        events: [] as AnyEventEnvelope[],
+        emitAndApplySpy,
+        incrementNextFillId,
+        applyPostFill,
+        context: {
+          ...stateRef,
+          getSymbolConfig: () => DEFAULT_SYMBOL_CONFIG,
+          emitAndApply: emitAndApplySpy,
+          incrementNextFillId,
+          applyPostFill
+        }
+      };
+    };
+
+    const missingOrder = buildContext({
+      ...createInitialTradingState(),
+      latestTick: baseTick
+    });
+    handleFillOrder({
+      context: missingOrder.context,
+      orderId: "missing",
+      events: missingOrder.events,
+      occurredAt: "2026-03-26T00:00:01.000Z"
+    });
+
+    expect(missingOrder.events).toEqual([]);
+    expect(missingOrder.emitAndApplySpy).not.toHaveBeenCalled();
+    expect(missingOrder.incrementNextFillId).not.toHaveBeenCalled();
+    expect(missingOrder.applyPostFill).not.toHaveBeenCalled();
+
+    const inactiveOrder = buildContext({
+      ...createInitialTradingState(),
+      latestTick: baseTick,
+      orders: [{
+        id: "ord_1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "limit",
+        status: "FILLED",
+        quantity: 1,
+        filledQuantity: 1,
+        remainingQuantity: 0,
+        createdAt: "2026-03-26T00:00:00.000Z",
+        updatedAt: "2026-03-26T00:00:00.000Z"
+      }]
+    });
+    handleFillOrder({
+      context: inactiveOrder.context,
+      orderId: "ord_1",
+      events: inactiveOrder.events,
+      occurredAt: "2026-03-26T00:00:01.000Z"
+    });
+
+    expect(inactiveOrder.events).toEqual([]);
+    expect(inactiveOrder.emitAndApplySpy).not.toHaveBeenCalled();
+    expect(inactiveOrder.incrementNextFillId).not.toHaveBeenCalled();
+    expect(inactiveOrder.applyPostFill).not.toHaveBeenCalled();
+
+    const mismatchedTick = buildContext({
+      ...createInitialTradingState(),
+      latestTick: {
+        ...baseTick,
+        symbol: "ETH-USD"
+      },
+      orders: [{
+        id: "ord_1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "market",
+        status: "ACCEPTED",
+        quantity: 1,
+        filledQuantity: 0,
+        remainingQuantity: 1,
+        createdAt: "2026-03-26T00:00:00.000Z",
+        updatedAt: "2026-03-26T00:00:00.000Z"
+      }]
+    });
+    handleFillOrder({
+      context: mismatchedTick.context,
+      orderId: "ord_1",
+      events: mismatchedTick.events,
+      occurredAt: "2026-03-26T00:00:01.000Z"
+    });
+
+    expect(mismatchedTick.events).toEqual([]);
+    expect(mismatchedTick.emitAndApplySpy).not.toHaveBeenCalled();
+    expect(mismatchedTick.incrementNextFillId).not.toHaveBeenCalled();
+    expect(mismatchedTick.applyPostFill).not.toHaveBeenCalled();
+
+    const nonExecutableLimit = buildContext({
+      ...createInitialTradingState(),
+      latestTick: baseTick,
+      orders: [{
+        id: "ord_1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "limit",
+        status: "ACCEPTED",
+        quantity: 1,
+        filledQuantity: 0,
+        remainingQuantity: 1,
+        limitPrice: 99,
+        createdAt: "2026-03-26T00:00:00.000Z",
+        updatedAt: "2026-03-26T00:00:00.000Z"
+      }]
+    });
+    handleFillOrder({
+      context: nonExecutableLimit.context,
+      orderId: "ord_1",
+      events: nonExecutableLimit.events,
+      occurredAt: "2026-03-26T00:00:01.000Z"
+    });
+
+    expect(nonExecutableLimit.events).toEqual([]);
+    expect(nonExecutableLimit.emitAndApplySpy).not.toHaveBeenCalled();
+    expect(nonExecutableLimit.incrementNextFillId).not.toHaveBeenCalled();
+    expect(nonExecutableLimit.applyPostFill).not.toHaveBeenCalled();
+  });
+
   it("handles post-fill updates and fee/account refresh", () => {
     const stateRef = createMutableState({
       ...createInitialTradingState(),
@@ -257,6 +387,129 @@ describe("engine handlers", () => {
     });
 
     expect(events.map((event) => event.eventType)).toEqual(["PositionOpened", "FeeCharged"]);
+    expect(refreshAccountSnapshot).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      name: "opens a new position",
+      previousState: createInitialTradingState(),
+      result: {
+        position: {
+          ...createInitialTradingState().position,
+          side: "long" as const,
+          quantity: 1
+        },
+        walletBalance: 999.5,
+        realizedPnlDelta: 0
+      },
+      expectedEventType: "PositionOpened"
+    },
+    {
+      name: "updates an existing position",
+      previousState: {
+        ...createInitialTradingState(),
+        position: {
+          ...createInitialTradingState().position,
+          side: "long" as const,
+          quantity: 1
+        }
+      },
+      result: {
+        position: {
+          ...createInitialTradingState().position,
+          side: "long" as const,
+          quantity: 2
+        },
+        walletBalance: 999,
+        realizedPnlDelta: 0
+      },
+      expectedEventType: "PositionUpdated"
+    },
+    {
+      name: "closes the position",
+      previousState: {
+        ...createInitialTradingState(),
+        position: {
+          ...createInitialTradingState().position,
+          side: "long" as const,
+          quantity: 1
+        }
+      },
+      result: {
+        position: createInitialTradingState().position,
+        walletBalance: 1001,
+        realizedPnlDelta: 1
+      },
+      expectedEventType: "PositionClosed"
+    }
+  ])("emits the correct post-fill position event when it $name", ({ previousState, result, expectedEventType }) => {
+    const emitAndApplySpy = vi.fn();
+    const refreshAccountSnapshot = vi.fn();
+    const events: AnyEventEnvelope[] = [];
+
+    handlePostFill({
+      context: {
+        getState: () => previousState,
+        setState: vi.fn(),
+        getSymbolConfig: () => DEFAULT_SYMBOL_CONFIG,
+        emitAndApply: emitAndApplySpy,
+        computePostFillResult: () => ({
+          previousState,
+          result: {
+            ...result,
+            position: {
+              ...result.position,
+              symbol: "BTC-USD",
+              averageEntryPrice: result.position.averageEntryPrice ?? 100,
+              markPrice: result.position.markPrice ?? 100.5,
+              realizedPnl: result.position.realizedPnl ?? 0,
+              unrealizedPnl: result.position.unrealizedPnl ?? 0,
+              initialMargin: result.position.initialMargin ?? 0,
+              maintenanceMargin: result.position.maintenanceMargin ?? 0,
+              liquidationPrice: result.position.liquidationPrice ?? 0
+            }
+          }
+        }),
+        applyComputedPostFill: vi.fn(),
+        buildPositionPayload: vi.fn(() => ({ positionId: "position_1" })),
+        refreshAccountSnapshot,
+        getCurrentFillId: () => 2
+      },
+      orderId: "ord_1",
+      orderSide: "buy",
+      fillQuantity: 1,
+      fillPrice: 101,
+      fee: 0.1,
+      events,
+      occurredAt: "2026-03-26T00:00:01.000Z"
+    });
+
+    expect(emitAndApplySpy).toHaveBeenNthCalledWith(
+      1,
+      events,
+      expectedEventType,
+      "system",
+      "BTC-USD",
+      { positionId: "position_1" },
+      "2026-03-26T00:00:01.000Z"
+    );
+    expect(emitAndApplySpy).toHaveBeenNthCalledWith(
+      2,
+      events,
+      "FeeCharged",
+      "system",
+      "BTC-USD",
+      expect.objectContaining({
+        ledgerEntryId: "ledger_1",
+        orderId: "ord_1",
+        fillId: "fill_1",
+        amount: 0.1,
+        asset: "USD",
+        chargedAt: "2026-03-26T00:00:01.000Z"
+      }),
+      "2026-03-26T00:00:01.000Z"
+    );
     expect(refreshAccountSnapshot).toHaveBeenCalledOnce();
   });
 

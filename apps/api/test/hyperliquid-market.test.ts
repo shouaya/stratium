@@ -310,4 +310,54 @@ describe("HyperliquidMarketClient", () => {
       connected: false
     }));
   });
+
+  it("covers nullish asset context fields and explicit close cleanup", async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const client = new HyperliquidMarketClient({
+      coin: "BTC",
+      onTick,
+      onSnapshot
+    });
+    const clientAny = client as never;
+
+    clientAny.reconnectTimer = 123;
+    clientAny.socket = {
+      close: vi.fn()
+    };
+    client.close();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+
+    await clientAny.handleMessage(JSON.stringify({
+      channel: "candle",
+      data: null
+    }));
+
+    await clientAny.handleMessage(JSON.stringify({
+      channel: "activeAssetCtx",
+      data: {
+        coin: "BTC",
+        ctx: {
+          markPx: null,
+          midPx: null,
+          oraclePx: null,
+          funding: null,
+          openInterest: null,
+          prevDayPx: null,
+          dayNtlVlm: null
+        }
+      }
+    }));
+
+    expect(client.getSnapshot().assetCtx).toMatchObject({
+      coin: "BTC",
+      markPrice: undefined,
+      midPrice: undefined,
+      oraclePrice: undefined,
+      fundingRate: undefined,
+      openInterest: undefined,
+      prevDayPrice: undefined,
+      dayNotionalVolume: undefined
+    });
+  });
 });

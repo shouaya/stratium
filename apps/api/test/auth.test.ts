@@ -112,6 +112,34 @@ describe("AuthRuntime", () => {
     await expect(runtime.login("demo", "demo123456", "frontend")).rejects.toThrow("Trading account is not assigned.");
   });
 
+  it("returns null for missing sessions and preserves undefined optional update fields", async () => {
+    const repository = makeRepository();
+    const runtime = new AuthRuntime(repository as never);
+
+    repository.updateFrontendUser.mockResolvedValue({
+      id: "user-5",
+      username: "bob",
+      role: "frontend" as const,
+      displayName: "Bob",
+      tradingAccountId: "paper-bob",
+      isActive: true,
+      passwordHash: "hash"
+    });
+
+    expect(runtime.getSession(undefined)).toBeNull();
+
+    await runtime.updateFrontendUser("user-5", {
+      isActive: true
+    });
+
+    expect(repository.updateFrontendUser).toHaveBeenCalledWith("user-5", {
+      passwordHash: undefined,
+      displayName: undefined,
+      tradingAccountId: undefined,
+      isActive: true
+    });
+  });
+
   it("lists and updates frontend users and platform settings", async () => {
     const repository = makeRepository();
     const runtime = new AuthRuntime(repository as never);

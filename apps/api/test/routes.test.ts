@@ -678,7 +678,7 @@ describe("registerRoutes", () => {
             b: false,
             p: "69900",
             s: "0.5",
-            r: false,
+            r: true,
             t: { trigger: { isMarket: false, triggerPx: "69950", tpsl: "sl" } },
             c: "0xtrigger00000000000000000000000001"
           }]
@@ -820,6 +820,104 @@ describe("registerRoutes", () => {
       orderId: "ord_9",
       requestedAt: undefined
     });
+  });
+
+  it("builds combined order history entries for live, inferred tpsl, and trigger orders", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/api/orders",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "market",
+        quantity: 1,
+        clientOrderId: "0xtp-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/orders",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        symbol: "BTC-USD",
+        side: "sell",
+        orderType: "limit",
+        quantity: 1,
+        limitPrice: 69950,
+        clientOrderId: "0xsl-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: false,
+            p: "69900",
+            s: "0.5",
+            r: true,
+            t: { trigger: { isMarket: false, triggerPx: "69950", tpsl: "sl" } },
+            c: "0xtrigger-history"
+          }]
+        },
+        nonce: 50,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/order-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const history = response.json() as Array<{
+      kind: string;
+      clientOrderId?: string;
+      orderType?: string;
+      triggerCondition?: { triggerPx: string; isMarket: boolean; tpsl: string };
+      reduceOnly?: boolean;
+    }>;
+
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "order",
+        clientOrderId: "0xtp-aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        triggerCondition: {
+          triggerPx: "",
+          isMarket: true,
+          tpsl: "tp"
+        }
+      }),
+      expect.objectContaining({
+        kind: "order",
+        clientOrderId: "0xsl-bbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        triggerCondition: {
+          triggerPx: "",
+          isMarket: false,
+          tpsl: "sl"
+        }
+      }),
+      expect.objectContaining({
+        kind: "trigger",
+        clientOrderId: "0xtrigger-history",
+        orderType: "limit",
+        reduceOnly: true,
+        triggerCondition: {
+          triggerPx: "",
+          isMarket: false,
+          tpsl: "sl"
+        }
+      })
+    ]));
   });
 
   it("handles auth and admin management endpoints", async () => {
@@ -1101,6 +1199,93 @@ describe("registerRoutes", () => {
     });
     expect(privateInfoUnauthorized.statusCode).toBe(401);
 
+    const publicInfoMissingType = await app.inject({
+      method: "POST",
+      url: "/info",
+      payload: {}
+    });
+    expect(publicInfoMissingType.statusCode).toBe(400);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/exchange",
+      payload: {
+        action: { type: "order", orders: [] },
+        nonce: 1,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/bot-credentials"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/account"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/orders"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/events"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/fill-history"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/replay/session-unauthorized"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/order-history"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/market-simulator"
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/state",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/platform-settings",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/admin/batch-jobs",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders/cancel",
+      payload: { orderId: "ord_1" }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/orders/ord_1/cancel",
+      payload: {}
+    })).statusCode).toBe(401);
+
     const exchangeBadPayload = await app.inject({
       method: "POST",
       url: "/exchange",
@@ -1167,6 +1352,34 @@ describe("registerRoutes", () => {
       }
     });
     expect(createUserRejected.statusCode).toBe(400);
+
+    await app.inject({
+      method: "GET",
+      url: "/api/market-history",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(runtime.getMarketHistory).toHaveBeenLastCalledWith(200);
+
+    await app.inject({
+      method: "GET",
+      url: "/api/market-volume",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(runtime.getMarketVolume).toHaveBeenLastCalledWith(500, "1m", "BTC");
+
+    await app.inject({
+      method: "PUT",
+      url: "/api/admin/platform-settings",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {}
+    });
+    expect(runtime.updatePlatformSettings).toHaveBeenLastCalledWith({
+      platformName: "Stratium Demo",
+      platformAnnouncement: "",
+      allowFrontendTrading: true,
+      allowManualTicks: true,
+      allowSimulatorControl: true
+    });
 
     runtime.runBatchJob
       .mockResolvedValueOnce({
@@ -1390,5 +1603,156 @@ describe("registerRoutes", () => {
     });
     privateSocket.close();
     await waitForSocketClose(privateSocket);
+  });
+
+  it("covers trigger-store route branches, token extraction variants, and non-Error failures", async () => {
+    const routeApp = Fastify();
+    await routeApp.register(websocket);
+
+    const triggerRuntime = {
+      ...runtime,
+      getSession: vi.fn((token?: string) => {
+        if (token === frontendSession.token) {
+          return frontendSession;
+        }
+        if (token === adminSession.token) {
+          return adminSession;
+        }
+        return null;
+      }),
+      getOrders: vi.fn(() => [{
+        id: "ord_99",
+        clientOrderId: "0xlinked-trigger",
+        symbol: "BTC-USD",
+        side: "sell" as const,
+        orderType: "limit" as const,
+        status: "ACCEPTED",
+        quantity: 1,
+        filledQuantity: 0,
+        remainingQuantity: 1,
+        limitPrice: 70010,
+        averageFillPrice: undefined,
+        createdAt: "2026-04-10T00:00:00.000Z",
+        updatedAt: "2026-04-10T00:00:02.000Z"
+      }]),
+      getNextTriggerOrderOid: vi.fn(async () => 1000000200),
+      upsertTriggerOrderHistory: vi.fn(async () => undefined),
+      listTriggerOrderHistory: vi.fn(async () => [{
+        oid: 1000000101,
+        accountId: "paper-account-1",
+        asset: 0,
+        isBuy: true,
+        triggerPx: 71000,
+        actualTriggerPx: 71010,
+        isMarket: true,
+        tpsl: "tp" as const,
+        size: 1,
+        limitPx: 71020,
+        reduceOnly: true,
+        cloid: "0xlinked-trigger",
+        status: "filled",
+        createdAt: new Date("2026-04-10T00:00:00.000Z").getTime(),
+        updatedAt: new Date("2026-04-10T00:00:05.000Z").getTime()
+      }]),
+      listPendingTriggerOrders: vi.fn(async () => []),
+      findTriggerOrder: vi.fn(async () => null)
+    };
+
+    await registerRoutes(routeApp, triggerRuntime as never);
+
+    const orderHistoryWithQueryToken = await routeApp.inject({
+      method: "GET",
+      url: `/api/order-history?token=${frontendSession.token}`
+    });
+    expect(orderHistoryWithQueryToken.statusCode).toBe(200);
+    expect(orderHistoryWithQueryToken.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "trigger",
+        side: "buy",
+        orderType: "market",
+        filledQuantity: 1,
+        averageFillPrice: 71020
+      }),
+      expect.objectContaining({
+        kind: "order",
+        clientOrderId: "0xlinked-trigger",
+        reduceOnly: true,
+        triggerCondition: {
+          triggerPx: "71010",
+          isMarket: true,
+          tpsl: "tp"
+        }
+      })
+    ]));
+
+    const exchangeWithoutBody = await routeApp.inject({
+      method: "POST",
+      url: "/exchange"
+    });
+    expect(exchangeWithoutBody.statusCode).toBe(401);
+
+    triggerRuntime.getMarketData.mockImplementationOnce(() => {
+      throw "info exploded";
+    });
+    const infoStringFailure = await routeApp.inject({
+      method: "POST",
+      url: "/info",
+      payload: { type: "meta" }
+    });
+    expect(infoStringFailure.statusCode).toBe(400);
+    expect(infoStringFailure.json()).toEqual({
+      status: "error",
+      message: "Unsupported Hyperliquid info request."
+    });
+
+    triggerRuntime.submitOrder.mockRejectedValueOnce("exchange exploded");
+    const exchangeStringFailure = await routeApp.inject({
+      method: "POST",
+      url: "/exchange",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        action: {
+          type: "order",
+          orders: [{
+            a: 0,
+            b: true,
+            p: "70000",
+            s: "1",
+            r: false,
+            t: { limit: { tif: "Gtc" } }
+          }]
+        },
+        nonce: 200,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    });
+    expect(exchangeStringFailure.statusCode).toBe(400);
+    expect(exchangeStringFailure.json()).toEqual({
+      status: "error",
+      response: {
+        type: "error",
+        data: "exchange exploded"
+      }
+    });
+
+    triggerRuntime.listRunningBatchJobs.mockRejectedValueOnce("runner exploded");
+    expect((await routeApp.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/running",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    })).json()).toEqual({
+      message: "Batch job request failed."
+    });
+
+    triggerRuntime.getBatchJobExecution.mockRejectedValueOnce("execution exploded");
+    expect((await routeApp.inject({
+      method: "GET",
+      url: "/api/admin/batch-job-executions/exec-2",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    })).json()).toEqual({
+      message: "Batch job request failed."
+    });
+
+    await routeApp.close();
   });
 });

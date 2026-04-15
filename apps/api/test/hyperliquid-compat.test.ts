@@ -497,4 +497,171 @@ describe("buildHyperliquidInfoResponse", () => {
       assetPositions: []
     });
   });
+
+  it("covers deep fallback branches for market data and null positions", async () => {
+    const runtime = makeRuntime();
+    const accountId = "paper-account-1";
+    const user = hyperliquidCompatAddressForAccountId(accountId);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-15T00:00:00.000Z"));
+
+    runtime.getMarketData = () => ({
+      source: "hyperliquid" as const,
+      coin: "BTC",
+      connected: true,
+      bestBid: undefined,
+      bestAsk: undefined,
+      markPrice: undefined,
+      book: {
+        bids: [],
+        asks: [],
+        updatedAt: undefined
+      },
+      trades: [],
+      candles: [],
+      assetCtx: undefined
+    });
+    runtime.getMarketHistory = vi.fn(async () => ({
+      coin: "BTC",
+      interval: "1m",
+      candles: [],
+      trades: [{
+        coin: "BTC",
+        side: "buy" as const,
+        price: 70001,
+        size: 0.25,
+        time: 1234567890000,
+        id: "trade-default-coin"
+      }],
+      book: {
+        bids: [],
+        asks: []
+      }
+    }));
+    runtime.getOrders = vi.fn(() => [{
+      id: "ord_6",
+      symbol: "BTC-USD",
+      side: "sell" as const,
+      status: "PARTIALLY_FILLED",
+      quantity: 3,
+      remainingQuantity: 1,
+      limitPrice: undefined,
+      createdAt: "2026-04-10T00:00:00.000Z",
+      updatedAt: "2026-04-10T00:00:03.000Z"
+    }, {
+      id: "ord_7",
+      symbol: "BTC-USD",
+      side: "buy" as const,
+      status: "FILLED",
+      quantity: 1,
+      remainingQuantity: 0,
+      limitPrice: undefined,
+      createdAt: "2026-04-10T00:00:00.000Z",
+      updatedAt: "2026-04-10T00:00:04.000Z"
+    }]);
+    runtime.getVirtualOpenOrders = vi.fn(() => undefined);
+    runtime.getVirtualOrderStatus = vi.fn(() => undefined);
+    runtime.getEngineState = vi.fn(() => ({
+      account: {
+        walletBalance: 1000,
+        availableBalance: 900,
+        positionMargin: 0,
+        orderMargin: 0,
+        equity: 1000,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        riskRatio: 0
+      },
+      position: null
+    }));
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "metaAndAssetCtxs"
+    })).toEqual([
+      expect.any(Object),
+      [{
+        funding: "0",
+        openInterest: "0",
+        prevDayPx: "0",
+        dayNtlVlm: "0",
+        premium: "0.0",
+        oraclePx: "0",
+        markPx: "0",
+        midPx: "0",
+        impactPxs: ["0", "0"],
+        dayBaseVlm: "0"
+      }]
+    ]);
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, { type: "allMids" })).toEqual({
+      BTC: "0"
+    });
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, { type: "l2Book" })).toEqual({
+      coin: "BTC",
+      time: new Date("2026-04-15T00:00:00.000Z").getTime(),
+      levels: [[], []]
+    });
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "candleSnapshot",
+      req: { interval: "1m", startTime: 0, endTime: 2000 }
+    })).toEqual([]);
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "recentTrades"
+    })).toEqual([{
+      coin: "BTC",
+      side: "B",
+      px: "70001",
+      sz: "0.25",
+      time: 1234567890000,
+      hash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      tid: 234567890000,
+      users: [
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000"
+      ]
+    }]);
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "openOrders",
+      user
+    }, accountId)).toEqual([{
+      coin: "BTC",
+      side: "A",
+      limitPx: "0",
+      sz: "1",
+      oid: 6,
+      timestamp: new Date("2026-04-10T00:00:00.000Z").getTime(),
+      origSz: "3",
+      cloid: undefined
+    }]);
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "orderStatus",
+      user,
+      oid: 6
+    }, accountId)).toMatchObject({
+      order: {
+        order: {
+          side: "A",
+          limitPx: "0",
+          oid: 6
+        },
+        status: "open"
+      }
+    });
+
+    expect(await buildHyperliquidInfoResponse(runtime as never, {
+      type: "clearinghouseState",
+      user
+    }, accountId)).toMatchObject({
+      crossMaintenanceMarginUsed: "0",
+      assetPositions: []
+    });
+
+    vi.useRealTimers();
+  });
 });

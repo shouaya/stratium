@@ -31,4 +31,18 @@ describe("locale", () => {
     expect(localizeRuntimeMessage("zh", "Manual tick requires bid lower than ask.")).toContain("bid");
     expect(localizeRuntimeMessage("en", "Unknown runtime message")).toBe("Unknown runtime message");
   });
+
+  it("supports array headers and zh accept-language fallback", () => {
+    expect(resolveLocale({
+      headers: {
+        "x-stratium-locale": [" en ", "ja"]
+      }
+    })).toBe("en");
+
+    expect(resolveLocale({
+      headers: {
+        "accept-language": "zh-CN,zh;q=0.9"
+      }
+    })).toBe("zh");
+  });
 });

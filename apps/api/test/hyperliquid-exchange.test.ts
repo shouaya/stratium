@@ -875,4 +875,178 @@ describe("HyperliquidExchangeCompat", () => {
 
     compat.shutdown();
   });
+
+  it("covers helper branches for trigger history, deferred groups, and reduce-only validation", async () => {
+    const compat = new HyperliquidExchangeCompat();
+    const { runtime } = makeRuntime();
+    const compatAny = compat as never;
+
+    expect(compatAny.shouldTriggerOrder({
+      tpsl: "tp",
+      isBuy: true,
+      triggerPx: 100
+    }, 99)).toBe(true);
+    expect(compatAny.shouldTriggerOrder({
+      tpsl: "tp",
+      isBuy: false,
+      triggerPx: 100
+    }, 101)).toBe(true);
+    expect(compatAny.shouldTriggerOrder({
+      tpsl: "sl",
+      isBuy: true,
+      triggerPx: 100
+    }, 101)).toBe(true);
+    expect(compatAny.shouldTriggerOrder({
+      tpsl: "sl",
+      isBuy: false,
+      triggerPx: 100
+    }, 99)).toBe(true);
+
+    runtime.getEngineState.mockReturnValue({ position: null });
+    expect(compatAny.validateReduceOnly(runtime, "paper-account-1", true, 1)).toBe("reduceOnly order requires an open position");
+    runtime.getEngineState.mockReturnValue({ position: { side: "long", quantity: 1 } });
+    expect(compatAny.validateReduceOnly(runtime, "paper-account-1", true, 1)).toBe("reduceOnly buy order can only reduce a short position");
+    runtime.getEngineState.mockReturnValue({ position: { side: "short", quantity: 1 } });
+    expect(compatAny.validateReduceOnly(runtime, "paper-account-1", false, 1)).toBe("reduceOnly sell order can only reduce a long position");
+    runtime.getEngineState.mockReturnValue({ position: { side: "long", quantity: 0.5 } });
+    expect(compatAny.validateReduceOnly(runtime, "paper-account-1", false, 1)).toBe("reduceOnly size exceeds current position");
+    expect(compatAny.validateReduceOnly(runtime, "paper-account-1", false, 0.25)).toBeNull();
+
+    expect(await compatAny.createTriggerOrder("paper-account-1", {
+      a: 0,
+      b: false,
+      p: "0",
+      s: "1",
+      r: false,
+      t: {}
+    })).toEqual({ error: "Trigger order payload missing" });
+
+    compatAny.fallbackTriggerOrderHistory.set(1000000010, {
+      oid: 1000000010,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      actualTriggerPx: 69940,
+      isMarket: true,
+      tpsl: "sl",
+      size: 0.5,
+      reduceOnly: true,
+      cloid: "0xhistory-triggered",
+      status: "triggered",
+      createdAt: 1000,
+      updatedAt: 2000
+    });
+    compatAny.fallbackTriggerOrderHistory.set(1000000011, {
+      oid: 1000000011,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 70010,
+      isMarket: false,
+      tpsl: "tp",
+      size: 0.5,
+      reduceOnly: true,
+      cloid: "0xhistory-waiting",
+      status: "waitingForParent",
+      createdAt: 1001,
+      updatedAt: 2001
+    });
+    compatAny.triggerGroupByOid.set(1000000010, {
+      groupId: "group-1",
+      grouping: "positionTpsl",
+      childOids: [1000000010, 1000000011]
+    });
+    compatAny.triggerGroupByOid.set(1000000011, {
+      groupId: "group-1",
+      grouping: "positionTpsl",
+      childOids: [1000000010, 1000000011]
+    });
+
+    const history = await compat.getVirtualOrderHistory("paper-account-1");
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        oid: 1000000010,
+        grouping: "positionTpsl",
+        triggerCondition: {
+          triggerPx: "69940",
+          isMarket: true,
+          tpsl: "sl"
+        }
+      }),
+      expect.objectContaining({
+        oid: 1000000011,
+        triggerCondition: {
+          triggerPx: "",
+          isMarket: false,
+          tpsl: "tp"
+        }
+      })
+    ]));
+
+    compatAny.fallbackTriggerOrderHistory.set(1000000020, {
+      oid: 1000000020,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69900,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      reduceOnly: true,
+      cloid: "0xwaiting",
+      status: "waitingForParent",
+      createdAt: 1000,
+      updatedAt: 1000
+    });
+    compatAny.fallbackTriggerOrderHistory.set(1000000021, {
+      oid: 1000000021,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 70100,
+      isMarket: false,
+      tpsl: "tp",
+      size: 0.5,
+      reduceOnly: true,
+      cloid: "0xother-status",
+      status: "triggerPending",
+      createdAt: 1000,
+      updatedAt: 1000
+    });
+
+    await compatAny.activateDeferredNormalTpslGroup({
+      groupId: "group-activate",
+      accountId: "paper-account-1",
+      parentOrderId: "ord_parent",
+      childOids: [1000000020, 1000000021, 1000000099]
+    }, 1.25);
+    expect(compatAny.fallbackTriggerOrderHistory.get(1000000020)?.status).toBe("triggerPending");
+    expect(compatAny.fallbackTriggerOrderHistory.get(1000000020)?.size).toBe(1.25);
+
+    compatAny.fallbackTriggerOrderHistory.set(1000000022, {
+      oid: 1000000022,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69800,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      reduceOnly: true,
+      cloid: "0xcancel-waiting",
+      status: "waitingForParent",
+      createdAt: 1000,
+      updatedAt: 1000
+    });
+    await compatAny.cancelDeferredNormalTpslGroup({
+      groupId: "group-cancel",
+      accountId: "paper-account-1",
+      parentOrderId: "ord_parent",
+      childOids: [1000000022, 1000000098]
+    });
+    expect(compatAny.fallbackTriggerOrderHistory.get(1000000022)?.status).toBe("canceled");
+
+    compat.shutdown();
+  });
 });

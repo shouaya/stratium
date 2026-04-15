@@ -954,6 +954,46 @@ describe("ApiRuntime", () => {
     expect(socket.send).toHaveBeenCalledTimes(1);
   });
 
+  it("supports admin bootstrap sockets and guards frontend sockets without trading accounts", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    await runtime.bootstrap();
+
+    const adminSocket = {
+      send: vi.fn(),
+      on: vi.fn()
+    };
+    runtime.addSocket(adminSocket, {
+      token: "admin-token",
+      user: {
+        id: "admin-user-1",
+        username: "admin",
+        role: "admin",
+        displayName: "Admin",
+        tradingAccountId: null,
+        isActive: true
+      }
+    });
+    expect(adminSocket.send).toHaveBeenCalledOnce();
+
+    const frontendSocket = {
+      send: vi.fn(),
+      on: vi.fn()
+    };
+    runtime.addSocket(frontendSocket, {
+      token: "frontend-token",
+      user: {
+        id: "frontend-user-2",
+        username: "broken",
+        role: "frontend",
+        displayName: "Broken",
+        tradingAccountId: null,
+        isActive: true
+      }
+    });
+    expect(frontendSocket.send).not.toHaveBeenCalled();
+    expect(frontendSocket.on).not.toHaveBeenCalled();
+  });
+
   it("keeps trading events in recent event payloads even when market ticks exceed the window", async () => {
     const runtime = new ApiRuntime(logger as never);
     await runtime.bootstrap();
@@ -1014,6 +1054,13 @@ describe("ApiRuntime", () => {
     await runtime.bootstrap();
 
     const privateRuntime = runtime as never;
+    privateRuntime.repository = {
+      getNextTriggerOrderOid: vi.fn(async () => 1000000001),
+      upsertTriggerOrderHistory: vi.fn(async () => undefined),
+      listTriggerOrderHistory: vi.fn(async () => [{ oid: 1000000001 }]),
+      listPendingTriggerOrders: vi.fn(async () => [{ oid: 1000000002 }]),
+      findTriggerOrder: vi.fn(async () => ({ oid: 1000000001 }))
+    };
     privateRuntime.tradingRuntime = {
       getEngineState: vi.fn(() => ({ account: { accountId: "paper-account-1" } })),
       getEventStore: vi.fn(() => [{ eventType: "OrderAccepted" }]),
@@ -1083,6 +1130,25 @@ describe("ApiRuntime", () => {
     expect(runtime.getOrders("paper-account-1")).toEqual([{ id: "ord_1" }]);
     expect(runtime.getOrderByClientOrderId("paper-account-1", "0xabc")).toEqual({ id: "ord_1", clientOrderId: "0xabc" });
     expect(await runtime.cancelAllOpenOrders("paper-account-1")).toEqual([{ orderId: "ord_1" }]);
+    expect(await runtime.getNextTriggerOrderOid(1000000000)).toBe(1000000001);
+    await runtime.upsertTriggerOrderHistory({
+      oid: 1000000001,
+      accountId: "paper-account-1",
+      asset: 0,
+      isBuy: false,
+      triggerPx: 69950,
+      isMarket: false,
+      tpsl: "sl",
+      size: 0.5,
+      limitPx: 69900,
+      reduceOnly: true,
+      status: "triggerPending",
+      createdAt: 1,
+      updatedAt: 1
+    });
+    expect(await runtime.listTriggerOrderHistory("paper-account-1")).toEqual([{ oid: 1000000001 }]);
+    expect(await runtime.listPendingTriggerOrders()).toEqual([{ oid: 1000000002 }]);
+    expect(await runtime.findTriggerOrder("paper-account-1", 1000000001)).toEqual({ oid: 1000000001 });
     expect(await runtime.getMarketHistory(10)).toEqual({ candles: [], trades: [], book: { bids: [], asks: [] } });
     expect(await runtime.getMarketVolume(10, "1m", "BTC")).toEqual({ records: [] });
     expect(runtime.startMarketSimulator()).toEqual({ enabled: true });
@@ -1183,7 +1249,24 @@ describe("ApiRuntime", () => {
     await runtime.persistExternalEvents("paper-a", []);
     expect(onEvents).not.toHaveBeenCalled();
 
+    await runtime.submitOrder({
+      accountId: "paper-a",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "limit",
+      quantity: 1
+    });
+    await runtime.submitOrder({
+      accountId: "paper-a",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "limit",
+      quantity: 2
+    });
     expect(await runtime.cancelAllOpenOrders("paper-a")).toEqual([]);
+    runtime.getEngineState("paper-a").orders[0]!.status = "PARTIALLY_FILLED";
+    runtime.getEngineState("paper-a").orders[1]!.status = "ACCEPTED";
+    expect((await runtime.cancelAllOpenOrders("paper-a")).length).toBe(2);
 
     await runtime.updateLeverage({
       symbol: "BTC-USD",
@@ -1197,6 +1280,64 @@ describe("ApiRuntime", () => {
     await runtime.flushPersistence();
     await runtime.setBootstrapReady(true);
     expect(repository.persistState).toHaveBeenCalled();
+    expect(() => runtime.getOrders("paper-missing")).toThrow("Trading account runtime paper-missing is not initialized.");
+  });
+
+  it("initializes from a persisted snapshot without replay events", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => ({
+        lastSequence: 5,
+        updatedAt: "2026-01-01T00:05:00.000Z",
+        state: {
+          simulationSessionId: "session-paper-b",
+          nextSequence: 6,
+          nextOrderId: 2,
+          nextFillId: 1,
+          latestTick: null,
+          account: {
+            accountId: "paper-b",
+            walletBalance: 1000,
+            availableBalance: 1000,
+            positionMargin: 0,
+            orderMargin: 0,
+            equity: 1000,
+            realizedPnl: 0,
+            unrealizedPnl: 0,
+            riskRatio: 0
+          },
+          position: {
+            symbol: "BTC-USD",
+            side: "flat",
+            quantity: 0,
+            averageEntryPrice: 0,
+            markPrice: 0,
+            realizedPnl: 0,
+            unrealizedPnl: 0,
+            initialMargin: 0,
+            maintenanceMargin: 0,
+            liquidationPrice: 0
+          },
+          orders: []
+        }
+      })),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined)
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-b"],
+      persistedSymbolConfig: null
+    });
+    await runtime.setBootstrapReady(true);
+
+    expect(runtime.getEngineState("paper-b").nextSequence).toBe(6);
+    expect(repository.loadEvents).toHaveBeenCalledWith("session-paper-b", 5);
   });
 
   it("writes snapshots only once per minute while still persisting every event batch", async () => {
