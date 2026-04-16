@@ -1,0 +1,22 @@
+{
+  "statusCode": 202,
+  "bodyMatchObject": {
+    "state": {
+      "position": {
+        "symbol": "BTC-USD",
+        "side": "flat",
+        "quantity": 0
+      },
+      "orders": [
+        {
+          "side": "buy",
+          "status": "FILLED"
+        },
+        {
+          "side": "sell",
+          "status": "FILLED"
+        }
+      ]
+    }
+  }
+}

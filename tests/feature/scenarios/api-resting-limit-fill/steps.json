@@ -1,0 +1,37 @@
+[
+  {
+    "id": "ingest-opening-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-opening-tick.request.json",
+    "responseFile": "api/01-opening-tick.response.json"
+  },
+  {
+    "id": "place-resting-order",
+    "type": "api",
+    "actor": "frontend",
+    "method": "POST",
+    "url": "/api/orders",
+    "requestFile": "api/02-place-order.request.json",
+    "responseFile": "api/02-place-order.response.json"
+  },
+  {
+    "id": "ingest-crossing-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/03-crossing-tick.request.json",
+    "responseFile": "api/03-crossing-tick.response.json"
+  },
+  {
+    "id": "read-orders",
+    "type": "api",
+    "actor": "frontend",
+    "method": "GET",
+    "url": "/api/orders",
+    "responseFile": "api/04-orders.response.json"
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "symbol": "BTC-USD",
+  "side": "sell",
+  "orderType": "market",
+  "quantity": 2,
+  "submittedAt": "2026-04-16T00:30:03.000Z"
+}

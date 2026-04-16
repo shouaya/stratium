@@ -1,0 +1,3 @@
+accountId,clientOrderId,symbol,side,orderType,status,quantity,filledQuantity,remainingQuantity
+paper-account-1,0xmcp-auto-open-1,BTC-USD,buy,market,FILLED,1,1,0
+paper-account-1,0xmcp-auto-close-1,BTC-USD,sell,market,FILLED,1,1,0

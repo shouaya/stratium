@@ -1,0 +1,18 @@
+{
+  "statusCode": 202,
+  "bodyMatchObject": {
+    "state": {
+      "orders": [
+        {
+          "side": "buy",
+          "orderType": "limit",
+          "status": "ACCEPTED",
+          "quantity": 1,
+          "filledQuantity": 0,
+          "remainingQuantity": 1,
+          "limitPrice": 99
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+{
+  "extends": "../_shared/default-db.init.json"
+}

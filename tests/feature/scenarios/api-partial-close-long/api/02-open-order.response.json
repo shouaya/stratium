@@ -1,0 +1,11 @@
+{
+  "statusCode": 202,
+  "bodyMatchObject": {
+    "state": {
+      "position": {
+        "side": "long",
+        "quantity": 2
+      }
+    }
+  }
+}

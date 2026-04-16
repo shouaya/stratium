@@ -1,0 +1,11 @@
+{
+  "structuredContentMatchObject": {
+    "operation": "stratium_cancel_order_by_cloid",
+    "summary": [
+      {
+        "accepted": true,
+        "status": "ok"
+      }
+    ]
+  }
+}

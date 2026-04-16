@@ -1,0 +1,2 @@
+accountId,oid,isBuy,triggerPx,isMarket,tpsl,size,reduceOnly,cloid,status
+paper-account-1,1000000001,false,104,true,tp,1,true,0xmcp-auto-trigger-1,canceled

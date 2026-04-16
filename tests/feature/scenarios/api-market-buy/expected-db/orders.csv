@@ -1,0 +1,2 @@
+accountId,symbol,side,orderType,status,quantity,filledQuantity,remainingQuantity
+paper-account-1,BTC-USD,buy,market,FILLED,2,2,0

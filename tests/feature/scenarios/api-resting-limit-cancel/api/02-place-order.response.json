@@ -1,0 +1,14 @@
+{
+  "statusCode": 202,
+  "bodyMatchObject": {
+    "state": {
+      "orders": [
+        {
+          "status": "ACCEPTED",
+          "filledQuantity": 0,
+          "remainingQuantity": 1
+        }
+      ]
+    }
+  }
+}

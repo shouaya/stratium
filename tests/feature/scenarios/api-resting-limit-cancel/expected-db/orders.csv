@@ -1,0 +1,2 @@
+accountId,symbol,side,orderType,status,quantity,limitPrice,filledQuantity,remainingQuantity
+paper-account-1,BTC-USD,buy,limit,CANCELED,1,99,0,1

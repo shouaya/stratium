@@ -49,6 +49,7 @@ model PlatformSettings {
 model Order {
   id                String   @id
   accountId        String
+  clientOrderId    String?
   symbol           String
   side             String
   orderType        String
@@ -62,6 +63,8 @@ model Order {
   rejectionMessage  String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([accountId, clientOrderId])
 }
 
 model Fill {

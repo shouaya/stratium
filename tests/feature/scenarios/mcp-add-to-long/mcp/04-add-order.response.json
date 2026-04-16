@@ -1,0 +1,12 @@
+{
+  "structuredContentMatchObject": {
+    "operation": "stratium_place_order",
+    "summary": [
+      {
+        "accepted": true,
+        "state": "filled",
+        "size": "2"
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "grouping": "positionTpsl",
+  "orders": [
+    {
+      "isBuy": false,
+      "price": "104",
+      "size": "1",
+      "reduceOnly": true,
+      "cloid": "0xmcp-tp-1",
+      "trigger": {
+        "isMarket": true,
+        "triggerPx": "104",
+        "tpsl": "tp"
+      }
+    },
+    {
+      "isBuy": false,
+      "price": "99",
+      "size": "1",
+      "reduceOnly": true,
+      "cloid": "0xmcp-sl-1",
+      "trigger": {
+        "isMarket": true,
+        "triggerPx": "99",
+        "tpsl": "sl"
+      }
+    }
+  ]
+}

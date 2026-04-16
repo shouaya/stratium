@@ -168,6 +168,7 @@ export class TradingPersistenceRepository extends SymbolConfigRepository {
     return rows.map((row) => ({
       id: row.id.startsWith(`${accountId}:`) ? row.id.slice(`${accountId}:`.length) : row.id,
       accountId: row.accountId,
+      clientOrderId: row.clientOrderId ?? undefined,
       symbol: row.symbol,
       side: row.side as OrderView["side"],
       orderType: row.orderType as OrderView["orderType"],
@@ -477,6 +478,7 @@ export class TradingPersistenceRepository extends SymbolConfigRepository {
   private mapOrder(order: OrderView) {
     return {
       accountId: order.accountId,
+      clientOrderId: order.clientOrderId ?? null,
       symbol: order.symbol,
       side: order.side,
       orderType: order.orderType,

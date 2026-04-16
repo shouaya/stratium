@@ -1,0 +1,38 @@
+[
+  {
+    "id": "ingest-opening-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-opening-tick.request.json",
+    "responseFile": "api/01-opening-tick.response.json"
+  },
+  {
+    "id": "place-normal-tpsl",
+    "type": "mcp",
+    "tool": "stratium_place_orders",
+    "requestFile": "mcp/02-place-orders.request.json",
+    "responseFile": "mcp/02-place-orders.response.json"
+  },
+  {
+    "id": "ingest-parent-fill-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/03-parent-fill-tick.request.json",
+    "responseFile": "api/03-parent-fill-tick.response.json"
+  },
+  {
+    "id": "wait-for-activation-loop",
+    "type": "wait",
+    "durationMs": 900
+  },
+  {
+    "id": "read-frontend-open-orders",
+    "type": "mcp",
+    "tool": "stratium_get_frontend_open_orders",
+    "responseFile": "mcp/04-frontend-open-orders.response.json"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "structuredContentMatchObject": {
+    "operation": "stratium_get_frontend_open_orders",
+    "raw": [
+      {
+        "coin": "BTC",
+        "cloid": "0xmcp-tp-1",
+        "triggerCondition": {
+          "tpsl": "tp"
+        }
+      },
+      {
+        "coin": "BTC",
+        "cloid": "0xmcp-sl-1",
+        "triggerCondition": {
+          "tpsl": "sl"
+        }
+      }
+    ]
+  }
+}

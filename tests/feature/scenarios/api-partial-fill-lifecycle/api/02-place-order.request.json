@@ -1,0 +1,8 @@
+{
+  "symbol": "BTC-USD",
+  "side": "buy",
+  "orderType": "limit",
+  "quantity": 2,
+  "limitPrice": 99,
+  "submittedAt": "2026-04-16T00:40:01.000Z"
+}

@@ -1,0 +1,19 @@
+{
+  "grouping": "na",
+  "orders": [
+    {
+      "isBuy": true,
+      "price": "99",
+      "size": "1",
+      "tif": "Gtc",
+      "cloid": "0xmcp-batch-1"
+    },
+    {
+      "isBuy": true,
+      "price": "98",
+      "size": "2",
+      "tif": "Gtc",
+      "cloid": "0xmcp-batch-2"
+    }
+  ]
+}

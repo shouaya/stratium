@@ -1,0 +1,38 @@
+[
+  {
+    "id": "ingest-opening-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-opening-tick.request.json",
+    "responseFile": "api/01-opening-tick.response.json"
+  },
+  {
+    "id": "place-two-resting-orders",
+    "type": "mcp",
+    "tool": "stratium_place_orders",
+    "requestFile": "mcp/02-place-orders.request.json",
+    "responseFile": "mcp/02-place-orders.response.json"
+  },
+  {
+    "id": "read-open-orders",
+    "type": "mcp",
+    "tool": "stratium_get_open_orders",
+    "responseFile": "mcp/03-open-orders.response.json"
+  },
+  {
+    "id": "cancel-first-order",
+    "type": "mcp",
+    "tool": "stratium_cancel_order_by_cloid",
+    "requestFile": "mcp/04-cancel-first.request.json",
+    "responseFile": "mcp/04-cancel-first.response.json"
+  },
+  {
+    "id": "cancel-second-order",
+    "type": "mcp",
+    "tool": "stratium_cancel_order_by_cloid",
+    "requestFile": "mcp/05-cancel-second.request.json",
+    "responseFile": "mcp/05-cancel-second.response.json"
+  }
+]

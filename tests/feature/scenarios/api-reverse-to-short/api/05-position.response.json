@@ -1,0 +1,8 @@
+{
+  "statusCode": 200,
+  "bodyMatchObject": {
+    "symbol": "BTC-USD",
+    "side": "short",
+    "quantity": 1
+  }
+}

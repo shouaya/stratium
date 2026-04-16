@@ -1,0 +1,12 @@
+{
+  "structuredContentMatchObject": {
+    "operation": "stratium_get_open_orders",
+    "raw": [
+      {
+        "oid": 1,
+        "coin": "BTC",
+        "cloid": "0xmcp-resting-1"
+      }
+    ]
+  }
+}

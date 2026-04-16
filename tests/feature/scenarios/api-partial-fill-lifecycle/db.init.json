@@ -1,0 +1,30 @@
+{
+  "extends": "../_shared/default-db.init.json",
+  "symbolConfigs": [
+    {
+      "source": "hyperliquid",
+      "assetIndex": 0,
+      "coin": "BTC",
+      "symbol": "BTC-USD",
+      "marketSymbol": "BTC",
+      "quoteAsset": "USD",
+      "contractType": "perp",
+      "contractMultiplier": 1,
+      "szDecimals": 3,
+      "maxPriceDecimals": 2,
+      "maxLeverage": 50,
+      "marginTableId": 1,
+      "onlyIsolated": false,
+      "marginMode": null,
+      "isDelisted": false,
+      "isActive": true,
+      "baseTakerFeeRate": 0.0005,
+      "baseMakerFeeRate": 0.00015,
+      "engineDefaultLeverage": 10,
+      "engineMaintenanceMarginRate": 0.05,
+      "engineBaseSlippageBps": 5,
+      "enginePartialFillEnabled": true,
+      "lastSyncedAt": "2026-04-16T00:00:00.000Z"
+    }
+  ]
+}

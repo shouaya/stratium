@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ingest-entry-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-entry-tick.request.json",
+    "responseFile": "api/01-entry-tick.response.json"
+  },
+  {
+    "id": "open-long-via-mcp",
+    "type": "mcp",
+    "tool": "stratium_place_order",
+    "requestFile": "mcp/02-open-order.request.json",
+    "responseFile": "mcp/02-open-order.response.json"
+  },
+  {
+    "id": "place-reduce-only-trigger",
+    "type": "mcp",
+    "tool": "stratium_place_order",
+    "requestFile": "mcp/03-trigger-order.request.json",
+    "responseFile": "mcp/03-trigger-order.response.json"
+  },
+  {
+    "id": "ingest-close-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/04-close-tick.request.json",
+    "responseFile": "api/04-close-tick.response.json"
+  },
+  {
+    "id": "close-long-via-mcp",
+    "type": "mcp",
+    "tool": "stratium_place_order",
+    "requestFile": "mcp/05-close-order.request.json",
+    "responseFile": "mcp/05-close-order.response.json"
+  },
+  {
+    "id": "wait-for-cancel-loop",
+    "type": "wait",
+    "durationMs": 900
+  },
+  {
+    "id": "read-frontend-open-orders",
+    "type": "mcp",
+    "tool": "stratium_get_frontend_open_orders",
+    "responseFile": "mcp/06-frontend-open-orders.response.json"
+  }
+]

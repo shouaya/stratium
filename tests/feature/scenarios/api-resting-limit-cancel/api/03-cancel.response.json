@@ -1,0 +1,14 @@
+{
+  "statusCode": 202,
+  "bodyMatchObject": {
+    "state": {
+      "orders": [
+        {
+          "status": "CANCELED",
+          "remainingQuantity": 1,
+          "filledQuantity": 0
+        }
+      ]
+    }
+  }
+}

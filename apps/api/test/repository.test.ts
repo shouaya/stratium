@@ -80,7 +80,8 @@ const prismaMock = vi.hoisted(() => ({
     findFirst: vi.fn()
   },
   order: {
-    upsert: vi.fn()
+    upsert: vi.fn(),
+    findMany: vi.fn()
   }
 }));
 
@@ -980,6 +981,7 @@ describe("TradingRepository", () => {
       createdAt: "2026-04-10T00:00:00.000Z",
       updatedAt: "2026-04-10T00:00:01.000Z"
     })).toMatchObject({
+      clientOrderId: null,
       limitPrice: null,
       averageFillPrice: null,
       rejectionCode: null,
@@ -1143,6 +1145,7 @@ describe("TradingRepository", () => {
       orders: [{
         id: "ord-1",
         accountId: "paper-account-1",
+        clientOrderId: "0xpersisted-order-1",
         symbol: "BTC-USD",
         side: "buy",
         orderType: "market",
@@ -1179,7 +1182,14 @@ describe("TradingRepository", () => {
     });
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
-    expect(prismaMock.order.upsert).toHaveBeenCalled();
+    expect(prismaMock.order.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        clientOrderId: "0xpersisted-order-1"
+      }),
+      create: expect.objectContaining({
+        clientOrderId: "0xpersisted-order-1"
+      })
+    }));
     expect(prismaMock.$transaction).toHaveBeenCalled();
 
     prismaMock.account.findUnique.mockResolvedValue({
@@ -1205,6 +1215,24 @@ describe("TradingRepository", () => {
       maintenanceMargin: 100,
       liquidationPrice: 65000
     });
+    prismaMock.order.findMany.mockResolvedValue([{
+      id: "paper-account-1:ord-1",
+      accountId: "paper-account-1",
+      clientOrderId: "0xpersisted-order-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "market",
+      status: "FILLED",
+      quantity: 1,
+      limitPrice: null,
+      filledQuantity: 1,
+      remainingQuantity: 0,
+      averageFillPrice: 70001,
+      rejectionCode: null,
+      rejectionMessage: null,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:01.000Z")
+    }]);
 
     expect(await repository.loadSnapshot("paper-account-1")).toEqual({
       account: {
@@ -1231,6 +1259,24 @@ describe("TradingRepository", () => {
         liquidationPrice: 65000
       }
     });
+    expect(await repository.listOrderHistoryViews("paper-account-1")).toEqual([{
+      id: "ord-1",
+      accountId: "paper-account-1",
+      clientOrderId: "0xpersisted-order-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "market",
+      status: "FILLED",
+      quantity: 1,
+      limitPrice: undefined,
+      filledQuantity: 1,
+      remainingQuantity: 0,
+      averageFillPrice: 70001,
+      rejectionCode: undefined,
+      rejectionMessage: undefined,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    }]);
   });
 
   it("skips snapshot writes when requested while keeping runtime mirrors up to date", async () => {

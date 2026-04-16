@@ -12,12 +12,16 @@
     "db:push": "pnpm exec prisma db push",
     "db:seed": "pnpm exec prisma db seed",
     "seed:symbol-configs": "node prisma/seed-symbol-configs.mjs",
+    "test:feature": "pnpm exec vitest run --config vitest.feature.config.ts",
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "@fastify/websocket": "^11.0.1",
+    "@modelcontextprotocol/sdk": "^1.17.5",
     "@prisma/client": "^6.19.2",
     "@types/node": "^22.13.10",
     "@vitest/coverage-v8": "^3.2.4",
+    "fastify": "^5.2.1",
     "prisma": "^6.5.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"

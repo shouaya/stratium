@@ -1,0 +1,36 @@
+[
+  {
+    "id": "ingest-manual-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-tick.request.json",
+    "responseFile": "api/01-tick.response.json"
+  },
+  {
+    "id": "place-market-buy",
+    "type": "api",
+    "actor": "frontend",
+    "method": "POST",
+    "url": "/api/orders",
+    "requestFile": "api/02-place-order.request.json",
+    "responseFile": "api/02-place-order.response.json"
+  },
+  {
+    "id": "read-account",
+    "type": "api",
+    "actor": "frontend",
+    "method": "GET",
+    "url": "/api/account",
+    "responseFile": "api/03-account.response.json"
+  },
+  {
+    "id": "read-position",
+    "type": "api",
+    "actor": "frontend",
+    "method": "GET",
+    "url": "/api/positions",
+    "responseFile": "api/04-position.response.json"
+  }
+]

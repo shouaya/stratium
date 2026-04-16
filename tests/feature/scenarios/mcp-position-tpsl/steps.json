@@ -1,0 +1,31 @@
+[
+  {
+    "id": "ingest-entry-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-entry-tick.request.json",
+    "responseFile": "api/01-entry-tick.response.json"
+  },
+  {
+    "id": "open-long-via-mcp",
+    "type": "mcp",
+    "tool": "stratium_place_order",
+    "requestFile": "mcp/02-open-order.request.json",
+    "responseFile": "mcp/02-open-order.response.json"
+  },
+  {
+    "id": "place-position-tpsl",
+    "type": "mcp",
+    "tool": "stratium_place_orders",
+    "requestFile": "mcp/03-place-tpsl.request.json",
+    "responseFile": "mcp/03-place-tpsl.response.json"
+  },
+  {
+    "id": "read-frontend-open-orders",
+    "type": "mcp",
+    "tool": "stratium_get_frontend_open_orders",
+    "responseFile": "mcp/04-frontend-open-orders.response.json"
+  }
+]

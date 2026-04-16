@@ -1,0 +1,9 @@
+{
+  "symbol": "BTC-USD",
+  "bid": 100,
+  "ask": 101,
+  "last": 100.5,
+  "spread": 1,
+  "tickTime": "2026-04-16T02:20:00.000Z",
+  "volatilityTag": "normal"
+}

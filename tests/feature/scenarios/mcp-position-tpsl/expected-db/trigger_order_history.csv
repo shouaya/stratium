@@ -1,0 +1,3 @@
+accountId,oid,isBuy,triggerPx,isMarket,tpsl,size,reduceOnly,cloid,status
+paper-account-1,1000000001,false,104,true,tp,1,true,0xmcp-tp-1,triggerPending
+paper-account-1,1000000002,false,99,true,sl,1,true,0xmcp-sl-1,triggerPending

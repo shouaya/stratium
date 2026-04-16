@@ -6,21 +6,32 @@ const RUNNING_SET_KEY = "stratium:batch:running";
 const LAST_EXECUTION_KEY = "stratium:batch:last-execution";
 const EVENTS_CHANNEL = "stratium:batch:events";
 const executionKey = (executionId: string) => `stratium:batch:execution:${executionId}`;
+const isBatchJobStateFeedDisabled = (): boolean => process.env.DISABLE_BATCH_JOB_STATE_FEED === "true";
 
 const parseExecution = (value: string | null): BatchJobExecution | null => value ? JSON.parse(value) as BatchJobExecution : null;
 
 export class BatchJobStateFeed {
-  private readonly client: RedisClientType;
-  private readonly subscriber: RedisClientType;
+  private readonly client?: RedisClientType;
+  private readonly subscriber?: RedisClientType;
   private runningJobs: BatchJobExecution[] = [];
   private lastExecution: BatchJobExecution | null = null;
 
   constructor(private readonly onUpdate: () => void) {
+    if (isBatchJobStateFeedDisabled()) {
+      return;
+    }
+
     this.client = createClient({ url: redisUrl });
     this.subscriber = createClient({ url: redisUrl });
   }
 
   async connect(): Promise<void> {
+    if (!this.client || !this.subscriber) {
+      this.runningJobs = [];
+      this.lastExecution = null;
+      return;
+    }
+
     await this.client.connect();
     await this.subscriber.connect();
     await this.refreshState();
@@ -47,6 +58,12 @@ export class BatchJobStateFeed {
   }
 
   async refreshState(): Promise<void> {
+    if (!this.client) {
+      this.runningJobs = [];
+      this.lastExecution = null;
+      return;
+    }
+
     const runningIds = await this.client.sMembers(RUNNING_SET_KEY);
     const runningPayloads = await Promise.all(runningIds.map((executionId: string) => this.client.get(executionKey(executionId))));
     this.runningJobs = runningPayloads
@@ -66,7 +83,7 @@ export class BatchJobStateFeed {
   }
 
   async shutdown(): Promise<void> {
-    await this.subscriber.quit();
-    await this.client.quit();
+    await this.subscriber?.quit();
+    await this.client?.quit();
   }
 }

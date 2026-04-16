@@ -1,0 +1,12 @@
+{
+  "isBuy": false,
+  "price": "104",
+  "size": "1",
+  "reduceOnly": true,
+  "cloid": "0xmcp-auto-trigger-1",
+  "trigger": {
+    "isMarket": true,
+    "triggerPx": "104",
+    "tpsl": "tp"
+  }
+}

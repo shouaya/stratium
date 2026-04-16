@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ingest-manual-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-tick.request.json",
+    "responseFile": "api/01-tick.response.json"
+  },
+  {
+    "id": "place-mcp-order",
+    "type": "mcp",
+    "tool": "stratium_place_order",
+    "requestFile": "mcp/02-place-order.request.json",
+    "responseFile": "mcp/02-place-order.response.json"
+  }
+]

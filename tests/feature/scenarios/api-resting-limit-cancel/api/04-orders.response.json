@@ -1,0 +1,14 @@
+{
+  "statusCode": 200,
+  "bodyMatchObject": [
+    {
+      "side": "buy",
+      "orderType": "limit",
+      "status": "CANCELED",
+      "quantity": 1,
+      "filledQuantity": 0,
+      "remainingQuantity": 1,
+      "limitPrice": 99
+    }
+  ]
+}

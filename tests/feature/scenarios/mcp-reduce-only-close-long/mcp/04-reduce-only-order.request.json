@@ -1,0 +1,8 @@
+{
+  "isBuy": false,
+  "price": "103",
+  "size": "1",
+  "tif": "Ioc",
+  "reduceOnly": true,
+  "cloid": "0xmcp-reduce-close-1"
+}

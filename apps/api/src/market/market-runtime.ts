@@ -34,6 +34,7 @@ const DEFAULT_MARKET_FLUSH_INTERVAL_MS = Number(process.env.MARKET_PERSIST_INTER
 const DEFAULT_LIVE_TRADE_LIMIT = Number(process.env.MARKET_LIVE_TRADE_LIMIT ?? 200);
 const MARKET_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LIVE_CANDLE_LIMIT = Number(process.env.MARKET_LIVE_CANDLE_LIMIT ?? 1_440);
+const isLiveMarketDataDisabled = (): boolean => process.env.DISABLE_LIVE_MARKET_DATA === "true";
 
 export const filterRecentCandles = <T extends { openTime: number }>(candles: T[], now = Date.now()): T[] =>
   candles.filter((candle) => candle.openTime >= now - MARKET_WINDOW_MS);
@@ -180,6 +181,10 @@ export class MarketRuntime {
   }
 
   maybeStartConfiguredSource() {
+    if (isLiveMarketDataDisabled()) {
+      return;
+    }
+
     this.startMarketFlushTimer();
     this.marketAdapter.connect();
   }

@@ -1,0 +1,36 @@
+{
+  "grouping": "normalTpsl",
+  "orders": [
+    {
+      "isBuy": true,
+      "price": "99",
+      "size": "2",
+      "tif": "Gtc",
+      "cloid": "0xmcp-normal-parent-1"
+    },
+    {
+      "isBuy": false,
+      "price": "104",
+      "size": "1",
+      "reduceOnly": true,
+      "cloid": "0xmcp-normal-tp-1",
+      "trigger": {
+        "isMarket": true,
+        "triggerPx": "104",
+        "tpsl": "tp"
+      }
+    },
+    {
+      "isBuy": false,
+      "price": "97",
+      "size": "1",
+      "reduceOnly": true,
+      "cloid": "0xmcp-normal-sl-1",
+      "trigger": {
+        "isMarket": true,
+        "triggerPx": "97",
+        "tpsl": "sl"
+      }
+    }
+  ]
+}

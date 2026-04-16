@@ -1,0 +1,6 @@
+{
+  "statusCode": 200,
+  "bodyMatchObject": {
+    "accountId": "paper-account-1"
+  }
+}

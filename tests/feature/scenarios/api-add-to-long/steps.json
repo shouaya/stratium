@@ -1,0 +1,46 @@
+[
+  {
+    "id": "ingest-entry-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/01-entry-tick.request.json",
+    "responseFile": "api/01-entry-tick.response.json"
+  },
+  {
+    "id": "open-long",
+    "type": "api",
+    "actor": "frontend",
+    "method": "POST",
+    "url": "/api/orders",
+    "requestFile": "api/02-open-order.request.json",
+    "responseFile": "api/02-open-order.response.json"
+  },
+  {
+    "id": "ingest-add-tick",
+    "type": "api",
+    "actor": "admin",
+    "method": "POST",
+    "url": "/api/market-ticks",
+    "requestFile": "api/03-add-tick.request.json",
+    "responseFile": "api/03-add-tick.response.json"
+  },
+  {
+    "id": "add-to-long",
+    "type": "api",
+    "actor": "frontend",
+    "method": "POST",
+    "url": "/api/orders",
+    "requestFile": "api/04-add-order.request.json",
+    "responseFile": "api/04-add-order.response.json"
+  },
+  {
+    "id": "read-position",
+    "type": "api",
+    "actor": "frontend",
+    "method": "GET",
+    "url": "/api/positions",
+    "responseFile": "api/05-position.response.json"
+  }
+]

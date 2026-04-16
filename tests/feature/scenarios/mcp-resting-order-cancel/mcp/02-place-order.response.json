@@ -1,0 +1,13 @@
+{
+  "structuredContentMatchObject": {
+    "operation": "stratium_place_order",
+    "summary": [
+      {
+        "accepted": true,
+        "state": "resting",
+        "oid": 1,
+        "cloid": "0xmcp-resting-1"
+      }
+    ]
+  }
+}
