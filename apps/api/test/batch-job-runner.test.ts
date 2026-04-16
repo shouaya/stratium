@@ -15,7 +15,7 @@ describe("BatchJobRunner", () => {
   });
 
   it("lists jobs and handles run/list/get execution success paths", async () => {
-    const module = await import("../src/batch-job-runner");
+    const module = await import("../src/batch/batch-job-runner");
     const runner = new module.BatchJobRunner();
 
     fetchMock
@@ -82,7 +82,7 @@ describe("BatchJobRunner", () => {
 
   it("handles disabled runner, fetch failures, and invalid payloads", async () => {
     process.env.BATCH_JOB_RUNNER_ENABLED = "false";
-    const disabledModule = await import("../src/batch-job-runner");
+    const disabledModule = await import("../src/batch/batch-job-runner");
     const disabledRunner = new disabledModule.BatchJobRunner();
     await expect(disabledRunner.run("db-bootstrap")).rejects.toThrow("Batch job runner is disabled.");
     await expect(disabledRunner.listRunningJobs()).rejects.toThrow("Batch job runner is disabled.");
@@ -91,7 +91,7 @@ describe("BatchJobRunner", () => {
     vi.resetModules();
     fetchMock.mockReset();
     delete process.env.BATCH_JOB_RUNNER_ENABLED;
-    const module = await import("../src/batch-job-runner");
+    const module = await import("../src/batch/batch-job-runner");
     const runner = new module.BatchJobRunner();
 
     fetchMock.mockRejectedValueOnce(new Error("network down"));
@@ -121,7 +121,7 @@ describe("BatchJobRunner", () => {
     process.env.JOB_RUNNER_TOKEN = " token-123 ";
     vi.resetModules();
     fetchMock.mockReset();
-    const module = await import("../src/batch-job-runner");
+    const module = await import("../src/batch/batch-job-runner");
     const runner = new module.BatchJobRunner();
 
     fetchMock.mockResolvedValueOnce({
@@ -141,6 +141,22 @@ describe("BatchJobRunner", () => {
         Authorization: "Bearer token-123"
       })
     }));
+
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      json: async () => ({
+        ok: false,
+        command: "cmd",
+        args: [],
+        stdout: "",
+        stderr: "failed",
+        code: 1
+      })
+    });
+    await expect(runner.run("db-bootstrap")).resolves.toMatchObject({
+      ok: false,
+      code: 1
+    });
 
     fetchMock.mockRejectedValueOnce("network down");
     await expect(runner.listRunningJobs()).rejects.toThrow("Failed to reach job runner at http://runner.example: network down");

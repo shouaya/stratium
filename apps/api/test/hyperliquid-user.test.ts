@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hyperliquidCompatAddressForAccountId, matchesHyperliquidCompatUser } from "../src/hyperliquid-user";
+import { hyperliquidCompatAddressForAccountId, matchesHyperliquidCompatUser } from "../src/platform/hyperliquid-user";
 
 describe("hyperliquid-user", () => {
   it("derives deterministic compatibility addresses", () => {

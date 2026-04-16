@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OkxMarketClient } from "../src/okx-market";
+import { OkxMarketClient } from "../src/market/okx-market";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];

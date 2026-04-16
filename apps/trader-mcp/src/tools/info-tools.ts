@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { StratiumHttpClient } from "./client.js";
+import type { StratiumHttpClient } from "../core/client.js";
 import type { ClientToolDefinition } from "./tool-registry.js";
 
 export const infoToolDefinitions: ClientToolDefinition[] = [

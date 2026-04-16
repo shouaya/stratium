@@ -57,7 +57,7 @@ describe("BatchJobStateFeed", () => {
 
   it("connects, refreshes state, handles subscriber updates, and shuts down", async () => {
     const onUpdate = vi.fn();
-    const module = await import("../src/batch-job-state");
+    const module = await import("../src/batch/batch-job-state");
     const feed = new module.BatchJobStateFeed(onUpdate);
 
     await feed.connect();
@@ -127,7 +127,7 @@ describe("BatchJobStateFeed", () => {
     createClientMock.mockImplementation(() => emptyClient);
 
     const onUpdate = vi.fn();
-    const module = await import("../src/batch-job-state");
+    const module = await import("../src/batch/batch-job-state");
     const feed = new module.BatchJobStateFeed(onUpdate);
 
     await feed.connect();

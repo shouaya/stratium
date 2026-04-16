@@ -1,6 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadRuntimeConfigFromEnv, loadTransportModeFromEnv } from "./config.js";
-import { createMcpServer, startTraderMcpHttpServer } from "./server.js";
+import { loadRuntimeConfigFromEnv, loadTransportModeFromEnv } from "./core/config.js";
+import { createMcpServer, startTraderMcpHttpServer } from "./server/server.js";
 
 const transportMode = loadTransportModeFromEnv();
 const config = loadRuntimeConfigFromEnv();

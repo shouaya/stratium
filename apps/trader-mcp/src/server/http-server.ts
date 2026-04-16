@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { PassThrough } from "node:stream";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { JsonLineFileLogger } from "./logger.js";
-import { normalizeIncomingHeaders, tryParseJson } from "./logger.js";
-import { createMcpServer } from "./tools.js";
-import type { TraderMcpRuntimeConfig } from "./types.js";
+import { JsonLineFileLogger } from "../core/logger.js";
+import { normalizeIncomingHeaders, tryParseJson } from "../core/logger.js";
+import { createMcpServer } from "../tools/tools.js";
+import type { TraderMcpRuntimeConfig } from "../core/types.js";
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.statusCode = statusCode;

@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerRoutes } from "../src/routes";
+import { registerRoutes } from "../src/transport/routes";
 
 describe("registerRoutes", () => {
   let app: ReturnType<typeof Fastify>;
@@ -339,7 +339,27 @@ describe("registerRoutes", () => {
   });
 
   it("serves read endpoints", async () => {
-    expect((await app.inject({ method: "GET", url: "/health" })).json()).toEqual({ status: "ok" });
+    expect((await app.inject({ method: "GET", url: "/health" })).json()).toEqual({
+      status: "ok",
+      checks: {
+        marketConnection: "up"
+      },
+      market: {
+        connected: true,
+        source: "hyperliquid",
+        coin: "BTC",
+        markPrice: 70000
+      },
+      platform: {
+        activeExchange: "hyperliquid",
+        activeSymbol: "BTC-USD",
+        maintenanceMode: false
+      },
+      trading: {
+        accountCount: 1,
+        leverage: 10
+      }
+    });
     expect((await app.inject({
       method: "GET",
       url: "/api/state",
@@ -399,6 +419,64 @@ describe("registerRoutes", () => {
       events: [],
       marketEvents: [],
       state: { simulationSessionId: "session-1" }
+    });
+
+    runtime.getPlatformSettings.mockReturnValue({
+      ...platformSettings,
+      activeExchange: "okx",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: false
+    });
+    runtime.getMarketData.mockReturnValue({
+      source: "okx",
+      coin: "ETH",
+      connected: true,
+      bestBid: 3500,
+      bestAsk: 3501,
+      markPrice: 3500.5,
+      book: {
+        bids: [{ price: 3500, size: 3, orders: 2 }],
+        asks: [{ price: 3501, size: 2, orders: 2 }],
+        updatedAt: 1_700_000_100_000
+      },
+      trades: [],
+      candles: [],
+      assetCtx: undefined
+    });
+    runtime.getMarketHistory.mockResolvedValueOnce({
+      coin: "ETH",
+      interval: "1m",
+      candles: [{
+        id: "eth-candle-1",
+        coin: "ETH",
+        interval: "1m",
+        openTime: 1,
+        closeTime: 2,
+        open: 3490,
+        high: 3510,
+        low: 3480,
+        close: 3500,
+        volume: 100,
+        tradeCount: 10
+      }],
+      trades: [],
+      book: { bids: [], asks: [] }
+    });
+
+    expect((await app.inject({ method: "GET", url: "/health" })).json().platform).toEqual({
+      activeExchange: "okx",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: false
+    });
+    const switchedMarketHistory = await app.inject({
+      method: "GET",
+      url: "/api/market-history?limit=10",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(switchedMarketHistory.statusCode).toBe(200);
+    expect(switchedMarketHistory.json()).toMatchObject({
+      coin: "ETH",
+      interval: "1m"
     });
   });
 
@@ -1198,13 +1276,42 @@ describe("registerRoutes", () => {
       allowFrontendTrading: false,
       allowManualTicks: true
     });
+    runtime.getPlatformSettings.mockReturnValue({
+      platformName: "My Desk",
+      platformAnnouncement: "Scheduled maintenance",
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: true,
+      allowFrontendTrading: false,
+      allowManualTicks: true
+    });
+    runtime.getAdminStatePayload.mockReturnValue({
+      events: [],
+      platform: runtime.getPlatformSettings()
+    });
 
     const adminStateResponse = await app.inject({
       method: "GET",
       url: "/api/admin/state",
       headers: { authorization: `Bearer ${adminSession.token}` }
     });
-    expect(adminStateResponse.json()).toEqual({ events: [], platform: platformSettings });
+    expect(adminStateResponse.json()).toEqual({
+      events: [],
+      platform: {
+        platformName: "My Desk",
+        platformAnnouncement: "Scheduled maintenance",
+        activeExchange: "hyperliquid",
+        activeSymbol: "ETH-USD",
+        maintenanceMode: true,
+        allowFrontendTrading: false,
+        allowManualTicks: true
+      }
+    });
+    expect((await app.inject({ method: "GET", url: "/health" })).json().platform).toEqual({
+      activeExchange: "hyperliquid",
+      activeSymbol: "ETH-USD",
+      maintenanceMode: true
+    });
 
     const batchJobsResponse = await app.inject({
       method: "GET",
@@ -1271,6 +1378,26 @@ describe("registerRoutes", () => {
     expect(runtime.runBatchJob).toHaveBeenCalledWith("batch-refresh-hl-day", {
       coin: "BTC",
       date: "2026-04-09"
+    });
+
+    runtime.runBatchJob.mockResolvedValueOnce({
+      executionId: "exec-switch-1",
+      jobId: "batch-switch-active-symbol",
+      status: "running"
+    });
+    const runSwitchBatchJobResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/batch-jobs/batch-switch-active-symbol/run",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {
+        exchange: "okx",
+        symbol: "eth-usd"
+      }
+    });
+    expect(runSwitchBatchJobResponse.statusCode).toBe(202);
+    expect(runtime.runBatchJob).toHaveBeenLastCalledWith("batch-switch-active-symbol", {
+      exchange: "okx",
+      symbol: "eth-usd"
     });
 
     const logoutResponse = await app.inject({
@@ -1367,6 +1494,39 @@ describe("registerRoutes", () => {
       url: "/api/market-volume"
     });
     expect(marketVolumeUnauthorized.statusCode).toBe(401);
+
+    const marketHistoryInvalidLimit = await app.inject({
+      method: "GET",
+      url: "/api/market-history?limit=0",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(marketHistoryInvalidLimit.statusCode).toBe(400);
+    expect(marketHistoryInvalidLimit.json()).toEqual({
+      status: "rejected",
+      message: "limit must be an integer between 1 and 500."
+    });
+
+    const marketVolumeInvalidLimit = await app.inject({
+      method: "GET",
+      url: "/api/market-volume?limit=2001",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(marketVolumeInvalidLimit.statusCode).toBe(400);
+    expect(marketVolumeInvalidLimit.json()).toEqual({
+      status: "rejected",
+      message: "limit must be an integer between 1 and 2000."
+    });
+
+    const marketVolumeInvalidInterval = await app.inject({
+      method: "GET",
+      url: "/api/market-volume?interval=bad",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(marketVolumeInvalidInterval.statusCode).toBe(400);
+    expect(marketVolumeInvalidInterval.json()).toEqual({
+      status: "rejected",
+      message: "interval must use the <number><m|h> format, for example 1m or 4h."
+    });
 
     const privateInfoUnauthorized = await app.inject({
       method: "POST",

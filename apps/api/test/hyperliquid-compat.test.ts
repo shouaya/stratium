@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildHyperliquidInfoResponse } from "../src/hyperliquid-compat";
-import { hyperliquidCompatAddressForAccountId } from "../src/hyperliquid-user";
+import { buildHyperliquidInfoResponse } from "../src/platform/hyperliquid-compat";
+import { hyperliquidCompatAddressForAccountId } from "../src/platform/hyperliquid-user";
 
 describe("buildHyperliquidInfoResponse", () => {
   const makeRuntime = () => ({

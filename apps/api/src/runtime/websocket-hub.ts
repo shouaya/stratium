@@ -1,7 +1,8 @@
+import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope } from "@stratium/shared";
 import type { BatchJobPayload } from "./payloads.js";
-import type { MarketSnapshot } from "./market-data.js";
-import type { SocketLike, SymbolConfigState } from "./market-runtime.js";
+import type { MarketSnapshot } from "../market/market-data.js";
+import type { SocketLike, SymbolConfigState } from "../market/market-runtime.js";
 
 interface BroadcastPayload {
   type: "bootstrap" | "events";
@@ -21,13 +22,18 @@ interface SocketRegistration {
 }
 
 export class WebSocketHub {
+  constructor(
+    private readonly logger?: Pick<FastifyBaseLogger, "warn">
+  ) {}
+
   private readonly sockets = new Map<SocketLike, SocketRegistration>();
 
   addSocket(socket: SocketLike, createPayload: PayloadFactory): void {
     this.sockets.set(socket, { socket, createPayload });
     try {
       socket.send(JSON.stringify(createPayload([])));
-    } catch {
+    } catch (error) {
+      this.logger?.warn({ error }, "Failed to send websocket bootstrap payload");
       this.removeSocket(socket);
       return;
     }
@@ -44,7 +50,8 @@ export class WebSocketHub {
     for (const registration of this.sockets.values()) {
       try {
         registration.socket.send(JSON.stringify(registration.createPayload(events)));
-      } catch {
+      } catch (error) {
+        this.logger?.warn({ error }, "Failed to send websocket broadcast payload");
         this.removeSocket(registration.socket);
       }
     }

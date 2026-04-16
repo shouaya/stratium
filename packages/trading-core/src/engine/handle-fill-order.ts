@@ -3,6 +3,20 @@ import { round } from "../domain/state.js";
 import { applyExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing.js";
 import type { HandleFillOrderArgs } from "./handler-types.js";
 
+const resolveFillQuantity = (remainingQuantity: number, partialFillEnabled: boolean): number => {
+  if (!partialFillEnabled || remainingQuantity <= 1) {
+    return remainingQuantity;
+  }
+
+  const partialQuantity = round(remainingQuantity / 2);
+
+  if (partialQuantity <= 0 || partialQuantity >= remainingQuantity) {
+    return remainingQuantity;
+  }
+
+  return partialQuantity;
+};
+
 export const handleFillOrder = ({
   context,
   orderId,
@@ -26,9 +40,9 @@ export const handleFillOrder = ({
     return;
   }
 
-  const fillQuantity = order.remainingQuantity;
-  const liquidityRole = getLiquidityRole(order, occurredAt);
   const symbolConfig = context.getSymbolConfig();
+  const fillQuantity = resolveFillQuantity(order.remainingQuantity, symbolConfig.partialFillEnabled);
+  const liquidityRole = getLiquidityRole(order, occurredAt);
   const fillPrice = applyExecutionPricing(
     order.side,
     executable,

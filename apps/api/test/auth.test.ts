@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthRuntime, DEFAULT_CREDENTIALS } from "../src/auth";
+import { AuthRuntime, DEFAULT_CREDENTIALS } from "../src/auth/auth";
 
 describe("AuthRuntime", () => {
   const makeRepository = () => ({
@@ -140,6 +140,44 @@ describe("AuthRuntime", () => {
       tradingAccountId: undefined,
       isActive: true
     });
+  });
+
+  it("expires sessions after the configured ttl", async () => {
+    const repository = makeRepository();
+    let now = 1_700_000_000_000;
+    const runtime = new AuthRuntime(repository as never, {
+      sessionTtlMs: 1_000,
+      now: () => now
+    });
+    const createdUser = {
+      id: "user-6",
+      username: "demo",
+      role: "frontend" as const,
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo",
+      isActive: true,
+      passwordHash: ""
+    };
+
+    repository.createFrontendUser.mockImplementation(async (input) => {
+      createdUser.passwordHash = input.passwordHash;
+      return { ...createdUser, ...input };
+    });
+    repository.findUserByUsername.mockResolvedValue(createdUser);
+
+    await runtime.createFrontendUser({
+      username: "demo",
+      password: "demo123456",
+      displayName: "Demo Trader",
+      tradingAccountId: "paper-demo"
+    });
+
+    const session = await runtime.login("demo", "demo123456", "frontend");
+    expect(runtime.getSession(session.token)?.user.username).toBe("demo");
+
+    now += 1_001;
+
+    expect(runtime.getSession(session.token)).toBeNull();
   });
 
   it("lists and updates frontend users and platform settings", async () => {

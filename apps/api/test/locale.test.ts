@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMessages, localizeRuntimeMessage, resolveLocale } from "../src/locale";
+import { getMessages, localizeRuntimeMessage, resolveLocale } from "../src/auth/locale";
 
 describe("locale", () => {
   it("resolves explicit locale header and accept-language fallback", () => {

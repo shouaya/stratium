@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WebSocketHub } from "../src/websocket-hub";
+import { WebSocketHub } from "../src/runtime/websocket-hub";
 
 describe("WebSocketHub", () => {
   it("adds sockets, sends bootstrap payloads, broadcasts updates, and removes closed sockets", () => {
@@ -85,7 +85,10 @@ describe("WebSocketHub", () => {
   });
 
   it("removes sockets when bootstrap or broadcast send throws", () => {
-    const hub = new WebSocketHub();
+    const logger = {
+      warn: vi.fn()
+    };
+    const hub = new WebSocketHub(logger as never);
     const bootstrapFailureSocket = {
       send: vi.fn(() => {
         throw new Error("bootstrap failed");
@@ -131,5 +134,16 @@ describe("WebSocketHub", () => {
 
     expect(broadcastFailureSocket.send).toHaveBeenCalledTimes(2);
     expect(healthySocket.send).toHaveBeenCalledTimes(3);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenNthCalledWith(
+      1,
+      { error: expect.any(Error) },
+      "Failed to send websocket bootstrap payload"
+    );
+    expect(logger.warn).toHaveBeenNthCalledWith(
+      2,
+      { error: expect.any(Error) },
+      "Failed to send websocket broadcast payload"
+    );
   });
 });

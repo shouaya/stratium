@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AnyEventEnvelope, OrderView } from "@stratium/shared";
-import { HyperliquidPrivateWsHub } from "../src/hyperliquid-private-ws";
+import { HyperliquidPrivateWsHub } from "../src/platform/hyperliquid-private-ws";
 
 describe("HyperliquidPrivateWsHub", () => {
   it("subscribes sockets, sends snapshots, and broadcasts user-scoped updates", () => {

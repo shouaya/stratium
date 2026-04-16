@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { MarketTick } from "@stratium/shared";
-import type { MarketDataAdapter, MarketSnapshot } from "./market-data.js";
+import type { MarketDataAdapter, MarketSnapshot } from "../market/market-data.js";
 import { createMarketDataAdapter } from "./market-adapters.js";
-import { TradingRepository } from "./repository.js";
+import { TradingRepository } from "../persistence/repository.js";
 
 export interface SymbolConfigState {
   source?: string;

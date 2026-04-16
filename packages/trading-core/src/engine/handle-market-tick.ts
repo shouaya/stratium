@@ -18,7 +18,11 @@ export const handleMarketTick: TradingCommandHandler<HandleMarketTickArgs> = ({
   }, occurredAt);
 
   context.refreshAccountSnapshot(events, occurredAt);
-  context.tryFillActiveOrders(events, occurredAt);
+  const liquidated = context.liquidatePositionIfNeeded(events, occurredAt);
+
+  if (!liquidated) {
+    context.tryFillActiveOrders(events, occurredAt);
+  }
 
   return {
     state: context.getState(),

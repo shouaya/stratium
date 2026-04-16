@@ -1,8 +1,8 @@
 import type { AnyEventEnvelope } from "@stratium/shared";
-import type { PlatformSettingsView } from "./auth.js";
-import type { BatchJobExecution } from "./batch-job-runner.js";
-import type { MarketSnapshot } from "./market-data.js";
-import type { SymbolConfigState } from "./market-runtime.js";
+import type { PlatformSettingsView } from "../auth/auth.js";
+import type { BatchJobExecution } from "../batch/batch-job-runner.js";
+import type { MarketSnapshot } from "../market/market-data.js";
+import type { SymbolConfigState } from "../market/market-runtime.js";
 
 export interface TradingStateLike {
   simulationSessionId: string;

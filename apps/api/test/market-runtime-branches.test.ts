@@ -14,7 +14,7 @@ const clientState = vi.hoisted(() => ({
   }>
 }));
 
-vi.mock("../src/hyperliquid-market", () => ({
+vi.mock("../src/market/hyperliquid-market", () => ({
   HyperliquidMarketClient: class {
     public readonly connect = vi.fn();
     public readonly close = vi.fn();
@@ -32,7 +32,7 @@ vi.mock("../src/hyperliquid-market", () => ({
   }
 }));
 
-const { MarketRuntime } = await import("../src/market-runtime");
+const { MarketRuntime } = await import("../src/market/market-runtime");
 
 describe("MarketRuntime branch coverage", () => {
   const makeRuntime = () => {

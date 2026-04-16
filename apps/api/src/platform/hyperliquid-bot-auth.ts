@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import type { ApiRuntime } from "./runtime.js";
+import type { ApiRuntime } from "../runtime/runtime.js";
 import { hyperliquidCompatAddressForAccountId } from "./hyperliquid-user.js";
 
 type SignatureLike = {

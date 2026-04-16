@@ -269,7 +269,8 @@ Typical contents:
 Current status:
 
 - the schema exists
-- but the full liquidation flow is not fully connected yet
+- the core liquidation flow now persists audit rows from liquidation execution events
+- the canonical replay source remains `simulation_events`
 
 ## Market Tables
 

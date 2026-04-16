@@ -12,6 +12,7 @@ import type {
 } from "@stratium/shared";
 import type { TradingEngineOptions, TradingEngineState } from "../domain/state.js";
 import { createInitialTradingState, DEFAULT_SYMBOL_CONFIG, round } from "../domain/state.js";
+import { applyExecutionPricing } from "../rules/pricing.js";
 import { refreshAccountState } from "../rules/account-math.js";
 import { computeNextPosition, type PositionComputationResult } from "../rules/position-math.js";
 import { applyEvent } from "../replay/apply-event.js";
@@ -134,6 +135,102 @@ export class TradingEngine {
       events,
       occurredAt
     });
+  }
+
+  private buildPositionId(): string {
+    return "position_1";
+  }
+
+  private shouldLiquidatePosition(): boolean {
+    if (this.state.position.side === "flat" || this.state.position.quantity <= 0) {
+      return false;
+    }
+
+    const markPrice = this.state.latestTick?.last ?? this.state.position.markPrice;
+    const liquidationPrice = this.state.position.liquidationPrice;
+
+    if (!Number.isFinite(markPrice) || markPrice <= 0 || liquidationPrice <= 0) {
+      return false;
+    }
+
+    if (this.state.account.riskRatio >= 1) {
+      return true;
+    }
+
+    return this.state.position.side === "long"
+      ? markPrice <= liquidationPrice
+      : markPrice >= liquidationPrice;
+  }
+
+  private cancelActiveOrdersForLiquidation(events: AnyEventEnvelope[], occurredAt: string): void {
+    for (const order of this.state.orders.filter((entry) =>
+      entry.status === "ACCEPTED" || entry.status === "PARTIALLY_FILLED"
+    )) {
+      this.emitAndApply(events, "OrderCanceled", "system", order.symbol, {
+        orderId: order.id,
+        canceledAt: occurredAt,
+        remainingQuantity: order.remainingQuantity
+      }, occurredAt);
+    }
+  }
+
+  private liquidatePositionIfNeeded(events: AnyEventEnvelope[], occurredAt: string): boolean {
+    if (!this.shouldLiquidatePosition() || !this.state.latestTick) {
+      return false;
+    }
+
+    const orderSide: OrderSide = this.state.position.side === "long" ? "sell" : "buy";
+    const executionReferencePrice = orderSide === "sell" ? this.state.latestTick.bid : this.state.latestTick.ask;
+
+    if (!Number.isFinite(executionReferencePrice) || executionReferencePrice <= 0) {
+      return false;
+    }
+
+    const positionId = this.buildPositionId();
+    const symbol = this.state.position.symbol;
+    const executionQuantity = this.state.position.quantity;
+
+    this.emitAndApply(events, "LiquidationTriggered", "system", symbol, {
+      positionId,
+      triggerPrice: this.state.latestTick.last,
+      riskRatio: this.state.account.riskRatio,
+      triggeredAt: occurredAt
+    }, occurredAt);
+
+    const liquidationOrderId = `liq_${this.state.nextSequence}`;
+    const executionPrice = applyExecutionPricing(
+      orderSide,
+      executionReferencePrice,
+      "taker",
+      this.symbolConfig.baseSlippageBps
+    );
+    const fee = round(executionQuantity * executionPrice * this.symbolConfig.takerFeeRate);
+
+    this.emitAndApply(events, "LiquidationExecuted", "system", symbol, {
+      positionId,
+      liquidationOrderId,
+      executionPrice,
+      executionQuantity,
+      executedAt: occurredAt
+    }, occurredAt);
+
+    const { result } = this.computePostFillResult(orderSide, executionQuantity, executionPrice, fee);
+    this.applyComputedPostFill(result);
+
+    this.emitAndApply(events, "PositionClosed", "system", symbol, this.buildPositionPayload(result), occurredAt);
+    this.emitAndApply(events, "FeeCharged", "system", symbol, {
+      ledgerEntryId: `ledger_${liquidationOrderId}`,
+      orderId: liquidationOrderId,
+      fillId: `${liquidationOrderId}_fill`,
+      amount: fee,
+      asset: "USD",
+      chargedAt: occurredAt
+    }, occurredAt);
+
+    this.cancelActiveOrdersForLiquidation(events, occurredAt);
+    this.refreshAccountSnapshot(events, occurredAt);
+
+    return true;
   }
 
   private refreshAccountState(): void {
@@ -283,7 +380,7 @@ export class TradingEngine {
 
   private buildPositionPayload(result: PositionComputationResult): PositionPayload {
     return {
-      positionId: "position_1",
+      positionId: this.buildPositionId(),
       side: result.position.side,
       quantity: result.position.quantity,
       averageEntryPrice: result.position.averageEntryPrice,
@@ -320,6 +417,7 @@ export class TradingEngine {
       emitAndApply: ((events, eventType, source, symbol, payload, occurredAt) =>
         this.emitAndApply(events, eventType, source, symbol, payload, occurredAt)) as MarketTickHandlerContext["emitAndApply"],
       refreshAccountSnapshot: (events, occurredAt) => this.refreshAccountSnapshot(events, occurredAt),
+      liquidatePositionIfNeeded: (events, occurredAt) => this.liquidatePositionIfNeeded(events, occurredAt),
       tryFillActiveOrders: (events, occurredAt) => this.tryFillActiveOrders(events, occurredAt)
     };
   }

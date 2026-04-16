@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HyperliquidMarketClient } from "../src/hyperliquid-market";
+import { HyperliquidMarketClient } from "../src/market/hyperliquid-market";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];

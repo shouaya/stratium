@@ -3,9 +3,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { ZodRawShape } from "zod";
-import { StratiumHttpClient } from "./client.js";
-import { extractBearerToken, extractRequestId } from "./auth.js";
-import type { TraderMcpRuntimeConfig } from "./types.js";
+import { StratiumHttpClient } from "../core/client.js";
+import { extractBearerToken, extractRequestId } from "../core/auth.js";
+import type { TraderMcpRuntimeConfig } from "../core/types.js";
 
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type ToolSummary = (response: unknown) => unknown;

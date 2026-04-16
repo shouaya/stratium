@@ -5,7 +5,7 @@ import {
   createSocketBootstrapPayload,
   createSocketEventsPayload,
   createStatePayload
-} from "../src/payloads";
+} from "../src/runtime/payloads";
 
 const state = {
   simulationSessionId: "session-1",

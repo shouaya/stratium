@@ -17,7 +17,8 @@ The goal is not feature breadth. The goal is a deterministic, testable trading l
 Current implementation note:
 
 - liquidation calculation is present
-- full liquidation trigger and execution workflow is not finished yet
+- liquidation trigger and execution are now emitted through the event pipeline
+- the API persists liquidation audit rows alongside the canonical simulation event log
 
 ## Scope
 
@@ -30,7 +31,7 @@ Current implementation note:
 - position tracking
 - realized and unrealized PnL
 - initial and maintenance margin
-- liquidation threshold calculation
+- liquidation threshold calculation and liquidation execution
 - event persistence
 - replay API
 - basic Web page for order entry and state inspection
@@ -172,7 +173,9 @@ Current API runtime responsibilities:
 
 ### Liquidation Logic
 - computes liquidation price and risk ratio
-- liquidation execution flow is reserved for a later PH1 follow-up
+- triggers liquidation when the threshold is crossed
+- executes liquidation against the current market rule
+- emits liquidation events before the resulting balance and margin refresh
 
 ### Ledger Engine
 - records fee and balance changes
@@ -251,5 +254,5 @@ The PH1 implementation is acceptable only if all of the following are true:
 1. a full order-to-close workflow can be executed from the Web UI
 2. order state transitions are consistent
 3. position and account state stay consistent
-4. liquidation calculations are test-covered
+4. liquidation calculations and execution path are test-covered
 5. replay reproduces the original result

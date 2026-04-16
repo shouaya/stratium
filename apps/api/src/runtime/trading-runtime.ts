@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick, OrderView, TradingSymbolConfig } from "@stratium/shared";
 import { TradingEngine, createInitialTradingState, replayEventsFromState } from "@stratium/trading-core";
-import type { SymbolConfigState } from "./market-runtime.js";
-import { TradingRepository } from "./repository.js";
+import type { SymbolConfigState } from "../market/market-runtime.js";
+import { TradingRepository } from "../persistence/repository.js";
 
 const validateManualTick = (
   tick: MarketTick,
@@ -87,6 +87,10 @@ const eventsToSorted = (events: AnyEventEnvelope[]): AnyEventEnvelope[] =>
 export class TradingRuntime {
   private static readonly DEFAULT_RECENT_EVENT_LIMIT = 500;
   private static readonly DEFAULT_RECENT_TICK_LIMIT = 240;
+  private static readonly DEFAULT_RUNTIME_EVENT_LIMIT = Number(process.env.RUNTIME_EVENT_STORE_MAX_EVENTS ?? 1_000);
+  private static readonly DEFAULT_RUNTIME_NON_MARKET_EVENT_LIMIT = Number(
+    process.env.RUNTIME_EVENT_STORE_MAX_NON_MARKET_EVENTS ?? 500
+  );
 
   private readonly accountRuntimes = new Map<string, AccountRuntimeSlot>();
 
@@ -645,15 +649,79 @@ export class TradingRuntime {
 
   private pruneRuntimeEventStore(runtime: AccountRuntimeSlot): void {
     const marketTickEvents = runtime.eventStore.filter((event) => event.eventType === "MarketTickReceived");
+    const nonMarketEvents = runtime.eventStore.filter((event) => event.eventType !== "MarketTickReceived");
 
-    if (marketTickEvents.length <= TradingRuntime.DEFAULT_RECENT_TICK_LIMIT) {
+    if (
+      runtime.eventStore.length <= TradingRuntime.DEFAULT_RUNTIME_EVENT_LIMIT
+      && marketTickEvents.length <= TradingRuntime.DEFAULT_RECENT_TICK_LIMIT
+      && nonMarketEvents.length <= TradingRuntime.DEFAULT_RUNTIME_NON_MARKET_EVENT_LIMIT
+    ) {
       return;
     }
 
     const retainedTickSequenceFloor = marketTickEvents[marketTickEvents.length - TradingRuntime.DEFAULT_RECENT_TICK_LIMIT]?.sequence ?? 0;
+    const retainedNonMarketSequenceFloor = nonMarketEvents[
+      nonMarketEvents.length - TradingRuntime.DEFAULT_RUNTIME_NON_MARKET_EVENT_LIMIT
+    ]?.sequence ?? 0;
+    const protectedSequences = this.resolveProtectedRuntimeEventSequences(runtime);
+    const retainedEvents = runtime.eventStore.filter((event) => {
+      if (protectedSequences.has(event.sequence)) {
+        return true;
+      }
 
-    runtime.eventStore = runtime.eventStore.filter((event) =>
-      event.eventType !== "MarketTickReceived" || event.sequence >= retainedTickSequenceFloor
+      if (event.eventType === "MarketTickReceived") {
+        return event.sequence >= retainedTickSequenceFloor;
+      }
+
+      return event.sequence >= retainedNonMarketSequenceFloor;
+    });
+
+    if (retainedEvents.length <= TradingRuntime.DEFAULT_RUNTIME_EVENT_LIMIT) {
+      runtime.eventStore = retainedEvents;
+      return;
+    }
+
+    let remainingDropCount = retainedEvents.length - TradingRuntime.DEFAULT_RUNTIME_EVENT_LIMIT;
+    runtime.eventStore = retainedEvents.filter((event) => {
+      if (protectedSequences.has(event.sequence)) {
+        return true;
+      }
+
+      if (remainingDropCount <= 0) {
+        return true;
+      }
+
+      remainingDropCount -= 1;
+      return false;
+    });
+  }
+
+  private resolveProtectedRuntimeEventSequences(runtime: AccountRuntimeSlot): Set<number> {
+    const protectedOrderIds = new Set(
+      runtime.engine.getState().orders
+        .filter((order) => order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED")
+        .map((order) => order.id)
     );
+    const protectedSequences = new Set<number>();
+
+    if (protectedOrderIds.size === 0) {
+      return protectedSequences;
+    }
+
+    for (const event of runtime.eventStore) {
+      const payload = event.payload;
+
+      if (!payload || typeof payload !== "object" || !("orderId" in payload)) {
+        continue;
+      }
+
+      const orderId = (payload as { orderId?: string }).orderId;
+
+      if (orderId && protectedOrderIds.has(orderId)) {
+        protectedSequences.add(event.sequence);
+      }
+    }
+
+    return protectedSequences;
   }
 }

@@ -66,6 +66,7 @@ describe("engine handlers", () => {
   it("handles market ticks through the handler context", () => {
     const stateRef = createMutableState();
     const refreshAccountSnapshot = vi.fn();
+    const liquidatePositionIfNeeded = vi.fn(() => false);
     const tryFillActiveOrders = vi.fn();
 
     const result = handleMarketTick({
@@ -75,6 +76,7 @@ describe("engine handlers", () => {
         emitAndApply: (events, eventType, source, symbol, payload, occurredAt) =>
           emitAndApply(stateRef, events, eventType, source, symbol, payload, occurredAt),
         refreshAccountSnapshot,
+        liquidatePositionIfNeeded,
         tryFillActiveOrders
       },
       tick: baseTick
@@ -82,6 +84,7 @@ describe("engine handlers", () => {
 
     expect(result.events[0]?.eventType).toBe("MarketTickReceived");
     expect(refreshAccountSnapshot).toHaveBeenCalledOnce();
+    expect(liquidatePositionIfNeeded).toHaveBeenCalledOnce();
     expect(tryFillActiveOrders).toHaveBeenCalledOnce();
     expect(stateRef.getState().latestTick?.last).toBe(baseTick.last);
   });

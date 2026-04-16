@@ -1,4 +1,4 @@
-import type { MarketSnapshot } from "./market-data.js";
+import type { MarketSnapshot } from "../market/market-data.js";
 import { hyperliquidCompatAddressForAccountId, matchesHyperliquidCompatUser } from "./hyperliquid-user.js";
 
 const ZERO_HASH = "0x0000000000000000000000000000000000000000000000000000000000000000";

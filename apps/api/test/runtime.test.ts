@@ -78,7 +78,7 @@ const tradingCoreState = vi.hoisted(() => ({
   }
 }));
 
-vi.mock("../src/repository", () => ({
+vi.mock("../src/persistence/repository", () => ({
   TradingRepository: class {
     connect = repositoryMocks.connect;
     close = repositoryMocks.close;
@@ -102,7 +102,7 @@ vi.mock("../src/repository", () => ({
   }
 }));
 
-vi.mock("../src/hyperliquid-market", () => ({
+vi.mock("../src/market/hyperliquid-market", () => ({
   HyperliquidMarketClient: class {
     public readonly connect = vi.fn();
 
@@ -356,7 +356,7 @@ vi.mock("@stratium/trading-core", () => {
   };
 });
 
-vi.mock("../src/batch-job-state", () => ({
+vi.mock("../src/batch/batch-job-state", () => ({
   BatchJobStateFeed: class {
     connect = batchJobStateMocks.connect;
     refreshState = batchJobStateMocks.refreshState;
@@ -366,8 +366,8 @@ vi.mock("../src/batch-job-state", () => ({
   }
 }));
 
-const { ApiRuntime } = await import("../src/runtime");
-const { TradingRuntime } = await import("../src/trading-runtime");
+const { ApiRuntime } = await import("../src/runtime/runtime");
+const { TradingRuntime } = await import("../src/runtime/trading-runtime");
 
 describe("ApiRuntime", () => {
   const logger = {
@@ -842,6 +842,53 @@ describe("ApiRuntime", () => {
     expect(repositoryMocks.close).toHaveBeenCalled();
   });
 
+  it("sorts fill history by sequence when timestamps match and preserves non-fill merge keys", async () => {
+    const runtime = new ApiRuntime(logger as never);
+    await runtime.bootstrap();
+    const privateRuntime = runtime as never;
+
+    repositoryMocks.loadEvents.mockResolvedValueOnce([{
+      eventId: "persisted-no-fill",
+      eventType: "OrderFilled",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      sequence: 3,
+      simulationSessionId: "session-paper-account-1-btc-usd",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      source: "system",
+      payload: { orderId: "ord-1" }
+    }]);
+    privateRuntime.tradingRuntime.getFillHistoryEvents = vi.fn(() => [{
+      eventId: "live-no-fill",
+      eventType: "OrderPartiallyFilled",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      sequence: 2,
+      simulationSessionId: "session-paper-account-1-btc-usd",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      source: "system",
+      payload: { orderId: "ord-2" }
+    }, {
+      eventId: "live-fill",
+      eventType: "OrderFilled",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      sequence: 1,
+      simulationSessionId: "session-paper-account-1-btc-usd",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      source: "system",
+      payload: { orderId: "ord-3", fillId: "fill-3" }
+    }]);
+
+    const payload = await runtime.getFillHistoryPayload("paper-account-1");
+
+    expect(payload.events.map((event) => event.eventId)).toEqual([
+      "live-fill",
+      "live-no-fill",
+      "persisted-no-fill"
+    ]);
+  });
+
   it("logs persistence failures and skips writes before bootstrap is ready", async () => {
     const runtime = new ApiRuntime(logger as never);
     const events = [{
@@ -1163,10 +1210,34 @@ describe("ApiRuntime", () => {
       events: [{ eventType: "OrderFilled" }]
     });
     expect(runtime.getMarketData()).toEqual({ markPrice: 70000 });
+    expect(runtime.getActiveExchange()).toBe("hyperliquid");
     expect(runtime.getHyperliquidCoin()).toBe("BTC");
     expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
+    expect(runtime.getPlatformSettings()).toMatchObject({
+      activeExchange: "hyperliquid",
+      activeSymbol: "BTC-USD"
+    });
+    expect(runtime.getAdminStatePayload()).toMatchObject({
+      latestTick: undefined,
+      platform: expect.objectContaining({
+        activeExchange: "hyperliquid"
+      }),
+      accountIds: ["paper-account-1"]
+    });
     expect(runtime.getSessionStartedAt("paper-account-1")).toBe("2026-04-09T00:00:00.000Z");
     expect(runtime.getAccountIds()).toEqual(["paper-account-1"]);
+    privateRuntime.marketRuntime.getActiveExchange = vi.fn(() => "okx");
+    privateRuntime.marketRuntime.getActiveCoin = vi.fn(() => "SOL");
+    privateRuntime.marketRuntime.getActiveCandleInterval = vi.fn(() => "5m");
+    expect(runtime.getActiveExchange()).toBe("okx");
+    expect(runtime.getActiveCoin()).toBe("SOL");
+    expect(runtime.getHyperliquidCandleInterval()).toBe("5m");
+    privateRuntime.marketRuntime.getActiveCoin = undefined;
+    privateRuntime.marketRuntime.getHyperliquidCoin = undefined;
+    privateRuntime.marketRuntime.getActiveCandleInterval = undefined;
+    privateRuntime.marketRuntime.getHyperliquidCandleInterval = undefined;
+    expect(runtime.getActiveCoin()).toBe("BTC");
+    expect(runtime.getHyperliquidCandleInterval()).toBe("1m");
     expect(runtime.getOrders("paper-account-1")).toEqual([{ id: "ord_1" }]);
     expect(runtime.getOrderByClientOrderId("paper-account-1", "0xabc")).toEqual({ id: "ord_1", clientOrderId: "0xabc" });
     expect(await runtime.cancelAllOpenOrders("paper-account-1")).toEqual([{ orderId: "ord_1" }]);
@@ -1410,6 +1481,15 @@ describe("ApiRuntime", () => {
       szDecimals: 5
     }, 3);
     expect(repository.updateSymbolLeverage).toHaveBeenCalledWith("BTC-USD", 3, "hyperliquid");
+    await runtime.updateLeverage({
+      source: "hyperliquid",
+      symbol: "BTC-USD",
+      coin: "BTC",
+      leverage: 3,
+      maxLeverage: 20,
+      szDecimals: 5
+    }, 4);
+    expect(repository.updateSymbolLeverage).toHaveBeenLastCalledWith("BTC-USD", 4, "hyperliquid");
 
     await runtime.flushPersistence();
     await runtime.setBootstrapReady(true);
@@ -1419,6 +1499,168 @@ describe("ApiRuntime", () => {
     expect(repository.persistState.mock.calls.length).toBeGreaterThan(persistCallsBeforeNewAccount);
     expect(repository.loadSimulationSnapshot).toHaveBeenCalledWith("session-paper-b-btc-usd");
     expect(() => runtime.getOrders("paper-missing")).toThrow("Trading account runtime paper-missing is not initialized.");
+  });
+
+  it("prunes runtime event stores while preserving active order context", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined)
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+
+    const privateRuntime = runtime as never;
+    const slot = privateRuntime.accountRuntimes.get("paper-a");
+    slot.engine.getState().orders = [{
+      id: "ord-active",
+      status: "ACCEPTED"
+    }];
+    slot.eventStore = [
+      {
+        eventId: "ord-active-requested",
+        eventType: "OrderRequested",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "user",
+        payload: {
+          orderId: "ord-active"
+        }
+      },
+      ...Array.from({ length: 550 }, (_, index) => ({
+        eventId: `order-${index + 2}`,
+        eventType: "OrderAccepted",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: index + 2,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          orderId: `ord-${index + 2}`
+        }
+      })),
+      ...Array.from({ length: 300 }, (_, index) => ({
+        eventId: `tick-${index + 1}`,
+        eventType: "MarketTickReceived",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: index + 552,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          symbol: "BTC-USD",
+          bid: 100 + index,
+          ask: 101 + index,
+          last: 100.5 + index,
+          spread: 1,
+          tickTime: "2026-01-01T00:00:00.000Z",
+          volatilityTag: "normal"
+        }
+      }))
+    ];
+
+    privateRuntime.pruneRuntimeEventStore(slot);
+
+    expect(slot.eventStore.length).toBeLessThanOrEqual(741);
+    expect(slot.eventStore.some((event: AnyEventEnvelope) => event.sequence === 1)).toBe(true);
+    expect(slot.eventStore.some((event: AnyEventEnvelope) => event.sequence === 2)).toBe(false);
+    expect(slot.eventStore.filter((event: AnyEventEnvelope) => event.eventType === "MarketTickReceived")).toHaveLength(240);
+    expect(slot.eventStore[0]?.sequence).toBe(1);
+    expect(slot.eventStore.at(-1)?.sequence).toBe(851);
+  });
+
+  it("applies a second pruning pass when protected events keep the retained window above the hard cap", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined)
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+
+    const privateRuntime = runtime as never;
+    const slot = privateRuntime.accountRuntimes.get("paper-a");
+    slot.engine.getState().orders = Array.from({ length: 300 }, (_, index) => ({
+      id: `ord-protected-${index + 1}`,
+      status: "ACCEPTED"
+    }));
+    slot.eventStore = [
+      ...Array.from({ length: 300 }, (_, index) => ({
+        eventId: `protected-${index + 1}`,
+        eventType: "OrderRequested",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: index + 1,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "user",
+        payload: {
+          orderId: `ord-protected-${index + 1}`
+        }
+      })),
+      ...Array.from({ length: 600 }, (_, index) => ({
+        eventId: `non-market-${index + 1}`,
+        eventType: "OrderAccepted",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: index + 301,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          orderId: `ord-free-${index + 1}`
+        }
+      })),
+      ...Array.from({ length: 400 }, (_, index) => ({
+        eventId: `tick-${index + 1}`,
+        eventType: "MarketTickReceived",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        sequence: index + 901,
+        simulationSessionId: "session-paper-a-btc-usd",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          symbol: "BTC-USD",
+          bid: 100 + index,
+          ask: 101 + index,
+          last: 100.5 + index,
+          spread: 1,
+          tickTime: "2026-01-01T00:00:00.000Z",
+          volatilityTag: "normal"
+        }
+      }))
+    ];
+
+    privateRuntime.pruneRuntimeEventStore(slot);
+
+    expect(slot.eventStore).toHaveLength(1000);
+    expect(slot.eventStore.some((event: AnyEventEnvelope) => event.eventId === "protected-1")).toBe(true);
+    expect(slot.eventStore.some((event: AnyEventEnvelope) => event.eventId === "non-market-101")).toBe(false);
+    expect(slot.eventStore.filter((event: AnyEventEnvelope) => event.eventType === "MarketTickReceived")).toHaveLength(240);
   });
 
   it("builds completed position replay data from fill history segments", async () => {
@@ -1926,6 +2168,193 @@ describe("ApiRuntime", () => {
         quantity: 0
       }
     });
+  });
+
+  it("throws when neither live replay data nor persisted fill history can resolve the requested fill", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined),
+      listFillHistoryEvents: vi.fn(async () => [{
+        eventId: "persisted-fill-1",
+        eventType: "OrderFilled",
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        sequence: 1,
+        simulationSessionId: "persisted-paper-a",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          orderId: "ord-1",
+          fillId: "fill_1",
+          fillPrice: 100,
+          fillQuantity: 1
+        }
+      }]),
+      listOrderHistoryViews: vi.fn(async () => [{
+        id: "ord-1",
+        accountId: "paper-a",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "market",
+        status: "FILLED",
+        quantity: 1,
+        filledQuantity: 1,
+        remainingQuantity: 0,
+        averageFillPrice: 100,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z"
+      }]),
+      listMarketTickEvents: vi.fn(async () => [])
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+
+    const privateRuntime = runtime as never;
+    privateRuntime.accountRuntimes.get("paper-a").eventStore = [];
+    privateRuntime.getReplayData = vi.fn(async () => ({
+      initialState: {
+        simulationSessionId: "session-paper-a-btc-usd",
+        account: { accountId: "paper-a" },
+        orders: [],
+        position: { side: "flat", quantity: 0 }
+      },
+      state: {
+        simulationSessionId: "session-paper-a-btc-usd",
+        account: { accountId: "paper-a" },
+        orders: [],
+        position: { side: "flat", quantity: 0 }
+      },
+      events: []
+    }));
+
+    await expect(runtime.getPositionReplayData("paper-a", "fill_missing"))
+      .rejects.toThrow("Completed position replay not found for fill fill_missing.");
+  });
+
+  it("keeps persisted replay ordering stable when synthetic and fill events share timestamps", async () => {
+    const repository = {
+      loadSimulationSnapshot: vi.fn(async () => null),
+      loadEvents: vi.fn(async () => []),
+      persistState: vi.fn(async () => undefined),
+      updateSymbolLeverage: vi.fn(async () => undefined),
+      listFillHistoryEvents: vi.fn(async () => [
+        {
+          eventId: "persisted-fill-1",
+          eventType: "OrderFilled",
+          occurredAt: "2026-01-01T00:00:01.000Z",
+          sequence: 2,
+          simulationSessionId: "persisted-paper-a",
+          accountId: "paper-a",
+          symbol: "BTC-USD",
+          source: "system",
+          payload: {
+            orderId: "ord-1",
+            fillId: "fill_1",
+            fillPrice: 100,
+            fillQuantity: 1
+          }
+        },
+        {
+          eventId: "persisted-fill-2",
+          eventType: "OrderFilled",
+          occurredAt: "2026-01-01T00:00:01.000Z",
+          sequence: 1,
+          simulationSessionId: "persisted-paper-a",
+          accountId: "paper-a",
+          symbol: "BTC-USD",
+          source: "system",
+          payload: {
+            orderId: "ord-2",
+            fillId: "fill_2",
+            fillPrice: 101,
+            fillQuantity: 1
+          }
+        }
+      ]),
+      listOrderHistoryViews: vi.fn(async () => [
+        {
+          id: "ord-1",
+          accountId: "paper-a",
+          symbol: "BTC-USD",
+          side: "buy",
+          orderType: "market",
+          status: "FILLED",
+          quantity: 1,
+          filledQuantity: 1,
+          remainingQuantity: 0,
+          averageFillPrice: 100,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        },
+        {
+          id: "ord-2",
+          accountId: "paper-a",
+          symbol: "BTC-USD",
+          side: "sell",
+          orderType: "market",
+          status: "FILLED",
+          quantity: 1,
+          filledQuantity: 1,
+          remainingQuantity: 0,
+          averageFillPrice: 101,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        }
+      ]),
+      listMarketTickEvents: vi.fn(async () => [])
+    };
+    const runtime = new TradingRuntime({
+      logger: logger as never,
+      repository: repository as never,
+      onEvents: vi.fn()
+    });
+
+    await runtime.bootstrap({
+      frontendAccountIds: ["paper-a"],
+      persistedSymbolConfig: null
+    });
+
+    const privateRuntime = runtime as never;
+    privateRuntime.accountRuntimes.get("paper-a").eventStore = [];
+    privateRuntime.getReplayData = vi.fn(async () => ({
+      initialState: {
+        simulationSessionId: "session-paper-a-btc-usd",
+        account: { accountId: "paper-a" },
+        orders: [],
+        position: { side: "flat", quantity: 0 }
+      },
+      state: {
+        simulationSessionId: "session-paper-a-btc-usd",
+        account: { accountId: "paper-a" },
+        orders: [],
+        position: { side: "flat", quantity: 0 }
+      },
+      events: []
+    }));
+
+    const replay = await runtime.getPositionReplayData("paper-a", "fill_2");
+
+    expect(replay.events.map((event) => `${event.eventType}:${(event.payload as { orderId?: string }).orderId ?? ""}`)).toEqual([
+      "OrderRequested:ord-1",
+      "OrderRequested:ord-2",
+      "OrderFilled:ord-2",
+      "OrderFilled:ord-1"
+    ]);
+    expect(repository.listMarketTickEvents).toHaveBeenCalledWith(
+      "BTC-USD",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:01.000Z"
+    );
   });
 
   it("initializes from a persisted snapshot without replay events", async () => {

@@ -234,8 +234,10 @@ For a liquidation flow:
 1. `LiquidationTriggered`
 2. `LiquidationExecuted`
 3. `PositionUpdated` or `PositionClosed`
-4. `AccountBalanceUpdated`
-5. `MarginUpdated`
+4. optional `OrderCanceled` for still-open resting orders
+5. `FeeCharged`
+6. `AccountBalanceUpdated`
+7. `MarginUpdated`
 
 ## Replay Requirements
 
@@ -249,6 +251,7 @@ For a liquidation flow:
 Recommended storage split:
 
 - `simulation_events` stores the canonical event log
+- `liquidation_events` stores liquidation audit rows keyed by liquidation order id
 - query tables store current snapshots for fast reads
 
 The event log is the source of truth for history and replay.

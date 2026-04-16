@@ -1,11 +1,45 @@
 import type { FastifyInstance } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
-import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "./hyperliquid-compat.js";
-import { getMessages, localizeRuntimeMessage, resolveLocale } from "./locale.js";
-import { PlatformBotAuth } from "./platform-bot-auth.js";
-import { PlatformExchangeService } from "./platform-exchange.js";
-import { PlatformPrivateWsHub } from "./platform-private-ws.js";
-import type { ApiRuntime } from "./runtime.js";
+import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "../platform/hyperliquid-compat.js";
+import { getMessages, localizeRuntimeMessage, resolveLocale } from "../auth/locale.js";
+import { PlatformBotAuth } from "../platform/platform-bot-auth.js";
+import { PlatformExchangeService } from "../platform/platform-exchange.js";
+import { PlatformPrivateWsHub } from "../platform/platform-private-ws.js";
+import type { ApiRuntime } from "../runtime/runtime.js";
+
+const LOGIN_RATE_LIMIT_CONFIG = {
+  max: Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 10),
+  timeWindow: process.env.LOGIN_RATE_LIMIT_WINDOW ?? "1 minute"
+};
+
+const TRADING_RATE_LIMIT_CONFIG = {
+  max: Number(process.env.TRADING_RATE_LIMIT_MAX ?? 60),
+  timeWindow: process.env.TRADING_RATE_LIMIT_WINDOW ?? "1 minute"
+};
+
+const MARKET_HISTORY_DEFAULT_LIMIT = 200;
+const MARKET_HISTORY_MAX_LIMIT = 500;
+const MARKET_VOLUME_DEFAULT_LIMIT = 500;
+const MARKET_VOLUME_MAX_LIMIT = 2_000;
+const MARKET_VOLUME_INTERVAL_PATTERN = /^\d+[mh]$/i;
+
+const parseBoundedLimit = (
+  rawLimit: string | undefined,
+  defaultLimit: number,
+  maxLimit: number
+): number | null => {
+  if (rawLimit === undefined) {
+    return defaultLimit;
+  }
+
+  const limit = Number(rawLimit);
+
+  if (!Number.isInteger(limit) || limit <= 0 || limit > maxLimit) {
+    return null;
+  }
+
+  return limit;
+};
 
 export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime): Promise<void> => {
   const exchangeCompat = "getNextTriggerOrderOid" in runtime
@@ -119,9 +153,33 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }) as null;
   };
 
-  app.get("/health", async () => ({
-    status: "ok"
-  }));
+  app.get("/health", async () => {
+    const platform = runtime.getPlatformSettings();
+    const market = runtime.getMarketData();
+    const symbolConfig = runtime.getSymbolConfigState();
+
+    return {
+      status: "ok",
+      checks: {
+        marketConnection: market.connected ? "up" : "down"
+      },
+      market: {
+        connected: market.connected,
+        source: market.source,
+        coin: market.coin,
+        markPrice: market.markPrice ?? null
+      },
+      platform: {
+        activeExchange: platform.activeExchange,
+        activeSymbol: platform.activeSymbol,
+        maintenanceMode: platform.maintenanceMode
+      },
+      trading: {
+        accountCount: runtime.getAccountIds().length,
+        leverage: symbolConfig.leverage
+      }
+    };
+  });
 
   app.post("/info", async (request, reply) => {
     const body = (request.body ?? {}) as {
@@ -167,7 +225,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
   });
 
-  app.post("/exchange", async (request, reply) => {
+  app.post("/exchange", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const frontendAccount = resolveFrontendAccount(request, reply, { allowBotSigner: true });
     if (!frontendAccount) {
       return;
@@ -186,7 +248,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
   });
 
-  app.post("/api/auth/login", async (request, reply) => {
+  app.post("/api/auth/login", {
+    config: {
+      rateLimit: LOGIN_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const locale = resolveLocale(request as never);
     const messages = getMessages(locale);
     const payload = request.body as { username?: string; password?: string; role?: "frontend" | "admin" };
@@ -273,7 +339,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
 
     const query = request.query as { limit?: string };
-    const limit = Number(query.limit ?? 200);
+    const limit = parseBoundedLimit(query.limit, MARKET_HISTORY_DEFAULT_LIMIT, MARKET_HISTORY_MAX_LIMIT);
+
+    if (limit === null) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: `limit must be an integer between 1 and ${MARKET_HISTORY_MAX_LIMIT}.`
+      });
+    }
 
     return runtime.getMarketHistory(limit);
   });
@@ -290,9 +363,25 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
 
     const query = request.query as { limit?: string; interval?: string; coin?: string };
-    const limit = Number(query.limit ?? 500);
-    const interval = query.interval ?? runtime.getHyperliquidCandleInterval();
-    const coin = query.coin ?? runtime.getActiveCoin?.() ?? runtime.getHyperliquidCoin();
+    const limit = parseBoundedLimit(query.limit, MARKET_VOLUME_DEFAULT_LIMIT, MARKET_VOLUME_MAX_LIMIT);
+
+    if (limit === null) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: `limit must be an integer between 1 and ${MARKET_VOLUME_MAX_LIMIT}.`
+      });
+    }
+
+    const interval = query.interval?.trim() || runtime.getHyperliquidCandleInterval();
+
+    if (!MARKET_VOLUME_INTERVAL_PATTERN.test(interval)) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "interval must use the <number><m|h> format, for example 1m or 4h."
+      });
+    }
+
+    const coin = query.coin?.trim().toUpperCase() || runtime.getActiveCoin?.() || runtime.getHyperliquidCoin();
 
     return runtime.getMarketVolume(limit, interval, coin);
   });
@@ -630,7 +719,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     }
   });
 
-  app.post("/api/leverage", async (request, reply) => {
+  app.post("/api/leverage", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;
@@ -685,7 +778,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     });
   });
 
-  app.post("/api/market-ticks", async (request, reply) => {
+  app.post("/api/market-ticks", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;
     }
@@ -712,7 +809,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return reply.code(202).send(result.result);
   });
 
-  app.post("/api/orders", async (request, reply) => {
+  app.post("/api/orders", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;
@@ -739,7 +840,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return reply.code(202).send(result);
   });
 
-  app.post("/api/orders/cancel", async (request, reply) => {
+  app.post("/api/orders/cancel", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;
@@ -757,7 +862,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return reply.code(202).send(result);
   });
 
-  app.post("/api/orders/:id/cancel", async (request, reply) => {
+  app.post("/api/orders/:id/cancel", {
+    config: {
+      rateLimit: TRADING_RATE_LIMIT_CONFIG
+    }
+  }, async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
       return;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HyperliquidBotAuth } from "../src/hyperliquid-bot-auth";
+import { HyperliquidBotAuth } from "../src/platform/hyperliquid-bot-auth";
 
 describe("HyperliquidBotAuth", () => {
   const makeRuntime = (accountIds = ["paper-account-1", "paper-account-2"]) => ({

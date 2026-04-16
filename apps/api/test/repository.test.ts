@@ -4,6 +4,7 @@ import type { AnyEventEnvelope } from "@stratium/shared";
 const prismaMock = vi.hoisted(() => ({
   $connect: vi.fn(),
   $disconnect: vi.fn(),
+  $transaction: vi.fn(),
   simulationEvent: {
     findMany: vi.fn(),
     upsert: vi.fn(),
@@ -50,6 +51,9 @@ const prismaMock = vi.hoisted(() => ({
   fill: {
     upsert: vi.fn()
   },
+  liquidationEvent: {
+    upsert: vi.fn()
+  },
   appUser: {
     upsert: vi.fn(),
     findUnique: vi.fn(),
@@ -89,13 +93,20 @@ vi.mock("@prisma/client", () => ({
   Prisma: {}
 }));
 
-const { TradingRepository } = await import("../src/repository");
+const { TradingRepository } = await import("../src/persistence/repository");
 
 describe("TradingRepository", () => {
   const repository = new TradingRepository();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (input: Array<Promise<unknown>> | ((tx: typeof prismaMock) => Promise<unknown>)) => {
+      if (typeof input === "function") {
+        return input(prismaMock as never);
+      }
+
+      return Promise.all(input);
+    });
     for (const group of Object.values(prismaMock)) {
       if (group && typeof group === "object") {
         for (const fn of Object.values(group)) {
@@ -1169,6 +1180,7 @@ describe("TradingRepository", () => {
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
     expect(prismaMock.order.upsert).toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalled();
 
     prismaMock.account.findUnique.mockResolvedValue({
       id: "paper-account-1",
@@ -1258,6 +1270,100 @@ describe("TradingRepository", () => {
     expect(prismaMock.simulationEvent.deleteMany).not.toHaveBeenCalled();
     expect(prismaMock.account.upsert).toHaveBeenCalled();
     expect(prismaMock.position.upsert).toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists liquidation audit rows when liquidation events are present", async () => {
+    const events = [
+      {
+        eventId: "evt-1",
+        eventType: "LiquidationTriggered",
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        sequence: 1,
+        simulationSessionId: "session-1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          positionId: "position_1",
+          triggerPrice: 93.75,
+          riskRatio: 1,
+          triggeredAt: "2026-01-01T00:00:01.000Z"
+        }
+      },
+      {
+        eventId: "evt-2",
+        eventType: "LiquidationExecuted",
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        sequence: 2,
+        simulationSessionId: "session-1",
+        accountId: "paper-account-1",
+        symbol: "BTC-USD",
+        source: "system",
+        payload: {
+          positionId: "position_1",
+          liquidationOrderId: "liq_4",
+          executionPrice: 93.45325,
+          executionQuantity: 9,
+          executedAt: "2026-01-01T00:00:01.000Z"
+        }
+      }
+    ] satisfies AnyEventEnvelope[];
+
+    await repository.persistState({
+      simulationSessionId: "session-1",
+      nextSequence: 3,
+      nextOrderId: 2,
+      nextFillId: 1,
+      latestTick: null,
+      account: {
+        accountId: "paper-account-1",
+        walletBalance: 30,
+        availableBalance: 30,
+        positionMargin: 0,
+        orderMargin: 0,
+        equity: 30,
+        realizedPnl: -70,
+        unrealizedPnl: 0,
+        riskRatio: 0
+      },
+      position: {
+        symbol: "BTC-USD",
+        side: "flat",
+        quantity: 0,
+        averageEntryPrice: 0,
+        markPrice: 93.75,
+        realizedPnl: -70,
+        unrealizedPnl: 0,
+        initialMargin: 0,
+        maintenanceMargin: 0,
+        liquidationPrice: 0
+      },
+      orders: []
+    }, events, false);
+
+    expect(prismaMock.liquidationEvent.upsert).toHaveBeenCalledWith({
+      where: {
+        id: "paper-account-1:liquidation:liq_4"
+      },
+      update: {
+        accountId: "paper-account-1",
+        positionId: "position_1",
+        liquidationOrderId: "liq_4",
+        triggerPrice: 93.75,
+        executionPrice: 93.45325,
+        executionQuantity: 9
+      },
+      create: {
+        id: "paper-account-1:liquidation:liq_4",
+        accountId: "paper-account-1",
+        positionId: "position_1",
+        liquidationOrderId: "liq_4",
+        triggerPrice: 93.75,
+        executionPrice: 93.45325,
+        executionQuantity: 9
+      }
+    });
   });
 
   it("coalesces market tick persistence into one row per minute bucket", async () => {

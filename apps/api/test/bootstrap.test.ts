@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadApiBootstrapState } from "../src/bootstrap";
+import { loadApiBootstrapState } from "../src/runtime/bootstrap";
 
 describe("loadApiBootstrapState", () => {
   it("loads trading and market bootstrap data from the repository", async () => {
@@ -45,5 +45,22 @@ describe("loadApiBootstrapState", () => {
       persistedSymbolMeta: null,
       persistedMarketSnapshot: null
     });
+  });
+
+  it("falls back to the configured fallback coin when symbol and metadata are blank", async () => {
+    const repository = {
+      loadSymbolConfig: vi.fn().mockResolvedValue(null),
+      loadSymbolConfigMeta: vi.fn().mockResolvedValue(null),
+      loadRecentMarketSnapshot: vi.fn().mockResolvedValue(null)
+    };
+
+    await loadApiBootstrapState(repository as never, {
+      configuredTradingSymbol: "",
+      configuredExchange: "hyperliquid",
+      fallbackHyperliquidCoin: "SOL",
+      hyperliquidCandleInterval: "15m"
+    });
+
+    expect(repository.loadRecentMarketSnapshot).toHaveBeenCalledWith("SOL", "15m", "hyperliquid");
   });
 });

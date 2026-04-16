@@ -30,6 +30,7 @@ export interface BaseHandlerContext {
 
 export interface MarketTickHandlerContext extends BaseHandlerContext {
   refreshAccountSnapshot(events: AnyEventEnvelope[], occurredAt: string): void;
+  liquidatePositionIfNeeded(events: AnyEventEnvelope[], occurredAt: string): boolean;
   tryFillActiveOrders(events: AnyEventEnvelope[], occurredAt: string): void;
 }
 

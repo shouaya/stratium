@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMarketDataAdapter } from "../src/market-adapters";
-import { HyperliquidMarketClient } from "../src/hyperliquid-market";
-import { OkxMarketClient } from "../src/okx-market";
+import { createMarketDataAdapter } from "../src/market/market-adapters";
+import { HyperliquidMarketClient } from "../src/market/hyperliquid-market";
+import { OkxMarketClient } from "../src/market/okx-market";
 
 describe("createMarketDataAdapter", () => {
   const baseConfig = {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HyperliquidExchangeCompat } from "../src/hyperliquid-exchange";
+import { HyperliquidExchangeCompat } from "../src/platform/hyperliquid-exchange";
 
 describe("HyperliquidExchangeCompat", () => {
   const originalSetInterval = global.setInterval;

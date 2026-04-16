@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { TradingRepository } from "./repository.js";
+import type { AuthRepositoryPort, StoredUserRecord } from "./auth-repository.js";
 
 export type AuthRole = "frontend" | "admin";
 
@@ -26,19 +26,25 @@ export interface FrontendUserView extends AuthUserProfile {
   role: "frontend";
 }
 
-interface StoredUserRecord extends AuthUserProfile {
-  passwordHash: string;
-}
-
 export interface AuthSession {
   token: string;
   user: AuthUserProfile;
 }
 
+interface SessionEntry extends AuthSession {
+  expiresAt: number;
+}
+
 const DEFAULT_FRONTEND_USERNAME = "demo";
-const DEFAULT_FRONTEND_PASSWORD = "demo123456";
+const DEFAULT_FRONTEND_PASSWORD = process.env.DEFAULT_FRONTEND_PASSWORD ?? "demo123456";
 const DEFAULT_ADMIN_USERNAME = "admin";
-const DEFAULT_ADMIN_PASSWORD = "admin123456";
+const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD ?? "admin123456";
+const DEFAULT_SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS ?? 8 * 60 * 60 * 1000);
+
+interface AuthRuntimeOptions {
+  sessionTtlMs?: number;
+  now?: () => number;
+}
 
 const issueTradingAccountId = (username: string): string => {
   const normalized = username
@@ -85,15 +91,26 @@ export const DEFAULT_CREDENTIALS = {
 };
 
 export class AuthRuntime {
-  private readonly sessions = new Map<string, AuthSession>();
+  private readonly sessions = new Map<string, SessionEntry>();
 
-  constructor(private readonly repository: TradingRepository) {}
+  private readonly sessionTtlMs: number;
+
+  private readonly now: () => number;
+
+  constructor(
+    private readonly repository: AuthRepositoryPort,
+    options: AuthRuntimeOptions = {}
+  ) {
+    this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+    this.now = options.now ?? (() => Date.now());
+  }
 
   async bootstrap(): Promise<PlatformSettingsView> {
     return this.repository.getPlatformSettings();
   }
 
   async login(username: string, password: string, expectedRole: AuthRole): Promise<AuthSession> {
+    this.purgeExpiredSessions();
     const normalizedUsername = username.trim().toLowerCase();
     const user = await this.repository.findUserByUsername(normalizedUsername);
 
@@ -105,13 +122,17 @@ export class AuthRuntime {
       throw new Error("Trading account is not assigned.");
     }
 
-    const session: AuthSession = {
+    const session: SessionEntry = {
       token: `${randomUUID()}-${randomBytes(16).toString("hex")}`,
-      user: this.toProfile(user)
+      user: this.toProfile(user),
+      expiresAt: this.now() + this.sessionTtlMs
     };
 
     this.sessions.set(session.token, session);
-    return session;
+    return {
+      token: session.token,
+      user: session.user
+    };
   }
 
   getSession(token: string | undefined): AuthSession | null {
@@ -119,7 +140,21 @@ export class AuthRuntime {
       return null;
     }
 
-    return this.sessions.get(token) ?? null;
+    const session = this.sessions.get(token);
+
+    if (!session) {
+      return null;
+    }
+
+    if (session.expiresAt <= this.now()) {
+      this.sessions.delete(token);
+      return null;
+    }
+
+    return {
+      token: session.token,
+      user: session.user
+    };
   }
 
   logout(token: string | undefined): void {
@@ -170,6 +205,16 @@ export class AuthRuntime {
 
   async updatePlatformSettings(input: PlatformSettingsView): Promise<PlatformSettingsView> {
     return this.repository.updatePlatformSettings(input);
+  }
+
+  private purgeExpiredSessions(): void {
+    const now = this.now();
+
+    for (const [token, session] of this.sessions.entries()) {
+      if (session.expiresAt <= now) {
+        this.sessions.delete(token);
+      }
+    }
   }
 
   private toProfile(user: StoredUserRecord): AuthUserProfile {

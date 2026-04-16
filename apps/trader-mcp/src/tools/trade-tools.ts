@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { summarizeExchangeStatuses } from "./client.js";
+import { summarizeExchangeStatuses } from "../core/client.js";
 import { groupingSchema, modifyOrderSchema, placeOrderSchema } from "./tool-schemas.js";
 import type { ClientToolDefinition } from "./tool-registry.js";
-import type { OrderGrouping } from "./types.js";
+import type { OrderGrouping } from "../core/types.js";
 
 export const tradingToolDefinitions: ClientToolDefinition[] = [
   {

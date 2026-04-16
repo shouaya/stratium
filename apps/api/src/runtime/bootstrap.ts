@@ -1,7 +1,7 @@
 import type { TradingSymbolConfig } from "@stratium/shared";
-import type { MarketSnapshot } from "./market-data.js";
-import type { SymbolConfigState } from "./market-runtime.js";
-import { TradingRepository } from "./repository.js";
+import type { MarketSnapshot } from "../market/market-data.js";
+import type { SymbolConfigState } from "../market/market-runtime.js";
+import { TradingRepository } from "../persistence/repository.js";
 
 export interface ApiBootstrapConfig {
   configuredTradingSymbol: string;
@@ -23,8 +23,8 @@ export const loadApiBootstrapState = async (
   const persistedSymbolConfig = await repository.loadSymbolConfig(config.configuredTradingSymbol, config.configuredExchange);
   const persistedSymbolMeta = await repository.loadSymbolConfigMeta(config.configuredTradingSymbol, config.configuredExchange);
   const resolvedCoin = persistedSymbolMeta?.coin
-    ?? config.configuredTradingSymbol.replace(/-USD$/i, "")
-    ?? config.fallbackHyperliquidCoin;
+    || config.configuredTradingSymbol.replace(/-USD$/i, "")
+    || config.fallbackHyperliquidCoin;
   const persistedMarketSnapshot = await repository.loadRecentMarketSnapshot(
     resolvedCoin,
     config.hyperliquidCandleInterval,

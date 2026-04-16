@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterRecentCandles } from "../src/market-runtime";
+import { filterRecentCandles } from "../src/market/market-runtime";
 
 describe("filterRecentCandles", () => {
   it("keeps only candles inside the most recent 24-hour window", () => {

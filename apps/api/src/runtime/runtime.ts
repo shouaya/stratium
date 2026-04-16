@@ -1,21 +1,25 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
-import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "./auth.js";
-import { BatchJobStateFeed } from "./batch-job-state.js";
-import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "./batch-job-runner.js";
-import { loadApiBootstrapState } from "./bootstrap.js";
-import { MarketRuntime, type SocketLike, type SymbolConfigState } from "./market-runtime.js";
+import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "../auth/auth.js";
+import { BatchJobStateFeed } from "../batch/batch-job-state.js";
+import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "../batch/batch-job-runner.js";
+import { MarketRuntime, type SocketLike, type SymbolConfigState } from "../market/market-runtime.js";
 import {
   createPositionReplayPayload,
-  createReplayPayload,
-  createSocketBootstrapPayload,
-  createSocketEventsPayload,
-  createStatePayload
 } from "./payloads.js";
-import { TradingRepository } from "./repository.js";
+import { TradingRepository } from "../persistence/repository.js";
+import { bootstrapApiRuntime } from "./api-runtime-bootstrap.js";
+import {
+  createApiAdminStatePayload,
+  createApiReplayPayload,
+  createApiStatePayload,
+  createSocketPayloadFactory,
+  filterBroadcastEvents
+} from "./api-runtime-payloads.js";
+import { runActiveSymbolSwitchBatchJob } from "./symbol-switch.js";
 import { TradingRuntime } from "./trading-runtime.js";
 import { WebSocketHub } from "./websocket-hub.js";
-export type { SocketLike, SymbolConfigState } from "./market-runtime.js";
+export type { SocketLike, SymbolConfigState } from "../market/market-runtime.js";
 
 export class ApiRuntime {
   private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
@@ -23,7 +27,7 @@ export class ApiRuntime {
 
   private readonly repository = new TradingRepository();
 
-  private readonly webSocketHub = new WebSocketHub();
+  private readonly webSocketHub: WebSocketHub;
 
   private symbolConfigState: SymbolConfigState;
   private platformSettings: PlatformSettingsView = {
@@ -52,6 +56,7 @@ export class ApiRuntime {
   private lastBatchJobExecution: BatchJobExecution | null = null;
 
   constructor(private readonly logger: FastifyBaseLogger) {
+    this.webSocketHub = new WebSocketHub(logger);
     this.symbolConfigState = {
       source: this.platformSettings.activeExchange,
       marketSymbol: this.hyperliquidCoin,
@@ -91,71 +96,6 @@ export class ApiRuntime {
       this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
       this.broadcast();
     });
-  }
-
-  private resolveConfiguredSymbol(): string {
-    return this.platformSettings.activeSymbol?.trim() || this.configuredTradingSymbol;
-  }
-
-  private resolveConfiguredCoin(symbol: string): string {
-    return symbol.replace(/-USD$/i, "") || this.hyperliquidCoin;
-  }
-
-  private async ensureSymbolSwitchAllowed(nextExchange: string, nextSymbol: string): Promise<{ source: string; coin: string }> {
-    const normalizedExchange = nextExchange.trim().toLowerCase();
-    const normalizedSymbol = nextSymbol.trim().toUpperCase();
-
-    if (!normalizedExchange) {
-      throw new Error("Active exchange is required.");
-    }
-
-    if (!normalizedSymbol) {
-      throw new Error("Active symbol is required.");
-    }
-
-    if (
-      normalizedExchange === this.platformSettings.activeExchange
-      && normalizedSymbol === this.platformSettings.activeSymbol
-    ) {
-      throw new Error(`Active symbol is already ${normalizedSymbol} on ${normalizedExchange}.`);
-    }
-
-    const symbolMeta = await this.repository.loadSymbolConfigMeta(normalizedSymbol, normalizedExchange);
-
-    if (!symbolMeta) {
-      throw new Error(`Symbol config ${normalizedSymbol} was not found in DB.`);
-    }
-
-    if (symbolMeta.source !== normalizedExchange) {
-      throw new Error(`Symbol ${normalizedSymbol} belongs to ${symbolMeta.source}, not ${normalizedExchange}.`);
-    }
-
-    for (const accountId of this.tradingRuntime.getAccountIds()) {
-      const state = this.tradingRuntime.getEngineState(accountId);
-      const hasOpenPosition = Boolean(
-        state.position
-        && state.position.side !== "flat"
-        && state.position.quantity > 0
-      );
-      const hasOpenOrders = state.orders.some((order) =>
-        order.status === "ACCEPTED" || order.status === "PARTIALLY_FILLED"
-      );
-
-      if (hasOpenPosition || hasOpenOrders) {
-        throw new Error(`Cannot switch active symbol while account ${accountId} still has open positions or orders.`);
-      }
-    }
-
-    const pendingTriggerOrders = await this.repository.listPendingTriggerOrders();
-
-    if (pendingTriggerOrders.length > 0) {
-      throw new Error("Cannot switch active symbol while pending trigger orders still exist.");
-    }
-
-    return {
-      source: symbolMeta.source,
-      coin: symbolMeta.coin
-    };
   }
 
   getEngineState(accountId?: string) {
@@ -242,45 +182,15 @@ export class ApiRuntime {
   }
 
   getStatePayload(accountId: string) {
-    return createStatePayload({
-      state: this.tradingRuntime.getEngineState(accountId),
-      events: this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
-      market: this.marketRuntime.getMarketData(),
-      symbolConfig: this.symbolConfigState,
-      platform: this.platformSettings,
-      batch: {
-        runningJobs: this.runningBatchJobs,
-        lastExecution: this.lastBatchJobExecution
-      }
-    });
+    return createApiStatePayload(accountId, this.getPayloadContext());
   }
 
   getAdminStatePayload() {
-    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
-
-    return {
-      latestTick: primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick : null,
-      platform: this.platformSettings,
-      accountIds: this.tradingRuntime.getAccountIds(),
-      runningBatchJobs: this.runningBatchJobs,
-      lastBatchJobExecution: this.lastBatchJobExecution
-    };
+    return createApiAdminStatePayload(this.getPayloadContext());
   }
 
   async getReplayPayload(accountId: string, sessionId: string) {
-    const replay = await this.tradingRuntime.getReplayData(accountId, sessionId);
-
-    return createReplayPayload(
-      sessionId,
-      replay.state,
-      replay.events,
-      this.marketRuntime.getMarketData(),
-      this.platformSettings,
-      {
-        runningJobs: this.runningBatchJobs,
-        lastExecution: this.lastBatchJobExecution
-      }
-    );
+    return createApiReplayPayload(accountId, sessionId, this.getPayloadContext());
   }
 
   async getPositionReplayPayload(accountId: string, fillId: string) {
@@ -298,68 +208,22 @@ export class ApiRuntime {
 
   async bootstrap(): Promise<void> {
     await this.repository.connect();
-    this.platformSettings = await this.authRuntime.bootstrap();
-    const configuredSymbol = this.resolveConfiguredSymbol();
-    const configuredCoin = this.resolveConfiguredCoin(configuredSymbol);
-    await this.batchJobStateFeed.connect();
-    this.runningBatchJobs = this.batchJobStateFeed.getRunningJobs();
-    this.lastBatchJobExecution = this.batchJobStateFeed.getLastExecution();
-    const bootstrapState = await loadApiBootstrapState(this.repository, {
-      configuredTradingSymbol: configuredSymbol,
-      configuredExchange: this.platformSettings.activeExchange,
-      fallbackHyperliquidCoin: configuredCoin,
+    const bootstrapState = await bootstrapApiRuntime({
+      repository: this.repository,
+      authRuntime: this.authRuntime,
+      tradingRuntime: this.tradingRuntime,
+      marketRuntime: this.marketRuntime,
+      batchJobStateFeed: this.batchJobStateFeed,
+      symbolConfigState: this.symbolConfigState,
+      configuredTradingSymbol: this.configuredTradingSymbol,
+      fallbackCoin: this.hyperliquidCoin,
       hyperliquidCandleInterval: this.hyperliquidCandleInterval
     });
-    const frontendUsers = await this.authRuntime.listFrontendUsers();
 
-    await this.tradingRuntime.bootstrap({
-      frontendAccountIds: frontendUsers
-        .map((user) => user.tradingAccountId)
-        .filter((accountId): accountId is string => Boolean(accountId)),
-      persistedSymbolConfig: bootstrapState.persistedSymbolConfig
-    });
-
-    if (bootstrapState.persistedSymbolMeta) {
-      this.symbolConfigState = {
-        source: bootstrapState.persistedSymbolMeta.source,
-        marketSymbol: bootstrapState.persistedSymbolMeta.marketSymbol,
-        symbol: bootstrapState.persistedSymbolMeta.symbol,
-        coin: bootstrapState.persistedSymbolMeta.coin,
-        leverage: bootstrapState.persistedSymbolMeta.leverage,
-        maxLeverage: bootstrapState.persistedSymbolMeta.maxLeverage,
-        szDecimals: bootstrapState.persistedSymbolMeta.szDecimals,
-        quoteAsset: bootstrapState.persistedSymbolMeta.quoteAsset
-      };
-    } else if (bootstrapState.persistedSymbolConfig) {
-      this.symbolConfigState = {
-        ...this.symbolConfigState,
-        leverage: bootstrapState.persistedSymbolConfig.leverage
-      };
-    } else {
-      this.symbolConfigState = {
-        ...this.symbolConfigState,
-        source: this.platformSettings.activeExchange,
-        symbol: configuredSymbol,
-        coin: configuredCoin
-      };
-    }
-
-    this.marketRuntime.configureActiveMarket({
-      exchange: this.platformSettings.activeExchange,
-      symbol: this.symbolConfigState.symbol,
-      coin: this.symbolConfigState.coin,
-      marketSymbol: bootstrapState.persistedSymbolMeta?.marketSymbol ?? this.symbolConfigState.coin
-    });
-
-    const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
-    this.marketRuntime.setBootstrapState(
-      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).position.symbol : this.symbolConfigState.symbol,
-      primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId).latestTick?.last : undefined,
-      bootstrapState.persistedMarketSnapshot
-    );
-
-    await this.tradingRuntime.setBootstrapReady(true);
-    this.marketRuntime.maybeStartConfiguredSource();
+    this.platformSettings = bootstrapState.platformSettings;
+    this.symbolConfigState = bootstrapState.symbolConfigState;
+    this.runningBatchJobs = bootstrapState.runningBatchJobs;
+    this.lastBatchJobExecution = bootstrapState.lastBatchJobExecution;
   }
 
   async shutdown(): Promise<void> {
@@ -371,60 +235,7 @@ export class ApiRuntime {
   }
 
   addSocket(socket: SocketLike, session: AuthSession): void {
-    this.webSocketHub.addSocket(socket, (events = []) => {
-      if (session.user.role === "admin") {
-        const primaryAccountId = this.tradingRuntime.getPrimaryAccountId();
-
-        return createSocketBootstrapPayload(
-          primaryAccountId ? this.tradingRuntime.getEngineState(primaryAccountId) : {
-            simulationSessionId: "session-admin",
-            account: null,
-            orders: [],
-            position: null,
-            latestTick: null
-          },
-          [],
-          this.marketRuntime.getMarketData(),
-          this.platformSettings,
-          {
-            runningJobs: this.runningBatchJobs,
-            lastExecution: this.lastBatchJobExecution
-          }
-        );
-      }
-
-      const accountId = session.user.tradingAccountId;
-
-      if (!accountId) {
-        throw new Error("Frontend user is missing a trading account.");
-      }
-
-      const state = this.tradingRuntime.getEngineState(accountId);
-      const filteredEvents = events.filter((event) => event.accountId === accountId);
-
-      return events.length === 0
-        ? createSocketBootstrapPayload(
-          state,
-          this.tradingRuntime.getRecentEventStore(accountId, ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT),
-          this.marketRuntime.getMarketData(),
-          this.platformSettings,
-          {
-            runningJobs: this.runningBatchJobs,
-            lastExecution: this.lastBatchJobExecution
-          }
-        )
-        : createSocketEventsPayload(
-          state,
-          filteredEvents,
-          this.marketRuntime.getMarketData(),
-          this.symbolConfigState,
-          this.platformSettings,
-          {
-            runningJobs: this.runningBatchJobs,
-            lastExecution: this.lastBatchJobExecution
-          }
-        );
-    });
+    this.webSocketHub.addSocket(socket, createSocketPayloadFactory(session, this.getPayloadContext()));
   }
 
   async login(username: string, password: string, role: AuthRole) {
@@ -487,28 +298,14 @@ export class ApiRuntime {
 
   async runBatchJob(jobId: BatchJobId, input: BatchJobRunInput = {}) {
     if (jobId === "batch-switch-active-symbol") {
-      const nextExchange = input.exchange?.trim().toLowerCase() || this.platformSettings.activeExchange;
-      const nextSymbol = input.symbol?.trim().toUpperCase() ?? "";
-      const symbolMeta = await this.ensureSymbolSwitchAllowed(nextExchange, nextSymbol);
-
-      const previousSettings = this.platformSettings;
-      await this.updatePlatformSettings({
-        ...previousSettings,
-        maintenanceMode: true,
-        allowFrontendTrading: false,
-        allowManualTicks: false
+      return runActiveSymbolSwitchBatchJob({
+        input,
+        platformSettings: this.platformSettings,
+        repository: this.repository,
+        tradingRuntime: this.tradingRuntime,
+        batchJobRunner: this.batchJobRunner,
+        updatePlatformSettings: async (settings) => this.updatePlatformSettings(settings)
       });
-
-      try {
-        return await this.batchJobRunner.run(jobId, {
-          ...input,
-          exchange: symbolMeta.source,
-          symbol: nextSymbol
-        });
-      } catch (error) {
-        await this.updatePlatformSettings(previousSettings);
-        throw error;
-      }
     }
 
     return this.batchJobRunner.run(jobId, input);
@@ -610,10 +407,25 @@ export class ApiRuntime {
   }
 
   private broadcast(accountId?: string, events: AnyEventEnvelope[] = []): void {
-    this.webSocketHub.broadcast(accountId ? events.filter((event) => event.accountId === accountId) : events);
+    const filteredEvents = filterBroadcastEvents(accountId, events);
+    this.webSocketHub.broadcast(filteredEvents);
     for (const listener of this.broadcastListeners) {
-      listener(accountId, accountId ? events.filter((event) => event.accountId === accountId) : events);
+      listener(accountId, filteredEvents);
     }
+  }
+
+  private getPayloadContext() {
+    return {
+      tradingRuntime: this.tradingRuntime,
+      marketRuntime: this.marketRuntime,
+      symbolConfigState: this.symbolConfigState,
+      platformSettings: this.platformSettings,
+      batch: {
+        runningJobs: this.runningBatchJobs,
+        lastExecution: this.lastBatchJobExecution
+      },
+      socketEventBootstrapLimit: ApiRuntime.SOCKET_EVENT_BOOTSTRAP_LIMIT
+    };
   }
 
   onBroadcast(listener: (accountId: string | undefined, events: AnyEventEnvelope[]) => void): () => void {

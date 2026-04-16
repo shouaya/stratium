@@ -1,5 +1,5 @@
 import type { CreateOrderInput, OrderView } from "@stratium/shared";
-import type { ApiRuntime } from "./runtime.js";
+import type { ApiRuntime } from "../runtime/runtime.js";
 
 type SignatureLike = {
   r?: string;
