@@ -13,6 +13,8 @@
     "db:seed": "pnpm exec prisma db seed",
     "seed:symbol-configs": "node prisma/seed-symbol-configs.mjs",
     "test:feature": "pnpm exec vitest run --config vitest.feature.config.ts",
+    "test:all": "pnpm test && pnpm test:feature",
+    "test:coverage:all": "node scripts/run-unified-coverage.mjs",
     "test": "pnpm -r test"
   },
   "devDependencies": {

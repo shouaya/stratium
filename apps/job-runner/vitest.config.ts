@@ -5,9 +5,9 @@ const unifiedCoverageDir = process.env.UNIFIED_VITEST_COVERAGE_DIR;
 
 export default defineConfig({
   test: {
+    include: ["test/**/*.test.ts"],
     coverage: {
       include: ["src/**/*.ts"],
-      exclude: ["src/engine/handler-types.ts"],
       ...(isUnifiedCoverage
         ? {
             all: true,
