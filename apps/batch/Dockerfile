@@ -4,7 +4,7 @@ WORKDIR /workspace
 
 RUN npm install -g pnpm@10.6.2
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json prisma.config.ts ./
 COPY prisma ./prisma
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/batch/package.json ./apps/batch/package.json
