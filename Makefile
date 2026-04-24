@@ -1,6 +1,14 @@
 PNPM ?= corepack pnpm
+ifeq ($(OS),Windows_NT)
 ifndef COMPOSE_FLAVOR
 COMPOSE_FLAVOR := $(shell node scripts/detect-compose-flavor.mjs)
+endif
+ECHO_BLANK ?= echo.
+else
+ifndef COMPOSE_FLAVOR
+COMPOSE_FLAVOR := $(shell if docker compose version >/dev/null 2>&1; then printf plugin; elif docker-compose version >/dev/null 2>&1; then printf legacy; else printf missing; fi)
+endif
+ECHO_BLANK ?= printf "\n"
 endif
 COMPOSE ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker compose)
 COMPOSE_RUN ?= $(COMPOSE)
@@ -10,13 +18,8 @@ JOB_RUNNER_CONTAINER ?= stratium-job-runner
 JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
 JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
-ifeq ($(OS),Windows_NT)
-ECHO_BLANK ?= echo.
-else
-ECHO_BLANK ?= printf "\n"
-endif
 
-.PHONY: help init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
+.PHONY: help check-compose init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
 	up down logs config batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
@@ -57,26 +60,44 @@ help:
 	@echo   make batch-refresh-hl-day Reload Hyperliquid 1m candles for one coin via the job runner
 	@echo   make batch-clear-kline    Clear persisted K-line history via the job runner
 
+check-compose:
+ifeq ($(OS),Windows_NT)
+	@if "$(COMPOSE_FLAVOR)"=="missing" (echo Docker Compose is not installed. Install Docker Compose v2 plugin or legacy docker-compose. & exit /b 1)
+else
+	@if [ "$(COMPOSE_FLAVOR)" = "missing" ]; then echo "Docker Compose is not installed. Install Docker Compose v2 plugin or legacy docker-compose." >&2; exit 1; fi
+endif
+
 init:
+ifeq ($(OS),Windows_NT)
 	@node scripts/ensure-env.mjs
+else
+	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
+endif
 	$(MAKE) install
 	$(MAKE) bootstrap-services
 	$(MAKE) wait-job-runner
 	$(MAKE) db-bootstrap
 	$(MAKE) batch-refresh-hl-day
 
-bootstrap-services:
+bootstrap-services: check-compose
 	$(COMPOSE_RUN) up -d db redis job-runner
 
 wait-job-runner:
+ifeq ($(OS),Windows_NT)
 	@node scripts/wait-job-runner.mjs "$(JOB_RUNNER_BASE_URL)"
+else
+	@until docker exec $(JOB_RUNNER_CONTAINER) node -e "fetch('http://127.0.0.1:4300/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))" >/dev/null 2>&1; do \
+		echo "Waiting for job-runner..."; \
+		sleep 2; \
+	done
+endif
 
-install:
+install: check-compose
 	$(COMPOSE_RUN) build job-runner api web
 	$(WORKSPACE_RUN) sh -lc "CI=true pnpm install --frozen-lockfile"
 	$(COMPOSE_BATCH) build batch
 
-dev:
+dev: check-compose
 	$(COMPOSE_RUN) up db redis job-runner api web adminer
 
 lint:
@@ -104,16 +125,16 @@ db-bootstrap: db-push db-clear-runtime-data db-seed seed-symbol-configs
 seed-symbol-configs:
 	$(JOB_RUNNER_CLIENT) seed-symbol-configs
 
-up:
+up: check-compose
 	$(COMPOSE_RUN) up
 
-down:
+down: check-compose
 	$(COMPOSE_RUN) down
 
-logs:
+logs: check-compose
 	$(COMPOSE_RUN) logs -f
 
-config:
+config: check-compose
 	$(COMPOSE_RUN) config
 
 batch-import-hl-day:
