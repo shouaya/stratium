@@ -25,6 +25,7 @@ describe("trader-mcp server helpers", () => {
 
     const healthResponse = await fetch("http://127.0.0.1:4611/health");
     expect(healthResponse.status).toBe(200);
+    expect(healthResponse.headers.get("access-control-allow-methods")).toBe("GET, OPTIONS, POST");
     expect(await healthResponse.json()).toEqual({
       status: "ok",
       transport: "streamable-http",

@@ -55,6 +55,10 @@ Default MCP endpoint:
 
 - `http://127.0.0.1:4600/mcp`
 
+Default health endpoint:
+
+- `http://127.0.0.1:4600/health`
+
 ## Security Model
 
 The model never touches:

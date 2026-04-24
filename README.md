@@ -126,6 +126,12 @@ The default Trader MCP endpoint is:
 http://localhost:4600/mcp
 ```
 
+The Trader MCP health endpoint is:
+
+```text
+http://localhost:4600/health
+```
+
 If you only want to start `trader-mcp`, you can also run:
 
 ```bash

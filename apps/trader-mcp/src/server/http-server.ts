@@ -16,7 +16,7 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
 const setCorsHeaders = (response: ServerResponse, corsOrigin: string) => {
   response.setHeader("access-control-allow-origin", corsOrigin);
   response.setHeader("access-control-allow-headers", "authorization, content-type, accept, mcp-protocol-version");
-  response.setHeader("access-control-allow-methods", "OPTIONS, POST");
+  response.setHeader("access-control-allow-methods", "GET, OPTIONS, POST");
   response.setHeader("access-control-expose-headers", "mcp-session-id");
 };
 
