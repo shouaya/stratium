@@ -670,6 +670,14 @@ describe("registerRoutes", () => {
       collateralToken: 0
     });
 
+    const apiMetaResponse = await app.inject({
+      method: "POST",
+      url: "/api/info",
+      payload: { type: "meta" }
+    });
+    expect(apiMetaResponse.statusCode).toBe(200);
+    expect(apiMetaResponse.json()).toEqual(metaResponse.json());
+
     const orderBookResponse = await app.inject({
       method: "POST",
       url: "/info",
@@ -1545,6 +1553,16 @@ describe("registerRoutes", () => {
     expect((await app.inject({
       method: "POST",
       url: "/exchange",
+      payload: {
+        action: { type: "order", orders: [] },
+        nonce: 1,
+        signature: { r: "0x1", s: "0x2", v: 27 }
+      }
+    })).statusCode).toBe(401);
+
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/exchange",
       payload: {
         action: { type: "order", orders: [] },
         nonce: 1,

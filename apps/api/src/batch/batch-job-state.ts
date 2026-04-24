@@ -64,14 +64,15 @@ export class BatchJobStateFeed {
       return;
     }
 
-    const runningIds = await this.client.sMembers(RUNNING_SET_KEY);
-    const runningPayloads = await Promise.all(runningIds.map((executionId: string) => this.client.get(executionKey(executionId))));
+    const client = this.client;
+    const runningIds = await client.sMembers(RUNNING_SET_KEY);
+    const runningPayloads = await Promise.all(runningIds.map((executionId: string) => client.get(executionKey(executionId))));
     this.runningJobs = runningPayloads
       .map((payload: string | null) => parseExecution(payload))
       .filter((execution: BatchJobExecution | null): execution is BatchJobExecution => Boolean(execution));
 
-    const lastExecutionId = await this.client.get(LAST_EXECUTION_KEY);
-    this.lastExecution = lastExecutionId ? parseExecution(await this.client.get(executionKey(lastExecutionId))) : null;
+    const lastExecutionId = await client.get(LAST_EXECUTION_KEY);
+    this.lastExecution = lastExecutionId ? parseExecution(await client.get(executionKey(lastExecutionId))) : null;
   }
 
   getRunningJobs(): BatchJobExecution[] {

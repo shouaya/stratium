@@ -57,7 +57,7 @@ export const fetchDashboardSnapshot = async (
     fetch(buildApiUrl(apiBaseUrl, "/api/state"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
     fetch(buildApiUrl(apiBaseUrl, "/api/fill-history"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
     fetch(buildApiUrl(apiBaseUrl, "/api/bot-credentials"), { cache: "no-store", headers: authHeaders(authToken, locale) }),
-    fetch(buildApiUrl(apiBaseUrl, "/info"), {
+    fetch(buildApiUrl(apiBaseUrl, "/api/info"), {
       method: "POST",
       cache: "no-store",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
@@ -100,7 +100,7 @@ export const fetchOrderActivity = async (
   orderHistoryPayload: HistoricalOrder[];
 }> => {
   const [openOrdersResponse, orderHistoryResponse] = await Promise.all([
-    fetch(buildApiUrl(apiBaseUrl, "/info"), {
+    fetch(buildApiUrl(apiBaseUrl, "/api/info"), {
       method: "POST",
       cache: "no-store",
       headers: authHeaders(authToken, locale, { "Content-Type": "application/json" }),
@@ -130,7 +130,7 @@ export const submitSignedExchangeRequest = async (input: {
   body: Record<string, unknown>;
 }) => {
   const signature = await signBotPayload(input.botCredentials.apiSecret, input.body);
-  const response = await fetch(buildApiUrl(input.apiBaseUrl, "/exchange"), {
+  const response = await fetch(buildApiUrl(input.apiBaseUrl, "/api/exchange"), {
     method: "POST",
     headers: authHeaders(input.authToken, input.locale, { "Content-Type": "application/json" }),
     body: JSON.stringify({

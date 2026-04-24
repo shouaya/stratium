@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 import { buildHyperliquidInfoResponse, type HyperliquidInfoRuntime } from "../platform/hyperliquid-compat.js";
 import { getMessages, localizeRuntimeMessage, resolveLocale } from "../auth/locale.js";
@@ -22,6 +22,19 @@ const MARKET_HISTORY_MAX_LIMIT = 500;
 const MARKET_VOLUME_DEFAULT_LIMIT = 500;
 const MARKET_VOLUME_MAX_LIMIT = 2_000;
 const MARKET_VOLUME_INTERVAL_PATTERN = /^\d+[mh]$/i;
+
+type HyperliquidInfoRequestBody = {
+  type?: string;
+  coin?: string;
+  user?: string;
+  oid?: number | string;
+  req?: {
+    coin?: string;
+    interval?: string;
+    startTime?: number;
+    endTime?: number;
+  };
+};
 
 const parseBoundedLimit = (
   rawLimit: string | undefined,
@@ -181,19 +194,11 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     };
   });
 
-  app.post("/info", async (request, reply) => {
-    const body = (request.body ?? {}) as {
-      type?: string;
-      coin?: string;
-      user?: string;
-      oid?: number | string;
-      req?: {
-        coin?: string;
-        interval?: string;
-        startTime?: number;
-        endTime?: number;
-      };
-    };
+  const handleInfoRequest = async (
+    request: FastifyRequest<{ Body: HyperliquidInfoRequestBody }>,
+    reply: FastifyReply
+  ) => {
+    const body = (request.body ?? {}) as HyperliquidInfoRequestBody;
     const requiresUserContext = body.type === "openOrders"
       || body.type === "frontendOpenOrders"
       || body.type === "orderStatus"
@@ -223,13 +228,14 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
         message: error instanceof Error ? error.message : "Unsupported Hyperliquid info request."
       });
     }
-  });
+  };
 
-  app.post("/exchange", {
+  const exchangeRouteOptions = {
     config: {
       rateLimit: TRADING_RATE_LIMIT_CONFIG
     }
-  }, async (request, reply) => {
+  };
+  const handleExchangeRequest = async (request: FastifyRequest, reply: FastifyReply) => {
     const frontendAccount = resolveFrontendAccount(request, reply, { allowBotSigner: true });
     if (!frontendAccount) {
       return;
@@ -246,7 +252,12 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
         }
       });
     }
-  });
+  };
+
+  app.post("/info", handleInfoRequest);
+  app.post("/api/info", handleInfoRequest);
+  app.post("/exchange", exchangeRouteOptions, handleExchangeRequest);
+  app.post("/api/exchange", exchangeRouteOptions, handleExchangeRequest);
 
   app.post("/api/auth/login", {
     config: {
