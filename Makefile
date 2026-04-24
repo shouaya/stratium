@@ -1,5 +1,7 @@
 PNPM ?= corepack pnpm
-COMPOSE_FLAVOR ?= $(shell if docker compose version >/dev/null 2>&1; then printf plugin; elif docker-compose version >/dev/null 2>&1; then printf legacy; else printf plugin; fi)
+ifndef COMPOSE_FLAVOR
+COMPOSE_FLAVOR := $(shell node scripts/detect-compose-flavor.mjs)
+endif
 COMPOSE ?= $(if $(filter legacy,$(COMPOSE_FLAVOR)),docker-compose,docker compose)
 COMPOSE_RUN ?= $(COMPOSE)
 COMPOSE_BATCH ?= $(COMPOSE_RUN) --env-file .env -f docker-compose.batch.yml
@@ -8,6 +10,11 @@ JOB_RUNNER_CONTAINER ?= stratium-job-runner
 JOB_RUNNER_BASE_URL ?= http://127.0.0.1:4300
 JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
+ifeq ($(OS),Windows_NT)
+ECHO_BLANK ?= echo.
+else
+ECHO_BLANK ?= printf "\n"
+endif
 
 .PHONY: help init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
 	up down logs config batch-import-hl-day batch-refresh-hl-day batch-clear-kline
@@ -18,7 +25,7 @@ INTERVAL ?= 1m
 
 help:
 	@echo Stratium make targets
-	@echo
+	@$(ECHO_BLANK)
 	@echo Setup
 	@echo   make init                 First-time setup: create .env, prepare container dependencies, clear runtime data, and import base data
 	@echo   make bootstrap-services   Start only db, redis, and job-runner for first-time initialization
@@ -29,14 +36,14 @@ help:
 	@echo   make db-clear-runtime-data Clear runtime events, positions, orders, fills, and trigger data
 	@echo   make db-bootstrap         Run db push first, then clear runtime data, seed default access, and seed symbol configs
 	@echo   make seed-symbol-configs  Seed default symbol configs via the job runner
-	@echo
+	@$(ECHO_BLANK)
 	@echo Local development
 	@echo   make dev                  Run api + web in local dev mode
 	@echo   make lint                 Run TypeScript lint checks across workspace
 	@echo   make test                 Run workspace tests
 	@echo   make build                Build all workspace packages/apps
 	@echo   make check                Run lint, test, build, and compose config
-	@echo
+	@$(ECHO_BLANK)
 	@echo Docker compose
 	@echo   detected compose flavor: $(COMPOSE_FLAVOR)
 	@echo   using compose command: $(COMPOSE)
@@ -44,14 +51,14 @@ help:
 	@echo   make down                 Stop main stack
 	@echo   make config               Validate docker-compose.yml
 	@echo   make logs                 Tail all compose logs
-	@echo
+	@$(ECHO_BLANK)
 	@echo Batch
 	@echo   make batch-import-hl-day  Download and import one Hyperliquid day via the job runner
-	@echo "  make batch-refresh-hl-day Reload one coin's Hyperliquid 1m candles via the job runner"
+	@echo   make batch-refresh-hl-day Reload Hyperliquid 1m candles for one coin via the job runner
 	@echo   make batch-clear-kline    Clear persisted K-line history via the job runner
 
 init:
-	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
+	@node scripts/ensure-env.mjs
 	$(MAKE) install
 	$(MAKE) bootstrap-services
 	$(MAKE) wait-job-runner
@@ -62,13 +69,11 @@ bootstrap-services:
 	$(COMPOSE_RUN) up -d db redis job-runner
 
 wait-job-runner:
-	@until docker exec $(JOB_RUNNER_CONTAINER) node -e "fetch('http://127.0.0.1:4300/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))" >/dev/null 2>&1; do \
-		echo "Waiting for job-runner..."; \
-		sleep 2; \
-	done
+	@node scripts/wait-job-runner.mjs "$(JOB_RUNNER_BASE_URL)"
 
 install:
 	$(COMPOSE_RUN) build job-runner api web
+	$(WORKSPACE_RUN) sh -lc "CI=true pnpm install --frozen-lockfile"
 	$(COMPOSE_BATCH) build batch
 
 dev:

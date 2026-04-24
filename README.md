@@ -80,9 +80,11 @@ make down
 
 - Trader UI: `http://localhost:5000`
 - Admin UI: `http://localhost:5000/admin`
-- Database viewer: `http://localhost:8080`
+- Database viewer: `http://localhost:18080`
 
 Most users only need the first URL.
+
+Host ports are configured in `.env`. If you change `API_HOST_PORT`, set `NEXT_PUBLIC_API_BASE_URL` to the matching browser URL.
 
 Inside Docker Compose, services should call each other through internal service DNS names and container ports, for example `http://api:4000`.
 `http://localhost:6100` is only for the browser or host-side tools.
@@ -186,7 +188,7 @@ Use stratiumTrader to place a normal BTC market buy order with size 1.
 
 - The first startup is slow because the environment and seed data need to be prepared.
 - If the UI does not load, first check that Docker is still running.
-- If ports `5000`, `6100`, or `8080` are occupied, the pages may not open.
+- If ports `5000`, `6100`, or `18080` are occupied, change the matching host port in `.env`.
 - If you close the terminal that started `make up`, the services will stop with it.
 
 ## Further Reading

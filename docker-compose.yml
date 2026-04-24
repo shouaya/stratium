@@ -8,7 +8,7 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
 
   db:
     image: postgres:16-alpine
@@ -23,7 +23,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -51,7 +51,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       PORT: 4000
     ports:
-      - "6100:4000"
+      - "${API_HOST_PORT:-6100}:4000"
     volumes:
       - .:/workspace
       - api-node_modules:/workspace/node_modules
@@ -86,7 +86,7 @@ services:
       JOB_RUNNER_BATCH_COMPOSE_FILE: docker-compose.batch.yml
       JOB_RUNNER_MAIN_COMPOSE_FILE: docker-compose.yml
     ports:
-      - "4300:4300"
+      - "${JOB_RUNNER_HOST_PORT:-4300}:4300"
     volumes:
       - .:/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -116,7 +116,7 @@ services:
       NEXT_DIST_DIR: .next-dev
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:6100}
     ports:
-      - "5000:3000"
+      - "${WEB_HOST_PORT:-5000}:3000"
     volumes:
       - .:/workspace
       - web-node_modules:/workspace/node_modules
@@ -147,7 +147,7 @@ services:
       STRATIUM_MCP_CORS_ORIGIN: ${STRATIUM_MCP_CORS_ORIGIN:-*}
       STRATIUM_MCP_DEBUG_LOG_PATH: ${STRATIUM_MCP_DEBUG_LOG_PATH:-logs/trader-mcp-http.ndjson}
     ports:
-      - "4600:4600"
+      - "${TRADER_MCP_HOST_PORT:-4600}:4600"
     volumes:
       - .:/workspace
       - trader-mcp-node_modules:/workspace/node_modules
@@ -166,7 +166,7 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "8080:8080"
+      - "${ADMINER_HOST_PORT:-18080}:8080"
     depends_on:
       - db
 
