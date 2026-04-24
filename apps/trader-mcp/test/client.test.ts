@@ -273,6 +273,30 @@ describe("StratiumHttpClient", () => {
     ]);
     expect(await client.scheduleCancel(123456)).toEqual({ status: "ok", response: { type: "scheduleCancel" } });
 
+    const cancelExchangeRequest = fetchMock.mock.calls[9]?.[1] as RequestInit;
+    const cancelExchangeBody = JSON.parse(String(cancelExchangeRequest.body)) as {
+      action: {
+        type: string;
+        cancels: Array<{ a?: number; o?: number }>;
+      };
+    };
+    expect(cancelExchangeBody.action).toMatchObject({
+      type: "cancel",
+      cancels: [{ a: 0, o: 7 }]
+    });
+
+    const cancelByCloidExchangeRequest = fetchMock.mock.calls[10]?.[1] as RequestInit;
+    const cancelByCloidExchangeBody = JSON.parse(String(cancelByCloidExchangeRequest.body)) as {
+      action: {
+        type: string;
+        cancels: Array<{ asset?: number; cloid?: string }>;
+      };
+    };
+    expect(cancelByCloidExchangeBody.action).toMatchObject({
+      type: "cancelByCloid",
+      cancels: [{ asset: 0, cloid: "0xabc" }]
+    });
+
     const groupedExchangeRequest = fetchMock.mock.calls[13]?.[1] as RequestInit;
     const groupedExchangeBody = JSON.parse(String(groupedExchangeRequest.body)) as {
       action: {
@@ -293,7 +317,15 @@ describe("StratiumHttpClient", () => {
       summary: { simple: true },
       raw: { foo: "bar" }
     });
+    expect(mcpResult.isError).toBe(false);
     expect(mcpResult.content[0]?.type).toBe("text");
+
+    const rejectedMcpResult = await client.toMcpResult(
+      "demo_reject",
+      { status: "ok" },
+      [{ accepted: false, error: "bad" }]
+    );
+    expect(rejectedMcpResult.isError).toBe(true);
   });
 
   it("throws useful request and bootstrap errors", async () => {

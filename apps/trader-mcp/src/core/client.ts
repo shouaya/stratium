@@ -46,6 +46,18 @@ const textContent = (value: unknown) => ({
   text: JSON.stringify(value, null, 2)
 });
 
+const hasRejectedSummary = (value: unknown): boolean => {
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasRejectedSummary(entry));
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return (value as { accepted?: unknown }).accepted === false;
+};
+
 export class StratiumHttpClient {
   private token: string | null = null;
   private credentials: StratiumBotCredentials | null;
@@ -139,7 +151,7 @@ export class StratiumHttpClient {
   async cancelOrder(oid: number, asset = 0) {
     return this.exchange({
       type: "cancel",
-      cancels: [{ asset, oid }]
+      cancels: [{ a: asset, o: oid }]
     });
   }
 
@@ -176,17 +188,19 @@ export class StratiumHttpClient {
   }
 
   async toMcpResult(operation: string, response: unknown, summary?: unknown) {
+    const resolvedSummary = summary ?? response;
     return {
       content: [textContent({
         operation,
-        summary: summary ?? response,
+        summary: resolvedSummary,
         raw: response
       })],
       structuredContent: {
         operation,
-        summary: summary ?? response,
+        summary: resolvedSummary,
         raw: response
-      }
+      },
+      isError: hasRejectedSummary(resolvedSummary)
     };
   }
 
