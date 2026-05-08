@@ -1,8 +1,24 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Stratium Weget",
-  description: "Trading simulation core and Web prototype"
+  description: "Trading simulation core and Web prototype",
+  icons: {
+    icon: [
+      {
+        url: "/favicon.png",
+        type: "image/png"
+      }
+    ],
+    shortcut: ["/favicon.png"],
+    apple: [
+      {
+        url: "/favicon.png",
+        type: "image/png"
+      }
+    ]
+  }
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
