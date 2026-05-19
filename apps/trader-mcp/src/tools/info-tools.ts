@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { StratiumHttpClient } from "../core/client.js";
 import type { ClientToolDefinition } from "./tool-registry.js";
+import { traderBotWakeReportSchema } from "./tool-schemas.js";
 
 export const infoToolDefinitions: ClientToolDefinition[] = [
   {
@@ -84,5 +85,12 @@ export const infoToolDefinitions: ClientToolDefinition[] = [
     title: "Get Exchange Status",
     description: "Return the Hyperliquid-compatible exchange status.",
     run: (client: StratiumHttpClient) => client.getExchangeStatus()
+  },
+  {
+    name: "stratium_report_trader_bot_wake",
+    title: "Report Trader Bot Wake",
+    description: "Record a trader bot wake summary for the Stratium admin dashboard.",
+    inputSchema: traderBotWakeReportSchema,
+    run: (client, input) => client.reportTraderBotWake(input)
   }
 ];

@@ -78,8 +78,8 @@ make down
 
 ## Local URLs
 
-- Trader UI: `http://localhost:5000`
-- Admin UI: `http://localhost:5000/admin`
+- Trader UI: `http://localhost:5001`
+- Admin UI: `http://localhost:5001/admin`
 - Database viewer: `http://localhost:18080`
 
 Most users only need the first URL.
@@ -169,6 +169,26 @@ export STRATIUM_FRONTEND_TOKEN='your token'
 
 `trader-mcp` will then fetch the bot credentials for the currently authenticated user and handle signing and nonce management on behalf of the model.
 
+## Run Trader Bot Through Trader MCP
+
+The native trader bot uses the same account startup shape as the Witchworks bot runner.
+
+Run one Codex-planned simulation wake with the default demo account:
+
+```bash
+make trader-bot-run-once ACCOUNT=demo PASSWORD=demo123456 BOT_ID=local-demo-trader
+```
+
+The bot logs in to Stratium, passes the account token to Trader MCP, reads market/account state, asks Codex for a JSON trading plan, applies the local risk gate, and executes approved actions through Trader MCP in the Stratium simulator.
+
+To run the wake loop:
+
+```bash
+make trader-bot-run ACCOUNT=demo PASSWORD=demo123456 BOT_ID=local-demo-trader
+```
+
+The Make target defaults to `TRADER_BOT_PLANNER=codex` and `TRADER_BOT_MODE=paper_execute`, so approved actions submit to the Stratium simulator. Use `TRADER_BOT_MODE=shadow` to inspect the plan without execution, or `TRADER_BOT_PLANNER=baseline` for the deterministic diagnostic probe.
+
 ### 4. Minimal Codex prompt example
 
 You can ask Codex directly like this:
@@ -194,7 +214,7 @@ Use stratiumTrader to place a normal BTC market buy order with size 1.
 
 - The first startup is slow because the environment and seed data need to be prepared.
 - If the UI does not load, first check that Docker is still running.
-- If ports `5000`, `6100`, or `18080` are occupied, change the matching host port in `.env`.
+- If ports `5001`, `6100`, or `18080` are occupied, change the matching host port in `.env`.
 - If you close the terminal that started `make up`, the services will stop with it.
 
 ## Further Reading

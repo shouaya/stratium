@@ -120,6 +120,9 @@ describe("registerRoutes", () => {
     runBatchJob: vi.fn(),
     listRunningBatchJobs: vi.fn(),
     getBatchJobExecution: vi.fn(),
+    recordAiTraderWake: vi.fn(),
+    listAiTraderWakeReports: vi.fn(),
+    getAiTraderAdminDashboard: vi.fn(),
     listFrontendUsers: vi.fn(),
     createFrontendUser: vi.fn(),
     updateFrontendUser: vi.fn(),
@@ -284,6 +287,84 @@ describe("registerRoutes", () => {
       args: [],
       stdout: "ok",
       stderr: ""
+    });
+    runtime.recordAiTraderWake.mockImplementation((accountId: string, input: { wakeId?: string; botId: string }) => ({
+      schemaVersion: "stratium.ai-trader-wake-report.v1",
+      wakeId: input.wakeId ?? "wake-1",
+      botId: input.botId,
+      accountId,
+      mode: "shadow",
+      runtimeTarget: "stratium_native",
+      executionTarget: "stratium_simulation",
+      symbol: "BTC-USD",
+      status: "completed",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      finishedAt: "2026-05-19T00:00:01.000Z",
+      reasons: ["manual_admin"],
+      approvedActions: 1,
+      rejectedActions: 0,
+      executionResults: [],
+      errors: []
+    }));
+    runtime.listAiTraderWakeReports.mockReturnValue([{
+      schemaVersion: "stratium.ai-trader-wake-report.v1",
+      wakeId: "wake-1",
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      mode: "shadow",
+      runtimeTarget: "stratium_native",
+      executionTarget: "stratium_simulation",
+      symbol: "BTC-USD",
+      status: "completed",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      finishedAt: "2026-05-19T00:00:01.000Z",
+      reasons: ["manual_admin"],
+      approvedActions: 1,
+      rejectedActions: 0,
+      executionResults: [],
+      errors: []
+    }]);
+    runtime.getAiTraderAdminDashboard.mockResolvedValue({
+      generatedAt: "2026-05-19T00:00:01.000Z",
+      overview: {
+        totalBots: 1,
+        enabledBots: 1,
+        shadowBots: 1,
+        paperExecuteBots: 0,
+        reduceOnlyBots: 0,
+        activeWakes: 0,
+        failedWakes24h: 0,
+        riskRejections24h: 0,
+        totalSimulatedPnl: 10,
+        maxDrawdownPct: 0
+      },
+      profiles: [{
+        botId: "local-demo-trader",
+        name: "Demo Trader Bot",
+        enabled: true,
+        mode: "shadow",
+        runtimeTarget: "stratium_native",
+        executionTarget: "stratium_simulation",
+        accountId: "paper-account-1",
+        username: "demo",
+        symbol: "BTC-USD",
+        health: "idle",
+        riskState: "normal",
+        lastWakeAt: "2026-05-19T00:00:01.000Z",
+        nextWakeAt: null,
+        lastWakeStatus: "completed",
+        lastWakeReasons: ["manual_admin"],
+        equity: 1010,
+        dailyPnl: 10,
+        drawdownPct: 0,
+        openOrders: 0,
+        position: {
+          symbol: "BTC-USD",
+          side: "long",
+          quantity: 1,
+          notional: 70_000
+        }
+      }]
     });
     runtime.listFrontendUsers.mockResolvedValue([frontendSession.user]);
     runtime.createFrontendUser.mockResolvedValue(frontendSession.user);
@@ -1320,6 +1401,60 @@ describe("registerRoutes", () => {
       activeSymbol: "ETH-USD",
       maintenanceMode: true
     });
+
+    const botDashboardResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/bots/dashboard",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(botDashboardResponse.statusCode).toBe(200);
+    expect(botDashboardResponse.json()).toMatchObject({
+      overview: {
+        totalBots: 1,
+        shadowBots: 1
+      },
+      profiles: [{
+        botId: "local-demo-trader",
+        accountId: "paper-account-1"
+      }]
+    });
+
+    const botWakesResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/bots/local-demo-trader/wakes",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(botWakesResponse.json()).toMatchObject({
+      botId: "local-demo-trader",
+      wakes: [{
+        wakeId: "wake-1",
+        botId: "local-demo-trader"
+      }]
+    });
+
+    const botWakeReportResponse = await app.inject({
+      method: "POST",
+      url: "/api/trader-bot/wakes",
+      headers: { authorization: `Bearer ${frontendSession.token}` },
+      payload: {
+        wakeId: "wake-2",
+        botId: "local-demo-trader",
+        mode: "shadow",
+        symbol: "BTC-USD",
+        status: "completed",
+        startedAt: "2026-05-19T00:05:00.000Z",
+        finishedAt: "2026-05-19T00:05:01.000Z",
+        reasons: ["manual_admin"],
+        approvedActions: 1,
+        rejectedActions: 0,
+        executionResults: []
+      }
+    });
+    expect(botWakeReportResponse.statusCode).toBe(201);
+    expect(runtime.recordAiTraderWake).toHaveBeenCalledWith("paper-account-1", expect.objectContaining({
+      wakeId: "wake-2",
+      botId: "local-demo-trader"
+    }));
 
     const batchJobsResponse = await app.inject({
       method: "GET",

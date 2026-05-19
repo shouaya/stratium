@@ -6,6 +6,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm --parallel --filter @stratium/api --filter @stratium/web dev",
     "job-runner:dev": "pnpm --filter @stratium/job-runner dev",
+    "trader-bot:dev": "pnpm --filter @stratium/trader-bot dev",
     "lint": "pnpm -r lint",
     "postinstall": "pnpm exec prisma generate",
     "prisma:generate": "pnpm exec prisma generate",

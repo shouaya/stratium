@@ -553,6 +553,49 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return runtime.getAdminStatePayload();
   });
 
+  app.get("/api/admin/bots/dashboard", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return runtime.getAiTraderAdminDashboard();
+  });
+
+  app.get("/api/admin/bots/:botId/wakes", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const params = request.params as { botId: string };
+
+    return {
+      botId: params.botId,
+      wakes: runtime.listAiTraderWakeReports(params.botId)
+    };
+  });
+
+  app.post("/api/trader-bot/wakes", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    const accountId = session.user.tradingAccountId;
+    const payload = request.body as Record<string, unknown> | undefined;
+
+    if (!accountId || !payload || typeof payload !== "object" || typeof payload.botId !== "string") {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "Trader bot wake report requires a botId and authenticated trading account."
+      });
+    }
+
+    return reply.code(201).send({
+      status: "recorded",
+      report: runtime.recordAiTraderWake(accountId, payload)
+    });
+  });
+
   app.post("/api/admin/users", async (request, reply) => {
     if (!requireRole(request, reply, "admin")) {
       return;

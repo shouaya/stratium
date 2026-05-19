@@ -21,7 +21,7 @@ import { buildApiUrl, resolveApiBaseUrl } from "../api-base-url";
 
 const apiBaseUrl = resolveApiBaseUrl();
 
-export type AdminSection = "dashboard" | "users" | "platform" | "market" | "batch";
+export type AdminSection = "dashboard" | "users" | "platform" | "market" | "batch" | "bots";
 
 export function AdminProtectedPage({ section }: { section: AdminSection }) {
   const router = useRouter();

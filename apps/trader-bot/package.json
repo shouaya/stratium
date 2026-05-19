@@ -1,0 +1,22 @@
+{
+  "name": "@stratium/trader-bot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && pnpm exec tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "run": "tsx src/index.ts",
+    "run:once": "tsx src/index.ts --once",
+    "start": "node --experimental-specifier-resolution=node dist/apps/trader-bot/src/index.js",
+    "lint": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "test": "pnpm exec vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@stratium/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

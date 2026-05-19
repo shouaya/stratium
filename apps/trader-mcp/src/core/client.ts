@@ -187,6 +187,24 @@ export class StratiumHttpClient {
     });
   }
 
+  async reportTraderBotWake(input: Record<string, unknown>) {
+    const token = await this.getFrontendToken();
+    const requestBody = JSON.stringify(input);
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/trader-bot/wakes`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: requestBody
+    }, {
+      stage: "trader-bot-wake-report",
+      path: "/api/trader-bot/wakes",
+      requestBody
+    });
+  }
+
   async toMcpResult(operation: string, response: unknown, summary?: unknown) {
     const resolvedSummary = summary ?? response;
     return {

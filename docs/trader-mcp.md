@@ -93,7 +93,7 @@ The client does not need to handle:
 
 For local development, `docker compose up` exposes:
 
-- Web UI: `http://localhost:5000`
+- Web UI: `http://localhost:5001`
 - API: `http://localhost:6100`
 - Trader MCP: `http://localhost:4600/mcp`
 
@@ -150,6 +150,12 @@ This keeps MCP authentication aligned with the existing `web -> api` user and ac
   supports either numeric `oid` or string `cloid`
 - `stratium_get_exchange_status`
   returns exchange health / availability status
+
+### Bot Operations Tools
+
+- `stratium_report_trader_bot_wake`
+  records an AI trader wake summary for the Stratium admin Bot Dashboard.
+  Trading actions still use the trading tools below; this tool is for observability.
 
 ### Trading Tools
 
@@ -235,6 +241,8 @@ Recommended sequence:
 4. confirm the result:
    - `stratium_get_order_status`
    - `stratium_get_frontend_open_orders`
+5. report the bot wake:
+   - `stratium_report_trader_bot_wake`
 
 Suggested reasoning rules for the model:
 
@@ -279,7 +287,7 @@ Current test coverage includes:
    It does not yet expose WebSocket subscription capability.
 2. It follows Stratium's current local signer model.
    It does not yet implement real Hyperliquid signature recovery logic.
-3. The focus of this version is execution.
+3. The focus of this version is execution and wake observability.
    Replay, PnL analysis, and strategy feedback tools are not included yet.
 
 ## Local Startup Example

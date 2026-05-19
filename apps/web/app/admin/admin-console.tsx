@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
+import type { AiTraderAdminBotProfile, AiTraderAdminDashboardPayload, AiTraderWakeReport } from "@stratium/shared";
 import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } from "../auth-client";
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "../i18n";
 import { formatTokyoDateTime } from "../time";
@@ -25,7 +26,7 @@ import {
 } from "./admin-console-helpers";
 
 type FrontendUser = AuthUser & { role: "frontend" };
-type AdminMenu = "dashboard" | "users" | "platform" | "market" | "batch";
+type AdminMenu = "dashboard" | "users" | "platform" | "market" | "batch" | "bots";
 
 type BatchJobRunResult = {
   executionId?: string;
@@ -72,7 +73,8 @@ const MENU_ITEMS: Array<{ id: AdminMenu; label: string; hint: string }> = [
   { id: "users", label: "User Management", hint: "Issue and edit frontend users" },
   { id: "platform", label: "Platform Settings", hint: "Control trading and admin switches" },
   { id: "market", label: "Market Operations", hint: "Manual tick control" },
-  { id: "batch", label: "Batch Jobs", hint: "Run data import and refresh jobs" }
+  { id: "batch", label: "Batch Jobs", hint: "Run data import and refresh jobs" },
+  { id: "bots", label: "Bot Dashboard", hint: "Monitor AI trader state and wakes" }
 ];
 
 const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
@@ -80,7 +82,8 @@ const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
   users: "/admin/users",
   platform: "/admin/platform",
   market: "/admin/market",
-  batch: "/admin/batch"
+  batch: "/admin/batch",
+  bots: "/admin/bots"
 };
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
 const DEFAULT_EXCHANGE = "hyperliquid";
@@ -111,6 +114,9 @@ export function AdminConsole({
   const [symbolOptions, setSymbolOptions] = useState<SymbolOption[]>([]);
   const [jobResult, setJobResult] = useState<BatchJobRunResult | null>(null);
   const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
+  const [botDashboard, setBotDashboard] = useState<AiTraderAdminDashboardPayload | null>(null);
+  const [botWakes, setBotWakes] = useState<AiTraderWakeReport[]>([]);
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [tickForm, setTickForm] = useState({ symbol: "BTC-USD", bid: "", ask: "", last: "", spread: "" });
   const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "" });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -138,6 +144,14 @@ export function AdminConsole({
   const ui = getUiText(locale);
 
   const activeUserCount = useMemo(() => users.filter((user) => user.isActive).length, [users]);
+  const selectedBot = useMemo(
+    () => botDashboard?.profiles.find((profile) => profile.botId === selectedBotId) ?? botDashboard?.profiles[0] ?? null,
+    [botDashboard, selectedBotId]
+  );
+  const selectedBotWake = useMemo(
+    () => selectedBot ? botWakes.find((wake) => wake.botId === selectedBot.botId) ?? botWakes[0] ?? null : null,
+    [botWakes, selectedBot]
+  );
   const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
   const switchSymbolJobId: BatchJobDefinition["id"] = "batch-switch-active-symbol";
   const visibleJobs = useMemo(
@@ -344,6 +358,39 @@ export function AdminConsole({
     return true;
   };
 
+  const loadBotWakes = async (botId: string) => {
+    const payload = await fetchJson<{ botId: string; wakes: AiTraderWakeReport[] }>(`/api/admin/bots/${encodeURIComponent(botId)}/wakes`);
+
+    if (!payload) {
+      return false;
+    }
+
+    setBotWakes(payload.wakes);
+    return true;
+  };
+
+  const loadBotDashboard = async () => {
+    const payload = await fetchJson<AiTraderAdminDashboardPayload>("/api/admin/bots/dashboard");
+
+    if (!payload) {
+      return false;
+    }
+
+    const nextBotId = selectedBotId && payload.profiles.some((profile) => profile.botId === selectedBotId)
+      ? selectedBotId
+      : payload.profiles[0]?.botId ?? null;
+
+    setBotDashboard(payload);
+    setSelectedBotId(nextBotId);
+
+    if (!nextBotId) {
+      setBotWakes([]);
+      return true;
+    }
+
+    return loadBotWakes(nextBotId);
+  };
+
   const refreshCurrentSection = async () => {
     const loadToken = ++sectionLoadTokenRef.current;
 
@@ -363,6 +410,9 @@ export function AdminConsole({
           break;
         case "batch":
           await Promise.all([loadAdminState(), loadBatchJobs(), loadSymbolOptions()]);
+          break;
+        case "bots":
+          await Promise.all([loadAdminState(), loadBotDashboard()]);
           break;
         default:
           await loadAdminState();
@@ -551,6 +601,40 @@ export function AdminConsole({
     }
   };
 
+  const selectBot = async (botId: string) => {
+    setSelectedBotId(botId);
+    await loadBotWakes(botId);
+  };
+
+  const menuLabel = (item: AdminMenu) => ({
+    dashboard: ui.admin.dashboard,
+    users: ui.admin.users,
+    platform: ui.admin.platform,
+    market: ui.admin.market,
+    batch: ui.admin.batch,
+    bots: ui.admin.bots
+  }[item]);
+
+  const menuHint = (item: AdminMenu) => ({
+    dashboard: ui.admin.dashboardHint,
+    users: ui.admin.usersHint,
+    platform: ui.admin.platformHint,
+    market: ui.admin.marketHint,
+    batch: ui.admin.batchHint,
+    bots: ui.admin.botsHint
+  }[item]);
+
+  const botPosition = (profile: AiTraderAdminBotProfile) =>
+    `${profile.position.side} ${fmt(profile.position.quantity, 4)} ${profile.position.symbol}`;
+
+  const botScore = (score?: AiTraderWakeReport["score"] | null) =>
+    score?.totalScore == null ? "-" : fmt(score.totalScore, 3);
+
+  const botScoreDetail = (score?: AiTraderWakeReport["score"] | null) =>
+    score
+      ? `${ui.admin.confidence}: ${fmt(score.confidence, 3)} · ${ui.admin.riskState}: ${fmt(score.riskScore, 3)} · ${ui.admin.executionResults}: ${fmt(score.executionScore, 3)}`
+      : "-";
+
   const renderDashboard = () => (
     <div style={{ display: "grid", gap: 16 }}>
       <section style={heroPanel}>
@@ -564,6 +648,7 @@ export function AdminConsole({
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={() => router.push(ADMIN_SECTION_PATHS.users)} style={primaryButton}>{ui.admin.users}</button>
           <button onClick={() => router.push(ADMIN_SECTION_PATHS.batch)} style={ghostButton}>{ui.admin.batch}</button>
+          <button onClick={() => router.push(ADMIN_SECTION_PATHS.bots)} style={ghostButton}>{ui.admin.bots}</button>
         </div>
       </section>
 
@@ -846,6 +931,176 @@ export function AdminConsole({
     </div>
   );
 
+  const renderBots = () => {
+    const overview = botDashboard?.overview;
+    const profiles = botDashboard?.profiles ?? [];
+
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <section style={heroPanel}>
+          <div>
+            <div style={{ color: "#56d7c4", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.18em" }}>{ui.admin.traderMcp}</div>
+            <h2 style={{ margin: "10px 0 6px", fontSize: 34 }}>{ui.admin.botDashboard}</h2>
+            <div style={{ color: "#8aa0ac", maxWidth: 680 }}>{ui.admin.botsHint}</div>
+          </div>
+          <button onClick={() => void refreshCurrentSection()} style={primaryButton}>{ui.common.refresh}</button>
+        </section>
+
+        <div style={metricGrid}>
+          <MetricCard label={ui.admin.totalBots} value={String(overview?.totalBots ?? 0)} detail={`${overview?.enabledBots ?? 0} ${ui.admin.enabledBots.toLowerCase()}`} />
+          <MetricCard label={ui.admin.paperExecuteBots} value={String(overview?.paperExecuteBots ?? 0)} detail={`${overview?.shadowBots ?? 0} ${ui.admin.shadowBots.toLowerCase()}`} tone={(overview?.paperExecuteBots ?? 0) > 0 ? "good" : undefined} />
+          <MetricCard label={ui.admin.failedWakes24h} value={String(overview?.failedWakes24h ?? 0)} detail={`${overview?.riskRejections24h ?? 0} ${ui.admin.riskRejections24h.toLowerCase()}`} tone={(overview?.failedWakes24h ?? 0) > 0 ? "bad" : "good"} />
+          <MetricCard label={ui.admin.simulatedPnl} value={fmt(overview?.totalSimulatedPnl ?? 0, 2)} detail={`${ui.admin.maxDrawdown}: ${fmt(overview?.maxDrawdownPct ?? 0, 2)}%`} tone={(overview?.totalSimulatedPnl ?? 0) >= 0 ? "good" : "bad"} />
+        </div>
+
+        {profiles.length === 0 ? (
+          <section style={panel}>
+            <div style={{ color: "#7e97a5" }}>{ui.admin.noBots}</div>
+          </section>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 0.95fr) minmax(0, 1.05fr)", gap: 16 }}>
+            <section style={panel}>
+              <div style={panelTitle}>{ui.admin.botProfiles}</div>
+              <div style={{ display: "grid", gap: 12 }}>
+                {profiles.map((profile) => (
+                  <button
+                    key={profile.botId}
+                    onClick={() => void selectBot(profile.botId)}
+                    style={{
+                      ...botCardButton,
+                      borderColor: profile.botId === selectedBot?.botId ? "#1f8a65" : "#16262f",
+                      background: profile.botId === selectedBot?.botId ? "rgba(31, 138, 101, 0.16)" : "#0d1a21"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <div>
+                        <strong>{profile.name}</strong>
+                        <div style={{ marginTop: 4, color: "#8ba1ad", fontSize: 12 }}>{profile.botId}</div>
+                      </div>
+                      <span style={{ color: profile.health === "failed" ? "#fca5a5" : profile.health === "disabled" ? "#94a3b8" : "#86efac", fontSize: 12 }}>
+                        {profile.health}
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <StatusRow label={ui.admin.tradingAccountId} value={profile.accountId} />
+                      <StatusRow label={ui.admin.symbol} value={profile.symbol} />
+                      <StatusRow label={ui.admin.position} value={botPosition(profile)} />
+                      <StatusRow label={ui.admin.botScore} value={botScore(profile.lastScore)} />
+                      <StatusRow label={ui.admin.memoryCount} value={String(profile.memoryCount ?? 0)} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <div style={{ display: "grid", gap: 16 }}>
+              <section style={panel}>
+                <div style={panelTitle}>{ui.admin.botStatus}</div>
+                {selectedBot ? (
+                  <div style={stack}>
+                    <StatusRow label={ui.admin.status} value={selectedBot.health} />
+                    <StatusRow label={ui.admin.mode} value={selectedBot.mode} />
+                    <StatusRow label={ui.admin.runtimeTarget} value={selectedBot.runtimeTarget} />
+                    <StatusRow label={ui.admin.executionTarget} value={selectedBot.executionTarget} />
+                    <StatusRow label={ui.admin.riskState} value={selectedBot.riskState} />
+                    <StatusRow label={ui.admin.accountEquity} value={fmt(selectedBot.equity, 2)} />
+                    <StatusRow label={ui.admin.dailyPnl} value={fmt(selectedBot.dailyPnl, 2)} />
+                    <StatusRow label={ui.admin.drawdown} value={`${fmt(selectedBot.drawdownPct, 2)}%`} />
+                    <StatusRow label={ui.admin.openOrders} value={String(selectedBot.openOrders)} />
+                    <StatusRow label={ui.admin.lastWake} value={stamp(selectedBot.lastWakeAt ?? undefined)} />
+                    <StatusRow label={ui.admin.nextWake} value={stamp(selectedBot.nextWakeAt ?? undefined)} />
+                    <StatusRow label={ui.admin.wakeReasons} value={selectedBot.lastWakeReasons.length > 0 ? selectedBot.lastWakeReasons.join(", ") : "-"} />
+                    <StatusRow label={ui.admin.currentStrategy} value={selectedBot.strategySummary ?? "-"} />
+                    <StatusRow label={ui.admin.currentPlan} value={selectedBot.planSummary ?? "-"} />
+                    <StatusRow label={ui.admin.botScore} value={botScore(selectedBot.lastScore)} />
+                    <StatusRow label={ui.admin.memoryCount} value={String(selectedBot.memoryCount ?? 0)} />
+                  </div>
+                ) : (
+                  <div style={{ color: "#7e97a5" }}>{ui.admin.noBots}</div>
+                )}
+              </section>
+
+              <section style={panel}>
+                <div style={panelTitle}>{ui.admin.botIntelligence}</div>
+                {selectedBotWake ? (
+                  <div style={stack}>
+                    <StatusRow label={ui.admin.currentStrategy} value={selectedBotWake.strategySnapshot?.name ?? "-"} />
+                    <StatusRow label={ui.admin.strategySummary} value={selectedBotWake.strategySnapshot?.summary ?? "-"} />
+                    <StatusRow label={ui.admin.currentPlan} value={selectedBotWake.planSummary ?? selectedBotWake.plan?.summary ?? "-"} />
+                    <StatusRow label={ui.admin.planCandidates} value={String(selectedBotWake.plan?.candidates.length ?? 0)} />
+                    <StatusRow label={ui.admin.botScore} value={botScore(selectedBotWake.score)} />
+                    <StatusRow label={ui.admin.scoreDetails} value={botScoreDetail(selectedBotWake.score)} />
+                    {selectedBotWake.strategySnapshot?.thesis ? (
+                      <pre style={consoleBlock}>{selectedBotWake.strategySnapshot.thesis}</pre>
+                    ) : null}
+                    {selectedBotWake.plan ? (
+                      <pre style={consoleBlock}>{JSON.stringify(selectedBotWake.plan, null, 2)}</pre>
+                    ) : (
+                      <div style={{ color: "#7e97a5" }}>{ui.admin.noBotPlan}</div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ color: "#7e97a5" }}>{ui.admin.noBotPlan}</div>
+                )}
+              </section>
+
+              <section style={panel}>
+                <div style={panelTitle}>{ui.admin.botMemories}</div>
+                {selectedBotWake?.memories.length ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {selectedBotWake.memories.slice(0, 8).map((memory) => (
+                      <div key={`${memory.key}:${memory.updatedAt ?? ""}`} style={userCard}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                          <strong>{memory.key}</strong>
+                          <span style={{ color: "#8ba1ad", fontSize: 12 }}>{memory.importance == null ? "-" : fmt(memory.importance, 2)}</span>
+                        </div>
+                        <div style={{ color: "#b9d0dc", fontSize: 13 }}>{memory.value}</div>
+                        <div style={{ color: "#7e97a5", fontSize: 12 }}>{memory.source ?? "runtime"} · {stamp(memory.updatedAt)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "#7e97a5" }}>{ui.admin.noBotMemories}</div>
+                )}
+              </section>
+
+              <section style={panel}>
+                <div style={panelTitle}>{ui.admin.botWakeTimeline}</div>
+                {botWakes.length === 0 ? (
+                  <div style={{ color: "#7e97a5" }}>{ui.admin.noBotWakes}</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {botWakes.slice(0, 8).map((wake) => (
+                      <div key={wake.wakeId} style={userCard}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                          <div>
+                            <strong>{wake.status}</strong>
+                            <div style={{ marginTop: 4, color: "#8ba1ad", fontSize: 12 }}>{wake.wakeId}</div>
+                          </div>
+                          <span style={{ color: wake.status === "failed" ? "#fca5a5" : "#86efac", fontSize: 12 }}>{stamp(wake.finishedAt)}</span>
+                        </div>
+                        <div style={stack}>
+                          <StatusRow label={ui.admin.selectedCandidate} value={wake.selectedCandidateId ?? "-"} />
+                          <StatusRow label={ui.admin.botScore} value={botScore(wake.score)} />
+                          <StatusRow label={ui.admin.currentPlan} value={wake.planSummary ?? wake.plan?.summary ?? "-"} />
+                          <StatusRow label={ui.admin.memoryCount} value={String(wake.memories.length)} />
+                          <StatusRow label={ui.admin.approvedActions} value={String(wake.approvedActions)} />
+                          <StatusRow label={ui.admin.rejectedActions} value={String(wake.rejectedActions)} />
+                          <StatusRow label={ui.admin.executionResults} value={wake.executionResults.map((entry) => `${entry.actionType}:${entry.status}`).join(", ") || "-"} />
+                        </div>
+                        {wake.errors.length > 0 ? <pre style={consoleBlockError}>{wake.errors.join("\n")}</pre> : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const content = (() => {
     switch (currentSection) {
       case "users":
@@ -856,6 +1111,8 @@ export function AdminConsole({
         return renderMarket();
       case "batch":
         return renderBatchJobs();
+      case "bots":
+        return renderBots();
       case "dashboard":
       default:
         return renderDashboard();
@@ -893,8 +1150,8 @@ export function AdminConsole({
                   onClick={() => router.push(ADMIN_SECTION_PATHS[item.id])}
                   style={item.id === currentSection ? menuButtonActive : menuButton}
                 >
-                  <strong style={{ display: "block", textAlign: "left" }}>{item.id === "dashboard" ? ui.admin.dashboard : item.id === "users" ? ui.admin.users : item.id === "platform" ? ui.admin.platform : item.id === "market" ? ui.admin.market : ui.admin.batch}</strong>
-                  <span style={{ display: "block", marginTop: 4, color: item.id === currentSection ? "#d9fffb" : "#7e97a5", fontSize: 12, textAlign: "left" }}>{item.id === "dashboard" ? ui.admin.dashboardHint : item.id === "users" ? ui.admin.usersHint : item.id === "platform" ? ui.admin.platformHint : item.id === "market" ? ui.admin.marketHint : ui.admin.batchHint}</span>
+                  <strong style={{ display: "block", textAlign: "left" }}>{menuLabel(item.id)}</strong>
+                  <span style={{ display: "block", marginTop: 4, color: item.id === currentSection ? "#d9fffb" : "#7e97a5", fontSize: 12, textAlign: "left" }}>{menuHint(item.id)}</span>
                 </button>
               ))}
             </div>
@@ -1067,6 +1324,13 @@ const userCard: CSSProperties = {
   background: "#0d1a21",
   display: "grid",
   gap: 10
+};
+
+const botCardButton: CSSProperties = {
+  ...userCard,
+  color: "#dbe7ef",
+  cursor: "pointer",
+  textAlign: "left"
 };
 
 const jobCard: CSSProperties = {

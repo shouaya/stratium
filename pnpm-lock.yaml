@@ -90,6 +90,19 @@ importers:
         specifier: ^4.19.3
         version: 4.21.0
 
+  apps/trader-bot:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      '@stratium/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+
   apps/trader-mcp:
     dependencies:
       '@modelcontextprotocol/sdk':

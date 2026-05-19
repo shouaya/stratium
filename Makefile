@@ -1,4 +1,5 @@
 PNPM ?= corepack pnpm
+LOCAL_PNPM ?= pnpm
 ifeq ($(OS),Windows_NT)
 ifndef COMPOSE_FLAVOR
 COMPOSE_FLAVOR := $(shell node scripts/detect-compose-flavor.mjs)
@@ -20,11 +21,23 @@ JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
 
 .PHONY: help check-compose init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
-	up down logs config batch-import-hl-day batch-refresh-hl-day batch-clear-kline
+	up down logs config trader-bot-run trader-bot-run-once batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
 DATE ?=
 INTERVAL ?= 1m
+ACCOUNT ?= demo
+PASSWORD ?= demo123456
+BOT_ID ?= local-demo-trader
+TRADER_BOT_MODE ?= paper_execute
+TRADER_BOT_PLANNER ?= codex
+TRADER_BOT_SYMBOL ?= BTC-USD
+TRADER_BOT_API_URL ?= http://localhost:6100
+TRADER_BOT_MCP_URL ?= http://localhost:4600/mcp
+TRADER_BOT_CODEX_BIN ?= codex
+TRADER_BOT_CODEX_ARGS ?= exec --sandbox read-only --ephemeral --ignore-rules --color never
+TRADER_BOT_CODEX_PROMPT_MODE ?= stdin
+TRADER_BOT_CODEX_TIMEOUT_MS ?= 180000
 
 help:
 	@echo Stratium make targets
@@ -54,6 +67,9 @@ help:
 	@echo   make down                 Stop main stack
 	@echo   make config               Validate docker-compose.yml
 	@echo   make logs                 Tail all compose logs
+	@echo   make trader-bot-run-once  Run one local AI trader wake through Trader MCP
+	@echo   make trader-bot-run       Run the local AI trader wake loop through Trader MCP
+	@echo                            Defaults to TRADER_BOT_PLANNER=codex and TRADER_BOT_MODE=paper_execute; override baseline or dry-run for diagnostics
 	@$(ECHO_BLANK)
 	@echo Batch
 	@echo   make batch-import-hl-day  Download and import one Hyperliquid day via the job runner
@@ -136,6 +152,12 @@ logs: check-compose
 
 config: check-compose
 	$(COMPOSE_RUN) config
+
+trader-bot-run-once:
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run:once -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS)
+
+trader-bot-run:
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS)
 
 batch-import-hl-day:
 	$(JOB_RUNNER_CLIENT) batch-import-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)

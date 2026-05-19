@@ -64,7 +64,7 @@ describe("transport/index", () => {
     const origin = corsRegistration?.options?.origin as (value: string | undefined, callback: (error: Error | null, allowed: boolean) => void) => void;
     const allowedCallback = vi.fn();
     origin(undefined, allowedCallback);
-    origin("http://localhost:5000", allowedCallback);
+    origin("http://localhost:5001", allowedCallback);
     expect(allowedCallback).toHaveBeenNthCalledWith(1, null, true);
     expect(allowedCallback).toHaveBeenNthCalledWith(2, null, true);
 

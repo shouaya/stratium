@@ -116,7 +116,7 @@ services:
       NEXT_DIST_DIR: .next-dev
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:6100}
     ports:
-      - "${WEB_HOST_PORT:-5000}:3000"
+      - "${WEB_HOST_PORT:-5001}:3000"
     volumes:
       - .:/workspace
       - web-node_modules:/workspace/node_modules

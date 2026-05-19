@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import type { AiTraderWakeReport, AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "../auth/auth.js";
 import { BatchJobStateFeed } from "../batch/batch-job-state.js";
 import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "../batch/batch-job-runner.js";
@@ -9,6 +9,7 @@ import {
 } from "./payloads.js";
 import { TradingRepository } from "../persistence/repository.js";
 import { bootstrapApiRuntime } from "./api-runtime-bootstrap.js";
+import { createAiTraderAdminDashboardPayload, normalizeAiTraderWakeReport } from "./ai-trader-admin-dashboard.js";
 import {
   createApiAdminStatePayload,
   createApiReplayPayload,
@@ -54,6 +55,7 @@ export class ApiRuntime {
   private readonly batchJobStateFeed: BatchJobStateFeed;
   private runningBatchJobs: BatchJobExecution[] = [];
   private lastBatchJobExecution: BatchJobExecution | null = null;
+  private readonly aiTraderWakeReports = new Map<string, AiTraderWakeReport[]>();
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.webSocketHub = new WebSocketHub(logger);
@@ -317,6 +319,31 @@ export class ApiRuntime {
 
   async getBatchJobExecution(executionId: string): Promise<BatchJobExecution> {
     return this.batchJobRunner.getExecution(executionId);
+  }
+
+  recordAiTraderWake(accountId: string, input: unknown): AiTraderWakeReport {
+    const report = normalizeAiTraderWakeReport(accountId, input);
+    const currentReports = this.aiTraderWakeReports.get(report.botId) ?? [];
+    this.aiTraderWakeReports.set(report.botId, [report, ...currentReports].slice(0, 200));
+    this.broadcast(accountId);
+    return report;
+  }
+
+  listAiTraderWakeReports(botId?: string): AiTraderWakeReport[] {
+    const reports = botId
+      ? this.aiTraderWakeReports.get(botId) ?? []
+      : [...this.aiTraderWakeReports.values()].flat();
+
+    return [...reports].sort((left, right) => new Date(right.finishedAt).getTime() - new Date(left.finishedAt).getTime());
+  }
+
+  async getAiTraderAdminDashboard() {
+    return createAiTraderAdminDashboardPayload({
+      users: await this.listFrontendUsers(),
+      platform: this.platformSettings,
+      reports: this.listAiTraderWakeReports(),
+      readEngineState: (accountId) => this.getEngineState(accountId)
+    });
   }
 
   removeSocket(socket: SocketLike): void {
