@@ -22,6 +22,17 @@ const coinFromSymbol = (symbol: string): string => symbol.split("-")[0] || symbo
 
 const toolRaw = (result: TraderMcpToolResult): unknown => result.raw ?? result.summary ?? result;
 
+const mergeMemories = (memories: TraderBotMemory[]): TraderBotMemory[] => {
+  const byKey = new Map<string, TraderBotMemory>();
+  for (const memory of memories) {
+    if (!memory.key.trim()) {
+      continue;
+    }
+    byKey.set(memory.key, memory);
+  }
+  return [...byKey.values()];
+};
+
 const deriveMid = (allMids: unknown, symbol: string): number => {
   const record = asRecord(allMids);
   if (!record) {
@@ -113,14 +124,14 @@ export const createPlannerContextFromMcp = async (input: {
     wakeRequest: input.wakeRequest,
     market: deriveMarket(input.config.activeSymbol, toolRaw(allMids), toolRaw(l2Book)),
     account: deriveAccount(toolRaw(clearinghouseState), input.config.activeSymbol),
-    memories: [
+    memories: mergeMemories([
       ...(input.memories ?? []),
       {
         key: "state/open_orders",
         value: JSON.stringify(toolRaw(openOrders)),
         importance: 0.3
       }
-    ],
+    ]),
     now: input.now ?? new Date().toISOString()
   };
 };

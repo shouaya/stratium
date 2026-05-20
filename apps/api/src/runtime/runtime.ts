@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { AiTraderWakeReport, AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import type { AiTraderMemorySnapshot, AiTraderWakeReport, AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
 import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "../auth/auth.js";
 import { BatchJobStateFeed } from "../batch/batch-job-state.js";
 import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "../batch/batch-job-runner.js";
@@ -55,7 +55,6 @@ export class ApiRuntime {
   private readonly batchJobStateFeed: BatchJobStateFeed;
   private runningBatchJobs: BatchJobExecution[] = [];
   private lastBatchJobExecution: BatchJobExecution | null = null;
-  private readonly aiTraderWakeReports = new Map<string, AiTraderWakeReport[]>();
 
   constructor(private readonly logger: FastifyBaseLogger) {
     this.webSocketHub = new WebSocketHub(logger);
@@ -321,27 +320,33 @@ export class ApiRuntime {
     return this.batchJobRunner.getExecution(executionId);
   }
 
-  recordAiTraderWake(accountId: string, input: unknown): AiTraderWakeReport {
+  async recordAiTraderWake(accountId: string, input: unknown): Promise<AiTraderWakeReport> {
     const report = normalizeAiTraderWakeReport(accountId, input);
-    const currentReports = this.aiTraderWakeReports.get(report.botId) ?? [];
-    this.aiTraderWakeReports.set(report.botId, [report, ...currentReports].slice(0, 200));
+    await this.repository.upsertAiTraderWakeReport(report);
     this.broadcast(accountId);
     return report;
   }
 
-  listAiTraderWakeReports(botId?: string): AiTraderWakeReport[] {
-    const reports = botId
-      ? this.aiTraderWakeReports.get(botId) ?? []
-      : [...this.aiTraderWakeReports.values()].flat();
+  async listAiTraderWakeReports(botId?: string): Promise<AiTraderWakeReport[]> {
+    return this.repository.listAiTraderWakeReports({
+      botId,
+      limit: botId ? 200 : 1_000
+    });
+  }
 
-    return [...reports].sort((left, right) => new Date(right.finishedAt).getTime() - new Date(left.finishedAt).getTime());
+  async listAiTraderMemories(accountId: string, botId: string): Promise<AiTraderMemorySnapshot[]> {
+    return this.repository.listAiTraderMemories({
+      accountId,
+      botId,
+      limit: 200
+    });
   }
 
   async getAiTraderAdminDashboard() {
     return createAiTraderAdminDashboardPayload({
       users: await this.listFrontendUsers(),
       platform: this.platformSettings,
-      reports: this.listAiTraderWakeReports(),
+      reports: await this.listAiTraderWakeReports(),
       readEngineState: (accountId) => this.getEngineState(accountId)
     });
   }

@@ -1,6 +1,6 @@
 import type { AiTraderMode } from "@stratium/shared";
 import type { TraderBotCliFlags } from "./flags.js";
-import type { TraderBotConfig, TraderBotPlannerKind, TraderBotRunnerConfig } from "../types.js";
+import type { TraderBotCodexSessionMode, TraderBotConfig, TraderBotPlannerKind, TraderBotRunnerConfig } from "../types.js";
 
 const readNumber = (value: string | undefined, fallback: number): number => {
   if (value == null || value.trim() === "") {
@@ -62,6 +62,9 @@ const parsePlanner = (value: string | undefined, fallback: TraderBotPlannerKind)
 const parseCodexPromptMode = (value: string | undefined): TraderBotRunnerConfig["codexPromptMode"] =>
   value === "arg" ? "arg" : "stdin";
 
+const parseCodexSessionMode = (value: string | undefined): TraderBotCodexSessionMode =>
+  value === "fresh" ? "fresh" : "resume";
+
 export const loadRunnerConfig = (
   flags: TraderBotCliFlags,
   env: NodeJS.ProcessEnv = process.env
@@ -78,10 +81,14 @@ export const loadRunnerConfig = (
   const codexArgs = flags.codexArgs
     ?? env.STRATIUM_TRADER_BOT_CODEX_ARGS
     ?? env.CODEX_CLI_ARGS
-    ?? "exec --sandbox read-only --ephemeral --ignore-rules --color never";
+    ?? "exec --sandbox read-only --ignore-rules --color never";
   const codexTimeoutMs = readNumber(
     flags.codexTimeoutMs ?? env.STRATIUM_TRADER_BOT_CODEX_TIMEOUT_MS,
     readNumber(env.CODEX_CLI_TIMEOUT_MS, 180_000)
+  );
+  const codexSessionMaxWakes = readNumber(
+    flags.codexSessionMaxWakes ?? env.STRATIUM_TRADER_BOT_CODEX_SESSION_MAX_WAKES,
+    readNumber(env.CODEX_SESSION_MAX_WAKES, 40)
   );
 
   return {
@@ -98,7 +105,9 @@ export const loadRunnerConfig = (
     codexBin: flags.codexBin ?? env.STRATIUM_TRADER_BOT_CODEX_BIN ?? env.CODEX_CLI_BIN ?? "codex",
     codexArgs: splitArgs(codexArgs),
     codexPromptMode: parseCodexPromptMode(flags.codexPromptMode ?? env.STRATIUM_TRADER_BOT_CODEX_PROMPT_MODE ?? env.CODEX_CLI_PROMPT_MODE),
-    codexTimeoutMs
+    codexTimeoutMs,
+    codexSessionMode: parseCodexSessionMode(flags.codexSessionMode ?? env.STRATIUM_TRADER_BOT_CODEX_SESSION_MODE ?? env.CODEX_SESSION_MODE),
+    codexSessionMaxWakes: Math.max(1, Math.floor(codexSessionMaxWakes))
   };
 };
 

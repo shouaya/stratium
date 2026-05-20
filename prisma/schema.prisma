@@ -179,6 +179,86 @@ model SimulationSnapshot {
   @@index([accountId, updatedAt])
 }
 
+model AiTraderWakeReport {
+  wakeId              String   @id
+  botId               String
+  accountId           String
+  mode                String
+  runtimeTarget       String
+  executionTarget     String
+  symbol              String
+  status              String
+  requestedAt         DateTime?
+  startedAt           DateTime
+  finishedAt          DateTime
+  reasons             String[]
+  selectedCandidateId String?
+  planSummary         String?
+  strategySnapshot    Json?
+  plan                Json?
+  memories            Json
+  score               Json?
+  approvedActions     Int
+  rejectedActions     Int
+  executionResults    Json
+  errors              String[]
+  marketSnapshot      Json?
+  accountSnapshot     Json?
+  rawReport           Json
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([botId, finishedAt])
+  @@index([accountId, finishedAt])
+  @@index([status, finishedAt])
+}
+
+model AiTraderBotState {
+  botId               String   @id
+  accountId           String
+  mode                String
+  runtimeTarget       String
+  executionTarget     String
+  symbol              String
+  status              String
+  lastWakeId          String?
+  lastWakeAt          DateTime?
+  lastWakeStatus      String?
+  lastWakeReasons     String[]
+  selectedCandidateId String?
+  planSummary         String?
+  strategySnapshot    Json?
+  plan                Json?
+  score               Json?
+  approvedActions     Int      @default(0)
+  rejectedActions     Int      @default(0)
+  errorCount          Int      @default(0)
+  marketSnapshot      Json?
+  accountSnapshot     Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([accountId, updatedAt])
+  @@index([symbol, updatedAt])
+}
+
+model AiTraderMemory {
+  id          String   @id @default(cuid())
+  botId       String
+  accountId   String
+  memoryKey   String
+  value       String
+  importance  Float?
+  source      String
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([botId, memoryKey])
+  @@index([accountId, updatedAt])
+  @@index([botId, updatedAt])
+}
+
 model SymbolConfig {
   id                           String   @id @default(cuid())
   source                       String

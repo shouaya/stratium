@@ -1,6 +1,6 @@
 # AI Trader Admin Dashboard And Wake Plan
 
-Last updated: 2026-05-19
+Last updated: 2026-05-20
 
 ## Goal
 
@@ -22,6 +22,10 @@ Stratium is a closed loop and does not depend on `ai.weget.jp`.
 The Stratium admin dashboard and wake scheduler should first support a bot that wakes, plans, paper-trades, scores rewards, writes memories, and promotes/export strategies inside Stratium simulation.
 
 `ai.weget.jp` is an optional downstream live runner for exported strategy packages. If that integration is enabled, Stratium can also show package export/import status and live callbacks.
+
+The Codex planner should be stateful across wakes. Stratium stores the Codex session id and wake count as bot memories, resumes that session on the next wake, and periodically rolls the session into a concise summary before starting a fresh session. This keeps the bot's reasoning continuous without letting one Codex context grow forever.
+
+The planner should also have a base trader skill pack. This is not a fixed strategy, but a standing playbook for market regime classification, position management, order hygiene, invalidation, sizing, reward-to-risk thinking, and post-trade reflection. Without this layer the bot is only a generic planner, not a trader.
 
 Do not choose only one of:
 
@@ -91,6 +95,39 @@ market data / account events
   -> executor
   -> reward and reflection
 ```
+
+## Codex Session Continuity
+
+The trader bot persists these runtime memories after each wake:
+
+- `runtime/codex_session/id`
+- `runtime/codex_session/wake_count`
+- `runtime/codex_session/max_wakes`
+- `runtime/codex_session/mode`
+- `runtime/codex_session/fresh_reason`
+- `runtime/codex_session/summary`
+- `runtime/last_wake_summary`
+
+Default policy:
+
+- `TRADER_BOT_CODEX_SESSION_MODE=resume`
+- `TRADER_BOT_CODEX_SESSION_MAX_WAKES=40`
+- Codex args should not include `--ephemeral` when session resume is desired.
+
+On wake, the bot loads persisted memories through Trader MCP. If a valid session id exists and the wake count is below the limit, the planner runs `codex exec resume`. If the limit has been reached, the bot writes a compact rollover summary into memory and starts a fresh Codex session.
+
+## Base Trader Skill Pack
+
+Every planner prompt should include a small but explicit trading playbook:
+
+- classify the market as trend, range, breakout, pullback, volatility expansion, or no-clear-edge
+- manage existing positions and open orders before considering new exposure
+- require a thesis, invalidation, target logic, and bounded size for every opening trade
+- prefer small probes while learning in simulation
+- avoid chasing extended moves without a clear invalidation point
+- never invent order ids; cancel only ids present in open order memory
+- use prior wake summaries to avoid repeating the same mistake
+- explain what feedback the action should produce before the next wake
 
 ## Wake Types
 
@@ -440,11 +477,14 @@ Current Stratium MVP implementation:
 - Trader Bot wake summaries are reported through Trader MCP via `stratium_report_trader_bot_wake`.
 - Admin APIs expose fleet overview, bot profiles, and wake history for the dashboard.
 - Bot wake reports include current strategy snapshot, validated plan, memory summaries, and score breakdown.
+- Bot wake reports, current bot state, and latest bot memories are persisted to PostgreSQL.
 - Trading operations remain routed through Trader MCP tools; dashboard reporting is observability only.
 
-Current limitation:
+Persistence tables:
 
-- wake history is held by the running API process. Persisting bot wake reports to PostgreSQL should be added before treating wake history as audit-grade data.
+- `AiTraderWakeReport`: append/upsert wake history and audit payloads by `wakeId`.
+- `AiTraderBotState`: latest state per `botId`, including current strategy, plan summary, score, account snapshot, and last wake status.
+- `AiTraderMemory`: latest memory entries by `botId + memoryKey`.
 
 ## Dashboard Layout
 

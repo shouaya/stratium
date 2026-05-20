@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AnyEventEnvelope } from "@stratium/shared";
+import type { AiTraderWakeReport, AnyEventEnvelope } from "@stratium/shared";
 
 const prismaMock = vi.hoisted(() => ({
   $connect: vi.fn(),
@@ -13,6 +13,21 @@ const prismaMock = vi.hoisted(() => ({
   simulationSnapshot: {
     findUnique: vi.fn(),
     upsert: vi.fn()
+  },
+  aiTraderWakeReport: {
+    upsert: vi.fn(),
+    findMany: vi.fn(),
+    deleteMany: vi.fn()
+  },
+  aiTraderBotState: {
+    upsert: vi.fn(),
+    findMany: vi.fn(),
+    deleteMany: vi.fn()
+  },
+  aiTraderMemory: {
+    upsert: vi.fn(),
+    findMany: vi.fn(),
+    deleteMany: vi.fn()
   },
   symbolConfig: {
     findFirst: vi.fn(),
@@ -127,6 +142,181 @@ describe("TradingRepository", () => {
 
     expect(prismaMock.$connect).toHaveBeenCalled();
     expect(prismaMock.$disconnect).toHaveBeenCalled();
+  });
+
+  it("persists trader bot wake reports, current state, and memories", async () => {
+    const report: AiTraderWakeReport = {
+      schemaVersion: "stratium.ai-trader-wake-report.v1",
+      wakeId: "wake-1",
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      mode: "paper_execute",
+      runtimeTarget: "stratium_native",
+      executionTarget: "stratium_simulation",
+      symbol: "BTC-USD",
+      status: "completed",
+      requestedAt: "2026-05-19T00:00:00.000Z",
+      startedAt: "2026-05-19T00:00:01.000Z",
+      finishedAt: "2026-05-19T00:00:02.000Z",
+      reasons: ["manual_admin"],
+      selectedCandidateId: "candidate-1",
+      planSummary: "Close existing simulation position.",
+      strategySnapshot: {
+        name: "BTC codex simulation strategy",
+        status: "active",
+        symbol: "BTC-USD",
+        mode: "paper_execute",
+        summary: "Simulation strategy",
+        updatedAt: "2026-05-19T00:00:02.000Z"
+      },
+      plan: {
+        schemaVersion: "stratium.ai-trader-plan.v1",
+        summary: "Close existing simulation position.",
+        candidates: [{
+          id: "candidate-1",
+          thesis: "Realize feedback.",
+          confidence: 0.6,
+          actions: [{
+            type: "close_position",
+            symbol: "BTC-USD",
+            reason: "Reset simulation exposure."
+          }]
+        }]
+      },
+      memories: [{
+        key: "state/open_orders",
+        value: "[]",
+        importance: 0.4,
+        updatedAt: "2026-05-19T00:00:02.000Z",
+        source: "runtime"
+      }],
+      score: {
+        confidence: 0.6,
+        approvedActions: 1,
+        rejectedActions: 0
+      },
+      approvedActions: 1,
+      rejectedActions: 0,
+      executionResults: [{
+        actionType: "close_position",
+        status: "executed",
+        message: "closed"
+      }],
+      errors: [],
+      marketSnapshot: {
+        last: 70_000
+      },
+      accountSnapshot: {
+        equity: 10_000
+      }
+    };
+
+    await repository.upsertAiTraderWakeReport(report);
+
+    expect(prismaMock.aiTraderWakeReport.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { wakeId: "wake-1" },
+      create: expect.objectContaining({
+        wakeId: "wake-1",
+        botId: "local-demo-trader",
+        accountId: "paper-account-1",
+        status: "completed"
+      })
+    }));
+    expect(prismaMock.aiTraderBotState.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { botId: "local-demo-trader" },
+      update: expect.objectContaining({
+        lastWakeId: "wake-1",
+        planSummary: "Close existing simulation position."
+      })
+    }));
+    expect(prismaMock.aiTraderMemory.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        botId_memoryKey: {
+          botId: "local-demo-trader",
+          memoryKey: "state/open_orders"
+        }
+      },
+      update: expect.objectContaining({
+        value: "[]",
+        source: "runtime"
+      })
+    }));
+  });
+
+  it("loads persisted trader bot wake reports in newest-first order", async () => {
+    prismaMock.aiTraderWakeReport.findMany.mockResolvedValue([{
+      wakeId: "wake-1",
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      mode: "paper_execute",
+      runtimeTarget: "stratium_native",
+      executionTarget: "stratium_simulation",
+      symbol: "BTC-USD",
+      status: "completed",
+      requestedAt: null,
+      startedAt: new Date("2026-05-19T00:00:01.000Z"),
+      finishedAt: new Date("2026-05-19T00:00:02.000Z"),
+      reasons: ["manual_admin"],
+      selectedCandidateId: null,
+      planSummary: "Observe.",
+      strategySnapshot: null,
+      plan: null,
+      memories: [],
+      score: null,
+      approvedActions: 0,
+      rejectedActions: 0,
+      executionResults: [],
+      errors: [],
+      marketSnapshot: null,
+      accountSnapshot: null
+    }]);
+
+    const reports = await repository.listAiTraderWakeReports({ botId: "local-demo-trader", limit: 10 });
+
+    expect(prismaMock.aiTraderWakeReport.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { botId: "local-demo-trader" },
+      take: 10
+    }));
+    expect(reports).toEqual([expect.objectContaining({
+      wakeId: "wake-1",
+      botId: "local-demo-trader",
+      finishedAt: "2026-05-19T00:00:02.000Z",
+      memories: []
+    })]);
+  });
+
+  it("loads persisted trader bot memories for a bot account", async () => {
+    prismaMock.aiTraderMemory.findMany.mockResolvedValue([{
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      memoryKey: "runtime/codex_session/id",
+      value: "11111111-1111-1111-1111-111111111111",
+      importance: 1,
+      source: "runtime",
+      lastSeenAt: new Date("2026-05-19T00:00:02.000Z"),
+      updatedAt: new Date("2026-05-19T00:00:02.000Z")
+    }]);
+
+    const memories = await repository.listAiTraderMemories({
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      limit: 20
+    });
+
+    expect(prismaMock.aiTraderMemory.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        botId: "local-demo-trader",
+        accountId: "paper-account-1"
+      },
+      take: 20
+    }));
+    expect(memories).toEqual([{
+      key: "runtime/codex_session/id",
+      value: "11111111-1111-1111-1111-111111111111",
+      importance: 1,
+      updatedAt: "2026-05-19T00:00:02.000Z",
+      source: "runtime"
+    }]);
   });
 
   it("seeds default access, loads users, and manages frontend users and platform settings", async () => {

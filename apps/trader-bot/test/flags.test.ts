@@ -15,6 +15,8 @@ describe("trader-bot config flags", () => {
       "--codex-bin", "codex",
       "--codex-args", "exec --sandbox read-only",
       "--codex-prompt-mode", "stdin",
+      "--codex-session-mode", "fresh",
+      "--codex-session-max-wakes", "12",
       "--once"
     ]);
 
@@ -29,6 +31,8 @@ describe("trader-bot config flags", () => {
       codexBin: "codex",
       codexArgs: "exec --sandbox read-only",
       codexPromptMode: "stdin",
+      codexSessionMode: "fresh",
+      codexSessionMaxWakes: "12",
       once: true
     });
   });
@@ -50,9 +54,11 @@ describe("trader-bot config flags", () => {
       apiBaseUrl: "http://localhost:6100",
       traderMcpUrl: "http://localhost:4600/mcp",
       codexBin: "codex",
-      codexArgs: ["exec", "--sandbox", "read-only", "--ephemeral", "--ignore-rules", "--color", "never"],
+      codexArgs: ["exec", "--sandbox", "read-only", "--ignore-rules", "--color", "never"],
       codexPromptMode: "stdin",
-      codexTimeoutMs: 180_000
+      codexTimeoutMs: 180_000,
+      codexSessionMode: "resume",
+      codexSessionMaxWakes: 40
     });
   });
 });

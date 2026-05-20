@@ -35,9 +35,11 @@ TRADER_BOT_SYMBOL ?= BTC-USD
 TRADER_BOT_API_URL ?= http://localhost:6100
 TRADER_BOT_MCP_URL ?= http://localhost:4600/mcp
 TRADER_BOT_CODEX_BIN ?= codex
-TRADER_BOT_CODEX_ARGS ?= exec --sandbox read-only --ephemeral --ignore-rules --color never
+TRADER_BOT_CODEX_ARGS ?= exec --sandbox read-only --ignore-rules --color never
 TRADER_BOT_CODEX_PROMPT_MODE ?= stdin
 TRADER_BOT_CODEX_TIMEOUT_MS ?= 180000
+TRADER_BOT_CODEX_SESSION_MODE ?= resume
+TRADER_BOT_CODEX_SESSION_MAX_WAKES ?= 40
 
 help:
 	@echo Stratium make targets
@@ -154,10 +156,10 @@ config: check-compose
 	$(COMPOSE_RUN) config
 
 trader-bot-run-once:
-	$(LOCAL_PNPM) --filter @stratium/trader-bot run:once -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS)
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run:once -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES)
 
 trader-bot-run:
-	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS)
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES)
 
 batch-import-hl-day:
 	$(JOB_RUNNER_CLIENT) batch-import-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)

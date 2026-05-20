@@ -9,7 +9,7 @@ import { createDryRunPlanner } from "./planner/dryRunPlanner.js";
 import { createPlannerContextFromMcp } from "./runtime/contextProvider.js";
 import { createMcpExecutor } from "./runtime/mcpExecutor.js";
 import { runWakeCycle } from "./runtime/wakeCycle.js";
-import type { TraderBotPlanner, TraderBotPlannerContext, TraderBotRunnerConfig, TraderBotWakeResult } from "./types.js";
+import type { TraderBotMemory, TraderBotPlanner, TraderBotPlannerContext, TraderBotRunnerConfig, TraderBotWakeResult } from "./types.js";
 
 const REQUIRED_MCP_TOOLS = [
   "stratium_get_all_mids",
@@ -19,7 +19,8 @@ const REQUIRED_MCP_TOOLS = [
   "stratium_place_order",
   "stratium_cancel_order",
   "stratium_cancel_order_by_cloid",
-  "stratium_report_trader_bot_wake"
+  "stratium_report_trader_bot_wake",
+  "stratium_list_trader_bot_memories"
 ];
 
 const log = (message: string) => {
@@ -33,6 +34,82 @@ const positionSummary = (context: TraderBotPlannerContext) => {
   return position
     ? `${position.side} ${position.quantity} ${position.symbol}, notional=${position.notional}`
     : "flat";
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+const normalizeMemories = (value: unknown): TraderBotMemory[] => {
+  const payload = asRecord(value);
+  const entries = Array.isArray(value) ? value : Array.isArray(payload?.memories) ? payload.memories : [];
+
+  return entries.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.key !== "string" || typeof record.value !== "string") {
+      return [];
+    }
+    return [{
+      key: record.key,
+      value: record.value,
+      importance: typeof record.importance === "number" && Number.isFinite(record.importance)
+        ? record.importance
+        : undefined,
+      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
+      source: record.source === "reflection" || record.source === "strategy_package" || record.source === "manual" || record.source === "runtime"
+        ? record.source
+        : undefined
+    }];
+  });
+};
+
+const loadPersistedMemories = async (
+  mcpClient: Awaited<ReturnType<typeof createTraderMcpClient>>,
+  botId: string
+): Promise<TraderBotMemory[]> => {
+  const result = await mcpClient.callTool("stratium_list_trader_bot_memories", { botId });
+  return normalizeMemories(result.raw ?? result.summary ?? result);
+};
+
+const upsertMemory = (context: TraderBotPlannerContext, memory: TraderBotMemory): void => {
+  const index = context.memories.findIndex((entry) => entry.key === memory.key);
+  if (index >= 0) {
+    context.memories[index] = memory;
+    return;
+  }
+  context.memories.push(memory);
+};
+
+const appendLastWakeSummaryMemory = (
+  context: TraderBotPlannerContext,
+  result: TraderBotWakeResult
+): void => {
+  const selectedActionTypes = result.selectedCandidate?.actions.map((action) => action.type).join(", ") || "none";
+  const executionSummary = result.executionResults.length === 0
+    ? "no executions"
+    : result.executionResults.map((entry) => `${entry.action.type}:${entry.status}`).join(", ");
+  const value = JSON.stringify({
+    wakeId: result.wakeId,
+    finishedAt: result.finishedAt,
+    status: result.status,
+    symbol: context.market.symbol,
+    marketLast: context.market.last,
+    position: context.account.position ?? null,
+    planSummary: result.plan?.summary ?? null,
+    selectedCandidateId: result.selectedCandidate?.id ?? null,
+    selectedActionTypes,
+    approvedActions: result.riskDecision?.approvedActions.length ?? 0,
+    rejectedActions: result.riskDecision?.rejectedActions.length ?? 0,
+    executionSummary,
+    errors: result.errors
+  });
+
+  upsertMemory(context, {
+    key: "runtime/last_wake_summary",
+    value: value.length > 4_000 ? `${value.slice(0, 4_000)}...` : value,
+    importance: 0.99,
+    updatedAt: result.finishedAt,
+    source: "runtime"
+  });
 };
 
 const createPlanner = (config: TraderBotRunnerConfig): TraderBotPlanner => {
@@ -131,8 +208,8 @@ const createWakeReport = (
     key: memory.key,
     value: memory.value,
     importance: memory.importance,
-    updatedAt: context.now,
-    source: "runtime"
+    updatedAt: memory.updatedAt ?? context.now,
+    source: memory.source ?? "runtime"
   })),
   score: createWakeScore(result),
   approvedActions: result.riskDecision?.approvedActions.length ?? 0,
@@ -169,12 +246,16 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1) => {
     log("mcp: checking required tools");
     await assertTraderMcpTools(mcpClient, REQUIRED_MCP_TOOLS);
     log(`mcp: tools ready (${REQUIRED_MCP_TOOLS.length})`);
+    log("memory: loading persisted bot memories through Trader MCP");
+    const persistedMemories = await loadPersistedMemories(mcpClient, config.botId);
+    log(`memory: loaded ${persistedMemories.length} persisted entries`);
     log("context: fetching market/account through Trader MCP");
     const contextStartedAt = Date.now();
     const context = await createPlannerContextFromMcp({
       config,
       wakeRequest,
-      mcpClient
+      mcpClient,
+      memories: persistedMemories
     });
     log(`context: ready (${Date.now() - contextStartedAt}ms), market=${context.market.symbol} last=${context.market.last}, equity=${context.account.equity}, position=${positionSummary(context)}, memories=${context.memories.length}`);
     const result = await runWakeCycle(
@@ -187,6 +268,7 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1) => {
       }),
       log
     );
+    appendLastWakeSummaryMemory(context, result);
     log(`wake: planner/executor finished status=${result.status}, selected=${result.selectedCandidate?.id ?? "none"}`);
     log("telemetry: reporting wake to admin dashboard");
     const telemetry = await mcpClient.callTool(

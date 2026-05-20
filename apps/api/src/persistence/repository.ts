@@ -1,3 +1,3 @@
-import { TradingPersistenceRepository } from "./trading-persistence-repository.js";
+import { AiTraderPersistenceRepository } from "./ai-trader-persistence-repository.js";
 
-export class TradingRepository extends TradingPersistenceRepository {}
+export class TradingRepository extends AiTraderPersistenceRepository {}

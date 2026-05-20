@@ -102,6 +102,16 @@ const evaluateAction = (
     ));
   }
 
+  if (action.type === "cancel_order") {
+    const hasCancelTarget = Boolean(action.orderId?.trim() || action.clientOrderId?.trim());
+    rules.push(result(
+      `action_${actionIndex}_cancel_target_required`,
+      hasCancelTarget,
+      hasCancelTarget ? "cancel target is present" : "cancel_order requires orderId or clientOrderId",
+      hasCancelTarget ? "info" : "reject"
+    ));
+  }
+
   if ((action.type === "reduce_position" || action.type === "close_position") && input.mode === "disabled") {
     rules.push(result(`action_${actionIndex}_disabled_mode`, false, "disabled mode rejects all actions", "reject"));
   }

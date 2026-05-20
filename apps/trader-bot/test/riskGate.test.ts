@@ -118,4 +118,24 @@ describe("evaluateRisk", () => {
     expect(decision.approved).toBe(false);
     expect(decision.rejectedActions[0].reasons.some((entry) => entry.rule.includes("mode_allows_opening"))).toBe(true);
   });
+
+  it("rejects cancel orders without an order id or client order id", () => {
+    const candidate: AiTraderPlanCandidate = {
+      id: "cancel",
+      thesis: "cancel stale order",
+      confidence: 0.6,
+      actions: [
+        {
+          type: "cancel_order",
+          symbol: "BTC-USD",
+          reason: "missing target"
+        }
+      ]
+    };
+
+    const decision = evaluateRisk({ mode: "paper_execute", policy, market, account, candidate });
+
+    expect(decision.approved).toBe(false);
+    expect(decision.rejectedActions[0].reasons.some((entry) => entry.rule.includes("cancel_target_required"))).toBe(true);
+  });
 });

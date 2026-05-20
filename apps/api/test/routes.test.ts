@@ -122,6 +122,7 @@ describe("registerRoutes", () => {
     getBatchJobExecution: vi.fn(),
     recordAiTraderWake: vi.fn(),
     listAiTraderWakeReports: vi.fn(),
+    listAiTraderMemories: vi.fn(),
     getAiTraderAdminDashboard: vi.fn(),
     listFrontendUsers: vi.fn(),
     createFrontendUser: vi.fn(),
@@ -323,6 +324,13 @@ describe("registerRoutes", () => {
       rejectedActions: 0,
       executionResults: [],
       errors: []
+    }]);
+    runtime.listAiTraderMemories.mockResolvedValue([{
+      key: "runtime/codex_session/id",
+      value: "11111111-1111-1111-1111-111111111111",
+      importance: 1,
+      updatedAt: "2026-05-19T00:00:01.000Z",
+      source: "runtime"
     }]);
     runtime.getAiTraderAdminDashboard.mockResolvedValue({
       generatedAt: "2026-05-19T00:00:01.000Z",
@@ -1455,6 +1463,20 @@ describe("registerRoutes", () => {
       wakeId: "wake-2",
       botId: "local-demo-trader"
     }));
+
+    const botMemoriesResponse = await app.inject({
+      method: "GET",
+      url: "/api/trader-bot/memories?botId=local-demo-trader",
+      headers: { authorization: `Bearer ${frontendSession.token}` }
+    });
+    expect(botMemoriesResponse.statusCode).toBe(200);
+    expect(runtime.listAiTraderMemories).toHaveBeenCalledWith("paper-account-1", "local-demo-trader");
+    expect(botMemoriesResponse.json()).toMatchObject({
+      botId: "local-demo-trader",
+      memories: [{
+        key: "runtime/codex_session/id"
+      }]
+    });
 
     const batchJobsResponse = await app.inject({
       method: "GET",

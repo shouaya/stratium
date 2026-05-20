@@ -205,6 +205,20 @@ export class StratiumHttpClient {
     });
   }
 
+  async listTraderBotMemories(botId: string) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ botId });
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/trader-bot/memories?${params.toString()}`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "trader-bot-memory-list",
+      path: "/api/trader-bot/memories"
+    });
+  }
+
   async toMcpResult(operation: string, response: unknown, summary?: unknown) {
     const resolvedSummary = summary ?? response;
     return {

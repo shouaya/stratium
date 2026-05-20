@@ -92,5 +92,14 @@ export const infoToolDefinitions: ClientToolDefinition[] = [
     description: "Record a trader bot wake summary for the Stratium admin dashboard.",
     inputSchema: traderBotWakeReportSchema,
     run: (client, input) => client.reportTraderBotWake(input)
+  },
+  {
+    name: "stratium_list_trader_bot_memories",
+    title: "List Trader Bot Memories",
+    description: "Return persisted memory entries for the authenticated trader bot account and bot id.",
+    inputSchema: {
+      botId: z.string().min(1)
+    },
+    run: (client, { botId }) => client.listTraderBotMemories(botId)
   }
 ];

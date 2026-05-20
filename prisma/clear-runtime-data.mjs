@@ -3,6 +3,9 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 const RUNTIME_TABLES = [
+  ["AiTraderMemory", () => prisma.aiTraderMemory.deleteMany({})],
+  ["AiTraderBotState", () => prisma.aiTraderBotState.deleteMany({})],
+  ["AiTraderWakeReport", () => prisma.aiTraderWakeReport.deleteMany({})],
   ["TriggerOrderHistory", () => prisma.triggerOrderHistory.deleteMany({})],
   ["LiquidationEvent", () => prisma.liquidationEvent.deleteMany({})],
   ["LedgerEntry", () => prisma.ledgerEntry.deleteMany({})],

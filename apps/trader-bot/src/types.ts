@@ -1,5 +1,6 @@
 import type {
   AiTraderMode,
+  AiTraderMemorySnapshot,
   AiTraderPlan,
   AiTraderPlanAction,
   AiTraderPlanCandidate,
@@ -9,6 +10,7 @@ import type {
 } from "@stratium/shared";
 
 export type TraderBotPlannerKind = "dry-run" | "baseline" | "codex";
+export type TraderBotCodexSessionMode = "resume" | "fresh";
 
 export type TraderBotRiskPolicy = {
   allowedSymbols: string[];
@@ -39,6 +41,8 @@ export type TraderBotRunnerConfig = TraderBotConfig & {
   codexArgs: string[];
   codexPromptMode: "arg" | "stdin";
   codexTimeoutMs: number;
+  codexSessionMode: TraderBotCodexSessionMode;
+  codexSessionMaxWakes: number;
 };
 
 export type TraderBotMarketSnapshot = {
@@ -68,11 +72,7 @@ export type TraderBotAccountSnapshot = {
   };
 };
 
-export type TraderBotMemory = {
-  key: string;
-  value: string;
-  importance?: number;
-};
+export type TraderBotMemory = Pick<AiTraderMemorySnapshot, "key" | "value" | "importance" | "updatedAt" | "source">;
 
 export type TraderBotPlannerContext = {
   config: TraderBotConfig;

@@ -570,7 +570,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
 
     return {
       botId: params.botId,
-      wakes: runtime.listAiTraderWakeReports(params.botId)
+      wakes: await runtime.listAiTraderWakeReports(params.botId)
     };
   });
 
@@ -592,8 +592,31 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
 
     return reply.code(201).send({
       status: "recorded",
-      report: runtime.recordAiTraderWake(accountId, payload)
+      report: await runtime.recordAiTraderWake(accountId, payload)
     });
+  });
+
+  app.get("/api/trader-bot/memories", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    const accountId = session.user.tradingAccountId;
+    const query = request.query as { botId?: string };
+    const botId = query.botId?.trim();
+
+    if (!accountId || !botId) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "Trader bot memories require a botId and authenticated trading account."
+      });
+    }
+
+    return {
+      botId,
+      memories: await runtime.listAiTraderMemories(accountId, botId)
+    };
   });
 
   app.post("/api/admin/users", async (request, reply) => {
