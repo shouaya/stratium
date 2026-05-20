@@ -121,8 +121,13 @@ describe("selectNextWakeSchedule", () => {
     expect(selectNextWakeSchedule(context(), result({
       executionResults: [{
         action: {
-          type: "observe",
-          reason: "done"
+          type: "place_order",
+          symbol: "BTC-USD",
+          side: "buy",
+          orderType: "market",
+          quantity: 0.001,
+          invalidationPrice: 69_000,
+          reason: "test entry"
         },
         status: "executed",
         message: "executed"
@@ -130,6 +135,22 @@ describe("selectNextWakeSchedule", () => {
     }))).toMatchObject({
       intervalMs: 15_000,
       reasons: ["position_changed"]
+    });
+  });
+
+  it("does not treat observe as a trade execution for fast post-execution review", () => {
+    expect(selectNextWakeSchedule(context(), result({
+      executionResults: [{
+        action: {
+          type: "observe",
+          reason: "no setup"
+        },
+        status: "executed",
+        message: "observe recorded"
+      }]
+    }))).toMatchObject({
+      intervalMs: 300_000,
+      reasons: ["heartbeat_due"]
     });
   });
 

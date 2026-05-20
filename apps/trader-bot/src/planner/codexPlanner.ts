@@ -484,16 +484,19 @@ const tinyProbeQuantity = (context: TraderBotPlannerContext): number => {
 const observeOnly = (plan: AiTraderPlan): boolean =>
   plan.candidates.every((candidate) => candidate.actions.every((action) => action.type === "observe"));
 
-const activeSimulationCandidate = (context: TraderBotPlannerContext): AiTraderPlanCandidate | undefined => {
+const activeSimulationCandidate = (
+  context: TraderBotPlannerContext,
+  options: { allowPositionClose?: boolean } = {}
+): AiTraderPlanCandidate | undefined => {
   const position = context.account.position;
-  if (position && position.side !== "flat" && position.quantity > 0) {
+  if (options.allowPositionClose && position && position.side !== "flat" && position.quantity > 0) {
     return {
       id: "codex-active-sim-close-position",
-      thesis: `Codex returned observe-only while the simulator already has an open ${position.side} ${position.symbol} position, so close it to create realized feedback before the next experiment.`,
+      thesis: `Codex returned an invalid plan while the simulator already has an open ${position.side} ${position.symbol} position, so close it to protect the account and create realized feedback before the next experiment.`,
       confidence: 0.64,
       expectedReward: 0.02,
       riskNotes: [
-        "Active simulation policy only runs after Codex returns observe-only in paper_execute mode.",
+        "Active simulation fallback only closes an existing position after malformed Codex output, not after a valid hold/observe plan.",
         "The action is reduce-only and must still pass the local risk gate."
       ],
       actions: [{
@@ -502,6 +505,9 @@ const activeSimulationCandidate = (context: TraderBotPlannerContext): AiTraderPl
         reason: "Reset the existing simulation position so the bot receives execution and PnL feedback instead of passively holding."
       }]
     };
+  }
+  if (position && position.side !== "flat" && position.quantity > 0) {
+    return undefined;
   }
 
   if (hasOpenOrders(context) || !context.config.riskPolicy.allowOpeningOrders) {
@@ -586,7 +592,9 @@ const activeSimulationFallbackPlan = (
   reason: string,
   log: TraderBotProgressLogger
 ): AiTraderPlan => {
-  const candidate = context.config.mode === "paper_execute" ? activeSimulationCandidate(context) : undefined;
+  const candidate = context.config.mode === "paper_execute"
+    ? activeSimulationCandidate(context, { allowPositionClose: true })
+    : undefined;
   if (!candidate) {
     log(`codex: invalid plan (${reason}); using observe fallback`);
     return observeFallbackPlan(context, reason);

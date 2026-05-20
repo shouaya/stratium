@@ -207,6 +207,72 @@ describe("codexPlannerInternals", () => {
     });
   });
 
+  it("allows observe-only plans to hold an existing position instead of forcing a close", () => {
+    const plan = codexPlannerInternals.parseCodexPlan({
+      config: {
+        botId: "test-bot",
+        mode: "paper_execute",
+        planner: "codex",
+        runtimeTarget: "stratium_native",
+        activeSymbol: "BTC-USD",
+        wakeIntervalMs: 300_000,
+        riskPolicy: {
+          allowedSymbols: ["BTC-USD"],
+          maxActionsPerWake: 3,
+          maxOrderNotional: 100,
+          maxPositionNotional: 500,
+          requireInvalidationPrice: true,
+          allowOpeningOrders: true
+        }
+      },
+      wakeRequest: {
+        id: "wake-1",
+        botId: "test-bot",
+        symbol: "BTC-USD",
+        priority: "manual",
+        reasons: ["position_review_due"],
+        requestedAt: "2026-05-19T00:00:00.000Z",
+        source: "scheduler"
+      },
+      market: {
+        symbol: "BTC-USD",
+        bid: 76_000,
+        ask: 76_001,
+        last: 76_000.5,
+        timestamp: "2026-05-19T00:00:00.000Z"
+      },
+      account: {
+        equity: 10_000,
+        availableMargin: 9_900,
+        currentPositionNotional: 50,
+        position: {
+          symbol: "BTC-USD",
+          side: "long",
+          quantity: 0.00065,
+          notional: 50
+        }
+      },
+      memories: [{ key: "state/open_orders", value: "[]" }],
+      now: "2026-05-19T00:00:00.000Z"
+    }, JSON.stringify({
+      schemaVersion: "stratium.ai-trader-plan.v1",
+      summary: "hold the bounded long while invalidation still holds",
+      candidates: [{
+        id: "hold",
+        thesis: "The position remains above invalidation and does not need churn.",
+        confidence: 0.62,
+        expectedReward: 0.01,
+        actions: [{ type: "observe", reason: "Hold the existing long while price remains above invalidation." }]
+      }]
+    }), () => undefined);
+
+    expect(plan.candidates).toHaveLength(1);
+    expect(plan.candidates[0]).toMatchObject({
+      id: "hold",
+      actions: [{ type: "observe" }]
+    });
+  });
+
   it("converts cancel_order with blank ids into active simulation feedback instead of validation fallback text", () => {
     const plan = codexPlannerInternals.parseCodexPlan({
       config: {

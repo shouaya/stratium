@@ -73,7 +73,7 @@ const hasPosition = (context: TraderBotPlannerContext): boolean => {
 };
 
 const hasExecutedAction = (result: TraderBotWakeResult): boolean =>
-  result.executionResults.some((entry) => entry.status === "executed");
+  result.executionResults.some((entry) => entry.status === "executed" && entry.action.type !== "observe");
 
 const hasExecutionFailure = (result: TraderBotWakeResult): boolean =>
   result.status === "failed" || result.executionResults.some((entry) => entry.status === "failed");
@@ -215,4 +215,3 @@ export const selectNextWakeSchedule = (
     "scheduler"
   );
 };
-
