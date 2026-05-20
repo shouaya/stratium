@@ -55,9 +55,9 @@ const codexArgs = (config: CodexPlannerConfig, prompt: string, sessionId: string
   if (sessionId) {
     return [
       base[0],
+      ...base.slice(1),
       "resume",
       ...codexOutputFlags(base, outputPath),
-      ...base.slice(1),
       sessionId,
       promptArg
     ];

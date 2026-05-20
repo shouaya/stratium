@@ -50,7 +50,102 @@ const deriveBookSide = (book: unknown, side: 0 | 1, fallback: number): number =>
   return toNumber(first?.px, fallback);
 };
 
-const deriveMarket = (symbol: string, allMids: unknown, l2Book: unknown): TraderBotMarketSnapshot => {
+type ParsedCandle = {
+  openTime: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+const parseCandle = (value: unknown): ParsedCandle | undefined => {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const openTime = toNumber(record.t ?? record.openTime, Number.NaN);
+  const high = toNumber(record.h ?? record.high, Number.NaN);
+  const low = toNumber(record.l ?? record.low, Number.NaN);
+  const close = toNumber(record.c ?? record.close, Number.NaN);
+
+  if (![openTime, high, low, close].every(Number.isFinite)) {
+    return undefined;
+  }
+  return { openTime, high, low, close };
+};
+
+const parseCandles = (value: unknown): ParsedCandle[] =>
+  (Array.isArray(value) ? value : [])
+    .flatMap((entry) => {
+      const candle = parseCandle(entry);
+      return candle ? [candle] : [];
+    })
+    .sort((left, right) => left.openTime - right.openTime);
+
+const calculateRsi = (closes: number[], period = 14): number | undefined => {
+  if (closes.length <= period) {
+    return undefined;
+  }
+
+  let gains = 0;
+  let losses = 0;
+  for (let index = closes.length - period; index < closes.length; index += 1) {
+    const delta = closes[index] - closes[index - 1];
+    if (delta >= 0) {
+      gains += delta;
+    } else {
+      losses += Math.abs(delta);
+    }
+  }
+
+  if (losses === 0) {
+    return gains === 0 ? 50 : 100;
+  }
+
+  const relativeStrength = gains / losses;
+  return Number((100 - 100 / (1 + relativeStrength)).toFixed(2));
+};
+
+const calculateAtr = (candles: ParsedCandle[], period = 14): number | undefined => {
+  if (candles.length <= period) {
+    return undefined;
+  }
+
+  const trueRanges: number[] = [];
+  for (let index = candles.length - period; index < candles.length; index += 1) {
+    const candle = candles[index];
+    const previousClose = candles[index - 1]?.close ?? candle.close;
+    trueRanges.push(Math.max(
+      candle.high - candle.low,
+      Math.abs(candle.high - previousClose),
+      Math.abs(candle.low - previousClose)
+    ));
+  }
+
+  return Number((trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length).toFixed(2));
+};
+
+const deriveIndicators = (candlesInput: unknown): TraderBotMarketSnapshot["indicators"] | undefined => {
+  const candles = parseCandles(candlesInput);
+  if (candles.length === 0) {
+    return undefined;
+  }
+
+  const closes = candles.map((candle) => candle.close);
+  const lastClose = closes.at(-1);
+  const close5m = closes.at(-6);
+  const return5mPct = lastClose !== undefined && close5m !== undefined && close5m > 0
+    ? Number((((lastClose - close5m) / close5m) * 100).toFixed(4))
+    : undefined;
+
+  return {
+    rsi: calculateRsi(closes),
+    atr: calculateAtr(candles),
+    return5mPct
+  };
+};
+
+const deriveMarket = (symbol: string, allMids: unknown, l2Book: unknown, candles?: unknown): TraderBotMarketSnapshot => {
   const mid = deriveMid(allMids, symbol);
   const bid = deriveBookSide(l2Book, 0, mid);
   const ask = deriveBookSide(l2Book, 1, mid);
@@ -60,7 +155,8 @@ const deriveMarket = (symbol: string, allMids: unknown, l2Book: unknown): Trader
     bid,
     ask,
     last: mid || (bid + ask) / 2,
-    timestamp: new Date(toNumber(record?.time, Date.now())).toISOString()
+    timestamp: new Date(toNumber(record?.time, Date.now())).toISOString(),
+    indicators: deriveIndicators(candles)
   };
 };
 
@@ -112,17 +208,24 @@ export const createPlannerContextFromMcp = async (input: {
   now?: string;
 }): Promise<TraderBotPlannerContext> => {
   const coin = coinFromSymbol(input.config.activeSymbol);
-  const [allMids, l2Book, clearinghouseState, openOrders] = await Promise.all([
+  const now = Date.now();
+  const [allMids, l2Book, clearinghouseState, openOrders, candles] = await Promise.all([
     input.mcpClient.callTool("stratium_get_all_mids"),
     input.mcpClient.callTool("stratium_get_l2_book", { coin }),
     input.mcpClient.callTool("stratium_get_clearinghouse_state"),
-    input.mcpClient.callTool("stratium_get_open_orders")
+    input.mcpClient.callTool("stratium_get_open_orders"),
+    input.mcpClient.callTool("stratium_get_candles", {
+      coin,
+      interval: "1m",
+      startTime: now - 60 * 60_000,
+      endTime: now
+    }).catch(() => undefined)
   ]);
 
   return {
     config: input.config,
     wakeRequest: input.wakeRequest,
-    market: deriveMarket(input.config.activeSymbol, toolRaw(allMids), toolRaw(l2Book)),
+    market: deriveMarket(input.config.activeSymbol, toolRaw(allMids), toolRaw(l2Book), candles ? toolRaw(candles) : undefined),
     account: deriveAccount(toolRaw(clearinghouseState), input.config.activeSymbol),
     memories: mergeMemories([
       ...(input.memories ?? []),

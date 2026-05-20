@@ -15,6 +15,7 @@ export type AiTraderWakeReason =
   | "volatility_expansion"
   | "spread_normalized"
   | "order_filled"
+  | "order_review_due"
   | "position_changed"
   | "position_review_due"
   | "risk_limit_hit"

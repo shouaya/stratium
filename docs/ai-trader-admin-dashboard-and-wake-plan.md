@@ -142,8 +142,11 @@ Purpose:
 
 Suggested default:
 
-- every 5 minutes in shadow mode
-- every 10 to 15 minutes in observe mode
+- every 5 minutes when flat with no open orders
+- every 60 seconds when a position is open
+- every 120 seconds when only open orders need review
+- every 15 seconds after an execution so the bot can inspect the new state
+- every 30 seconds after execution errors, risk rejections, or market-signal transitions
 - configurable per bot profile
 
 Allowed behavior:

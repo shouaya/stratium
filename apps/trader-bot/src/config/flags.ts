@@ -7,6 +7,12 @@ export type TraderBotCliFlags = {
   mode?: string;
   planner?: string;
   symbol?: string;
+  wakeIntervalMs?: string;
+  positionReviewMs?: string;
+  openOrderReviewMs?: string;
+  postExecutionReviewMs?: string;
+  riskRetryMs?: string;
+  signalReviewMs?: string;
   codexBin?: string;
   codexArgs?: string;
   codexPromptMode?: string;
@@ -27,6 +33,12 @@ const FLAG_ALIASES: Record<string, keyof Omit<TraderBotCliFlags, "once">> = {
   "--mode": "mode",
   "--planner": "planner",
   "--symbol": "symbol",
+  "--wake-interval-ms": "wakeIntervalMs",
+  "--position-review-ms": "positionReviewMs",
+  "--open-order-review-ms": "openOrderReviewMs",
+  "--post-execution-review-ms": "postExecutionReviewMs",
+  "--risk-retry-ms": "riskRetryMs",
+  "--signal-review-ms": "signalReviewMs",
   "--codex-bin": "codexBin",
   "--codex-args": "codexArgs",
   "--codex-prompt-mode": "codexPromptMode",

@@ -22,6 +22,7 @@ const splitArgs = (value: string): string[] =>
 
 export const loadConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): TraderBotConfig => {
   const activeSymbol = env.STRATIUM_TRADER_BOT_SYMBOL ?? "BTC-USD";
+  const wakeIntervalMs = readNumber(env.STRATIUM_TRADER_BOT_WAKE_INTERVAL_MS, 300_000);
   const allowedSymbols = (env.STRATIUM_TRADER_BOT_ALLOWED_SYMBOLS ?? activeSymbol)
     .split(",")
     .map((symbol) => symbol.trim())
@@ -33,7 +34,15 @@ export const loadConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): TraderB
     planner: parsePlanner(env.STRATIUM_TRADER_BOT_PLANNER, "codex"),
     runtimeTarget: "stratium_native",
     activeSymbol,
-    wakeIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_WAKE_INTERVAL_MS, 300_000),
+    wakeIntervalMs,
+    wakePolicy: {
+      heartbeatIntervalMs: wakeIntervalMs,
+      positionReviewIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_POSITION_REVIEW_INTERVAL_MS, 60_000),
+      openOrderReviewIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_OPEN_ORDER_REVIEW_INTERVAL_MS, 120_000),
+      postExecutionReviewIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_POST_EXECUTION_REVIEW_INTERVAL_MS, 15_000),
+      riskRetryIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_RISK_RETRY_INTERVAL_MS, 30_000),
+      signalReviewIntervalMs: readNumber(env.STRATIUM_TRADER_BOT_SIGNAL_REVIEW_INTERVAL_MS, 30_000)
+    },
     riskPolicy: {
       allowedSymbols,
       maxActionsPerWake: readNumber(env.STRATIUM_TRADER_BOT_MAX_ACTIONS_PER_WAKE, 3),
@@ -74,7 +83,13 @@ export const loadRunnerConfig = (
     STRATIUM_TRADER_BOT_ID: flags.botId ?? env.STRATIUM_TRADER_BOT_ID,
     STRATIUM_TRADER_BOT_MODE: flags.mode ?? env.STRATIUM_TRADER_BOT_MODE,
     STRATIUM_TRADER_BOT_PLANNER: flags.planner ?? env.STRATIUM_TRADER_BOT_PLANNER,
-    STRATIUM_TRADER_BOT_SYMBOL: flags.symbol ?? env.STRATIUM_TRADER_BOT_SYMBOL
+    STRATIUM_TRADER_BOT_SYMBOL: flags.symbol ?? env.STRATIUM_TRADER_BOT_SYMBOL,
+    STRATIUM_TRADER_BOT_WAKE_INTERVAL_MS: flags.wakeIntervalMs ?? env.STRATIUM_TRADER_BOT_WAKE_INTERVAL_MS,
+    STRATIUM_TRADER_BOT_POSITION_REVIEW_INTERVAL_MS: flags.positionReviewMs ?? env.STRATIUM_TRADER_BOT_POSITION_REVIEW_INTERVAL_MS,
+    STRATIUM_TRADER_BOT_OPEN_ORDER_REVIEW_INTERVAL_MS: flags.openOrderReviewMs ?? env.STRATIUM_TRADER_BOT_OPEN_ORDER_REVIEW_INTERVAL_MS,
+    STRATIUM_TRADER_BOT_POST_EXECUTION_REVIEW_INTERVAL_MS: flags.postExecutionReviewMs ?? env.STRATIUM_TRADER_BOT_POST_EXECUTION_REVIEW_INTERVAL_MS,
+    STRATIUM_TRADER_BOT_RISK_RETRY_INTERVAL_MS: flags.riskRetryMs ?? env.STRATIUM_TRADER_BOT_RISK_RETRY_INTERVAL_MS,
+    STRATIUM_TRADER_BOT_SIGNAL_REVIEW_INTERVAL_MS: flags.signalReviewMs ?? env.STRATIUM_TRADER_BOT_SIGNAL_REVIEW_INTERVAL_MS
   });
   const account = flags.account ?? env.STRATIUM_TRADER_BOT_ACCOUNT ?? env.STRATIUM_FRONTEND_USERNAME ?? "";
   const password = flags.password ?? env.STRATIUM_TRADER_BOT_PASSWORD ?? env.STRATIUM_FRONTEND_PASSWORD ?? "";

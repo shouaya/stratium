@@ -32,13 +32,13 @@ describe("codexPlannerInternals", () => {
   it("builds a Codex resume command when a prior session id is available", () => {
     expect(codexPlannerInternals.codexArgs(config, "prompt-body", "11111111-1111-1111-1111-111111111111", "/tmp/last-message.json")).toEqual([
       "exec",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
       "resume",
       "--json",
       "--output-last-message",
       "/tmp/last-message.json",
-      "--sandbox",
-      "read-only",
-      "--ephemeral",
       "11111111-1111-1111-1111-111111111111",
       "-"
     ]);

@@ -9,11 +9,13 @@ import { createDryRunPlanner } from "./planner/dryRunPlanner.js";
 import { createPlannerContextFromMcp } from "./runtime/contextProvider.js";
 import { createMcpExecutor } from "./runtime/mcpExecutor.js";
 import { runWakeCycle } from "./runtime/wakeCycle.js";
+import { createMarketSignalStateMemory, selectNextWakeSchedule, type TraderBotWakeIntent, type TraderBotWakeScheduleDecision } from "./runtime/wakeScheduler.js";
 import type { TraderBotMemory, TraderBotPlanner, TraderBotPlannerContext, TraderBotRunnerConfig, TraderBotWakeResult } from "./types.js";
 
 const REQUIRED_MCP_TOOLS = [
   "stratium_get_all_mids",
   "stratium_get_l2_book",
+  "stratium_get_candles",
   "stratium_get_clearinghouse_state",
   "stratium_get_open_orders",
   "stratium_place_order",
@@ -124,16 +126,16 @@ const createPlanner = (config: TraderBotRunnerConfig): TraderBotPlanner => {
   return createCodexPlanner(config);
 };
 
-const createWakeRequest = (config: TraderBotRunnerConfig): AiTraderWakeRequest => {
+const createWakeRequest = (config: TraderBotRunnerConfig, intent?: TraderBotWakeIntent): AiTraderWakeRequest => {
   const now = new Date().toISOString();
   return {
     id: `wake-${Date.now()}`,
     botId: config.botId,
     symbol: config.activeSymbol,
-    priority: "manual",
-    reasons: ["manual_admin"],
+    priority: intent?.priority ?? "manual",
+    reasons: intent?.reasons ?? ["manual_admin"],
     requestedAt: now,
-    source: "admin"
+    source: intent?.source ?? "admin"
   };
 };
 
@@ -224,10 +226,10 @@ const createWakeReport = (
   accountSnapshot: context.account
 });
 
-const runOnce = async (config: TraderBotRunnerConfig, cycle = 1) => {
-  const wakeRequest = createWakeRequest(config);
+const runOnce = async (config: TraderBotRunnerConfig, cycle = 1, intent?: TraderBotWakeIntent): Promise<TraderBotWakeScheduleDecision | undefined> => {
+  const wakeRequest = createWakeRequest(config, intent);
   const wakeStartedAt = Date.now();
-  log(`wake #${cycle} started: id=${wakeRequest.id}, bot=${config.botId}, mode=${config.mode}, planner=${config.planner}, symbol=${config.activeSymbol}`);
+  log(`wake #${cycle} started: id=${wakeRequest.id}, bot=${config.botId}, mode=${config.mode}, planner=${config.planner}, symbol=${config.activeSymbol}, reasons=${wakeRequest.reasons.join(",")}, source=${wakeRequest.source}`);
   log(`auth: logging in account=${config.account}, api=${config.apiBaseUrl}`);
   const login = await loginToStratium({
     apiBaseUrl: config.apiBaseUrl,
@@ -269,7 +271,10 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1) => {
       log
     );
     appendLastWakeSummaryMemory(context, result);
+    const nextWake = selectNextWakeSchedule(context, result);
+    upsertMemory(context, createMarketSignalStateMemory(context));
     log(`wake: planner/executor finished status=${result.status}, selected=${result.selectedCandidate?.id ?? "none"}`);
+    log(`scheduler: next=${nextWake.label}, interval=${formatDuration(nextWake.intervalMs)}, reasons=${nextWake.reasons.join(",")}`);
     log("telemetry: reporting wake to admin dashboard");
     const telemetry = await mcpClient.callTool(
       "stratium_report_trader_bot_wake",
@@ -306,6 +311,8 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1) => {
     if (result.status === "failed" || result.executionResults.some((entry) => entry.status === "failed")) {
       process.exitCode = 1;
     }
+
+    return nextWake;
   } finally {
     await mcpClient.close();
   }
@@ -316,7 +323,7 @@ const sleep = async (ms: number) => new Promise((resolve) => setTimeout(resolve,
 const main = async () => {
   const config = loadRunnerConfig(parseCliFlags());
   assertRunnerConfig(config);
-  log(`loop started: mode=${config.once ? "once" : "continuous"}, bot=${config.botId}, planner=${config.planner}, interval=${formatDuration(config.wakeIntervalMs)}`);
+  log(`loop started: mode=${config.once ? "once" : "continuous"}, bot=${config.botId}, planner=${config.planner}, heartbeat=${formatDuration(config.wakePolicy?.heartbeatIntervalMs ?? config.wakeIntervalMs)}, positionReview=${formatDuration(config.wakePolicy?.positionReviewIntervalMs ?? 60_000)}, openOrderReview=${formatDuration(config.wakePolicy?.openOrderReviewIntervalMs ?? 120_000)}`);
 
   if (config.once) {
     await runOnce(config, 1);
@@ -324,12 +331,21 @@ const main = async () => {
   }
 
   let cycle = 1;
+  let wakeIntent: TraderBotWakeIntent | undefined;
   while (true) {
-    await runOnce(config, cycle);
+    const nextWake = await runOnce(config, cycle, wakeIntent);
     cycle += 1;
-    const nextWakeAt = new Date(Date.now() + config.wakeIntervalMs).toISOString();
-    log(`waiting ${formatDuration(config.wakeIntervalMs)} before next wake; nextWakeAt=${nextWakeAt}`);
-    await sleep(config.wakeIntervalMs);
+    const intervalMs = nextWake?.intervalMs ?? config.wakePolicy?.heartbeatIntervalMs ?? config.wakeIntervalMs;
+    wakeIntent = nextWake
+      ? {
+          priority: nextWake.priority,
+          reasons: nextWake.reasons,
+          source: nextWake.source
+        }
+      : undefined;
+    const nextWakeAt = new Date(Date.now() + intervalMs).toISOString();
+    log(`waiting ${formatDuration(intervalMs)} before next wake; nextWakeAt=${nextWakeAt}; nextReasons=${wakeIntent?.reasons.join(",") ?? "manual_admin"}`);
+    await sleep(intervalMs);
   }
 };
 

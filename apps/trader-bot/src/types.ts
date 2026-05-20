@@ -21,6 +21,15 @@ export type TraderBotRiskPolicy = {
   allowOpeningOrders: boolean;
 };
 
+export type TraderBotWakePolicy = {
+  heartbeatIntervalMs: number;
+  positionReviewIntervalMs: number;
+  openOrderReviewIntervalMs: number;
+  postExecutionReviewIntervalMs: number;
+  riskRetryIntervalMs: number;
+  signalReviewIntervalMs: number;
+};
+
 export type TraderBotConfig = {
   botId: string;
   mode: AiTraderMode;
@@ -28,6 +37,7 @@ export type TraderBotConfig = {
   runtimeTarget: AiTraderRuntimeTarget;
   activeSymbol: string;
   wakeIntervalMs: number;
+  wakePolicy?: TraderBotWakePolicy;
   riskPolicy: TraderBotRiskPolicy;
 };
 
