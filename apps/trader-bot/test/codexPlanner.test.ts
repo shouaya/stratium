@@ -97,7 +97,11 @@ describe("codexPlannerInternals", () => {
         bid: 76_000,
         ask: 76_001,
         last: 76_000.5,
-        timestamp: "2026-05-19T00:00:00.000Z"
+        timestamp: "2026-05-19T00:00:00.000Z",
+        indicators: {
+          rsi: 52,
+          return5mPct: 0.02
+        }
       },
       account: {
         equity: 10_000,
@@ -173,7 +177,11 @@ describe("codexPlannerInternals", () => {
         bid: 76_000,
         ask: 76_001,
         last: 76_000.5,
-        timestamp: "2026-05-19T00:00:00.000Z"
+        timestamp: "2026-05-19T00:00:00.000Z",
+        indicators: {
+          rsi: 52,
+          return5mPct: 0.02
+        }
       },
       account: {
         equity: 10_000,
@@ -204,6 +212,75 @@ describe("codexPlannerInternals", () => {
     expect(plan.candidates[0]).toMatchObject({
       id: "codex-active-sim-market-probe",
       actions: [{ type: "place_order" }]
+    });
+  });
+
+  it("does not force an active simulation probe when the market is overextended", () => {
+    const plan = codexPlannerInternals.parseCodexPlan({
+      config: {
+        botId: "test-bot",
+        mode: "paper_execute",
+        planner: "codex",
+        runtimeTarget: "stratium_native",
+        activeSymbol: "BTC-USD",
+        wakeIntervalMs: 300_000,
+        riskPolicy: {
+          allowedSymbols: ["BTC-USD"],
+          maxActionsPerWake: 3,
+          maxOrderNotional: 100,
+          maxPositionNotional: 500,
+          requireInvalidationPrice: true,
+          allowOpeningOrders: true
+        }
+      },
+      wakeRequest: {
+        id: "wake-1",
+        botId: "test-bot",
+        symbol: "BTC-USD",
+        priority: "manual",
+        reasons: ["manual_admin"],
+        requestedAt: "2026-05-19T00:00:00.000Z",
+        source: "admin"
+      },
+      market: {
+        symbol: "BTC-USD",
+        bid: 76_000,
+        ask: 76_001,
+        last: 76_000.5,
+        timestamp: "2026-05-19T00:00:00.000Z",
+        indicators: {
+          rsi: 86,
+          return5mPct: 0.2
+        }
+      },
+      account: {
+        equity: 10_000,
+        availableMargin: 9_900,
+        currentPositionNotional: 0,
+        position: {
+          symbol: "BTC-USD",
+          side: "flat",
+          quantity: 0,
+          notional: 0
+        }
+      },
+      memories: [{ key: "state/open_orders", value: "[]" }],
+      now: "2026-05-19T00:00:00.000Z"
+    }, JSON.stringify({
+      schemaVersion: "stratium.ai-trader-plan.v1",
+      summary: "overextended wait",
+      candidates: [{
+        id: "observe",
+        thesis: "The market is too extended to chase.",
+        confidence: 0.7,
+        expectedReward: 0,
+        actions: [{ type: "observe", reason: "Wait for a reset instead of forcing a probe." }]
+      }]
+    }), () => undefined);
+
+    expect(plan.candidates[0]).toMatchObject({
+      id: "observe",
+      actions: [{ type: "observe" }]
     });
   });
 
@@ -273,7 +350,7 @@ describe("codexPlannerInternals", () => {
     });
   });
 
-  it("converts cancel_order with blank ids into active simulation feedback instead of validation fallback text", () => {
+  it("converts cancel_order with blank ids into observe instead of validation fallback text", () => {
     const plan = codexPlannerInternals.parseCodexPlan({
       config: {
         botId: "test-bot",
@@ -339,8 +416,8 @@ describe("codexPlannerInternals", () => {
 
     expect(plan.summary).not.toContain("failed validation");
     expect(plan.candidates[0]).toMatchObject({
-      id: "codex-active-sim-market-probe",
-      actions: [{ type: "place_order" }]
+      id: "cancel",
+      actions: [{ type: "observe" }]
     });
   });
 

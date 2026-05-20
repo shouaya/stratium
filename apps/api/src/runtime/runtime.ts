@@ -10,6 +10,7 @@ import {
 import { TradingRepository } from "../persistence/repository.js";
 import { bootstrapApiRuntime } from "./api-runtime-bootstrap.js";
 import { createAiTraderAdminDashboardPayload, normalizeAiTraderWakeReport } from "./ai-trader-admin-dashboard.js";
+import { createAiTraderReviewSnapshot } from "./ai-trader-review.js";
 import {
   createApiAdminStatePayload,
   createApiReplayPayload,
@@ -339,6 +340,22 @@ export class ApiRuntime {
       accountId,
       botId,
       limit: 200
+    });
+  }
+
+  async getAiTraderReview(accountId: string, botId: string, limit = 200) {
+    const resolvedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
+
+    return createAiTraderReviewSnapshot({
+      accountId,
+      botId,
+      limit: resolvedLimit,
+      reports: await this.repository.listAiTraderWakeReports({
+        accountId,
+        botId,
+        limit: resolvedLimit
+      }),
+      state: this.getEngineState(accountId)
     });
   }
 

@@ -46,6 +46,8 @@ TRADER_BOT_CODEX_PROMPT_MODE ?= stdin
 TRADER_BOT_CODEX_TIMEOUT_MS ?= 180000
 TRADER_BOT_CODEX_SESSION_MODE ?= resume
 TRADER_BOT_CODEX_SESSION_MAX_WAKES ?= 40
+TRADER_BOT_TRADE_REVIEW_INTERVAL_MS ?= 1800000
+TRADER_BOT_TRADE_REVIEW_MIN_WAKES ?= 25
 
 help:
 	@echo Stratium make targets
@@ -162,10 +164,10 @@ config: check-compose
 	$(COMPOSE_RUN) config
 
 trader-bot-run-once:
-	$(LOCAL_PNPM) --filter @stratium/trader-bot run:once -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --wake-interval-ms $(TRADER_BOT_WAKE_INTERVAL_MS) --position-review-ms $(TRADER_BOT_POSITION_REVIEW_MS) --open-order-review-ms $(TRADER_BOT_OPEN_ORDER_REVIEW_MS) --post-execution-review-ms $(TRADER_BOT_POST_EXECUTION_REVIEW_MS) --risk-retry-ms $(TRADER_BOT_RISK_RETRY_MS) --signal-review-ms $(TRADER_BOT_SIGNAL_REVIEW_MS) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES)
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run:once -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --wake-interval-ms $(TRADER_BOT_WAKE_INTERVAL_MS) --position-review-ms $(TRADER_BOT_POSITION_REVIEW_MS) --open-order-review-ms $(TRADER_BOT_OPEN_ORDER_REVIEW_MS) --post-execution-review-ms $(TRADER_BOT_POST_EXECUTION_REVIEW_MS) --risk-retry-ms $(TRADER_BOT_RISK_RETRY_MS) --signal-review-ms $(TRADER_BOT_SIGNAL_REVIEW_MS) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES) --trade-review-interval-ms $(TRADER_BOT_TRADE_REVIEW_INTERVAL_MS) --trade-review-min-wakes $(TRADER_BOT_TRADE_REVIEW_MIN_WAKES)
 
 trader-bot-run:
-	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --wake-interval-ms $(TRADER_BOT_WAKE_INTERVAL_MS) --position-review-ms $(TRADER_BOT_POSITION_REVIEW_MS) --open-order-review-ms $(TRADER_BOT_OPEN_ORDER_REVIEW_MS) --post-execution-review-ms $(TRADER_BOT_POST_EXECUTION_REVIEW_MS) --risk-retry-ms $(TRADER_BOT_RISK_RETRY_MS) --signal-review-ms $(TRADER_BOT_SIGNAL_REVIEW_MS) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES)
+	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --wake-interval-ms $(TRADER_BOT_WAKE_INTERVAL_MS) --position-review-ms $(TRADER_BOT_POSITION_REVIEW_MS) --open-order-review-ms $(TRADER_BOT_OPEN_ORDER_REVIEW_MS) --post-execution-review-ms $(TRADER_BOT_POST_EXECUTION_REVIEW_MS) --risk-retry-ms $(TRADER_BOT_RISK_RETRY_MS) --signal-review-ms $(TRADER_BOT_SIGNAL_REVIEW_MS) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES) --trade-review-interval-ms $(TRADER_BOT_TRADE_REVIEW_INTERVAL_MS) --trade-review-min-wakes $(TRADER_BOT_TRADE_REVIEW_MIN_WAKES)
 
 batch-import-hl-day:
 	$(JOB_RUNNER_CLIENT) batch-import-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)

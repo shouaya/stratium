@@ -219,6 +219,23 @@ export class StratiumHttpClient {
     });
   }
 
+  async getTraderBotReview(botId: string, limit = 200) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({
+      botId,
+      limit: String(limit)
+    });
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/trader-bot/review?${params.toString()}`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "trader-bot-review",
+      path: "/api/trader-bot/review"
+    });
+  }
+
   async toMcpResult(operation: string, response: unknown, summary?: unknown) {
     const resolvedSummary = summary ?? response;
     return {

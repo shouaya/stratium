@@ -5,6 +5,8 @@ const MEMORY_PRIORITY: Record<string, number> = {
   "runtime/codex_session/wake_count": 99,
   "runtime/codex_session/summary": 98,
   "runtime/last_wake_summary": 97,
+  "reflection/trade_review/latest": 96,
+  "runtime/trade_review/snapshot": 95,
   "state/open_orders": 90
 };
 
@@ -90,6 +92,7 @@ export const buildPrompt = (context: TraderBotPlannerContext): string => {
     "Observation is only appropriate when there is no safe setup, existing exposure needs time, or the safest action is to wait.",
     "If a simulation position is already open, decide whether to close/reduce it or hold it with a concrete reason.",
     "Use runtime/codex_session and runtime/last_wake_summary memories to continue your prior trading reasoning across wakes.",
+    "Use reflection/trade_review/latest when present; it is a periodic review of prior trades and should change behavior after repeated losses or churn.",
     "If the account is flat, no open orders exist, and paper execution is enabled, an observe-only plan should be treated as an exception.",
     "Avoid repeated observe-only wakes unless the market/account state clearly justifies waiting.",
     "Allowed schemaVersion: stratium.ai-trader-plan.v1.",

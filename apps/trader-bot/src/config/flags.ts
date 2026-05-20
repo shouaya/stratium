@@ -19,6 +19,8 @@ export type TraderBotCliFlags = {
   codexTimeoutMs?: string;
   codexSessionMode?: string;
   codexSessionMaxWakes?: string;
+  tradeReviewIntervalMs?: string;
+  tradeReviewMinWakes?: string;
   once: boolean;
 };
 
@@ -44,7 +46,9 @@ const FLAG_ALIASES: Record<string, keyof Omit<TraderBotCliFlags, "once">> = {
   "--codex-prompt-mode": "codexPromptMode",
   "--codex-timeout-ms": "codexTimeoutMs",
   "--codex-session-mode": "codexSessionMode",
-  "--codex-session-max-wakes": "codexSessionMaxWakes"
+  "--codex-session-max-wakes": "codexSessionMaxWakes",
+  "--trade-review-interval-ms": "tradeReviewIntervalMs",
+  "--trade-review-min-wakes": "tradeReviewMinWakes"
 };
 
 export const parseCliFlags = (argv: string[] = process.argv.slice(2)): TraderBotCliFlags => {

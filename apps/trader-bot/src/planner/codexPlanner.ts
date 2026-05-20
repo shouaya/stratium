@@ -91,6 +91,9 @@ const CODEX_SESSION_PROMPT_CHARS_MEMORY = "runtime/codex_session/prompt_chars";
 const CODEX_SESSION_PROMPT_TOKENS_MEMORY = "runtime/codex_session/prompt_approx_tokens";
 const CODEX_SESSION_SUMMARY_MEMORY = "runtime/codex_session/summary";
 const LAST_WAKE_SUMMARY_MEMORY = "runtime/last_wake_summary";
+const ACTIVE_SIMULATION_LAST_PROBE_AT_MEMORY = "runtime/active_simulation/last_probe_at";
+const ACTIVE_SIMULATION_LAST_PROBE_REASON_MEMORY = "runtime/active_simulation/last_probe_reason";
+const ACTIVE_SIMULATION_PROBE_COOLDOWN_MS = 15 * 60_000;
 
 const readFinalMessage = async (outputPath: string): Promise<string> => {
   try {
@@ -484,6 +487,73 @@ const tinyProbeQuantity = (context: TraderBotPlannerContext): number => {
 const observeOnly = (plan: AiTraderPlan): boolean =>
   plan.candidates.every((candidate) => candidate.actions.every((action) => action.type === "observe"));
 
+const currentTimeMs = (context: TraderBotPlannerContext): number => {
+  const time = new Date(context.now).getTime();
+  return Number.isFinite(time) ? time : Date.now();
+};
+
+const activeSimulationProbeCooldownMs = (context: TraderBotPlannerContext): number => {
+  const lastProbeAt = new Date(memoryValue(context, ACTIVE_SIMULATION_LAST_PROBE_AT_MEMORY)).getTime();
+  if (!Number.isFinite(lastProbeAt)) {
+    return 0;
+  }
+  return Math.max(0, ACTIVE_SIMULATION_PROBE_COOLDOWN_MS - (currentTimeMs(context) - lastProbeAt));
+};
+
+const activeSimulationProbeBlockReason = (context: TraderBotPlannerContext): string | undefined => {
+  const cooldownMs = activeSimulationProbeCooldownMs(context);
+  if (cooldownMs > 0) {
+    return `active simulation probe cooldown has ${Math.ceil(cooldownMs / 1000)}s remaining`;
+  }
+
+  const rsi = context.market.indicators?.rsi;
+  if (rsi === undefined || !Number.isFinite(rsi)) {
+    return "RSI is unavailable, so the probe would be blind";
+  }
+  if (rsi < 45 || rsi > 60) {
+    return `RSI ${rsi} is outside the neutral probe band 45-60`;
+  }
+
+  const return5mPct = context.market.indicators?.return5mPct;
+  if (return5mPct !== undefined && Number.isFinite(return5mPct) && Math.abs(return5mPct) > 0.12) {
+    return `5m return ${return5mPct}% is too extended for an automatic probe`;
+  }
+
+  const spreadPct = context.market.last > 0
+    ? ((context.market.ask - context.market.bid) / context.market.last) * 100
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(spreadPct) || spreadPct > 0.03) {
+    return `spread ${Number.isFinite(spreadPct) ? spreadPct.toFixed(4) : "unknown"}% is too wide for an automatic probe`;
+  }
+
+  return undefined;
+};
+
+const recordActiveSimulationProbeMemory = (
+  context: TraderBotPlannerContext,
+  candidate: AiTraderPlanCandidate
+): void => {
+  if (candidate.id !== "codex-active-sim-market-probe") {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  upsertMemory(context, {
+    key: ACTIVE_SIMULATION_LAST_PROBE_AT_MEMORY,
+    value: updatedAt,
+    importance: 0.72,
+    updatedAt,
+    source: "runtime"
+  });
+  upsertMemory(context, {
+    key: ACTIVE_SIMULATION_LAST_PROBE_REASON_MEMORY,
+    value: candidate.thesis,
+    importance: 0.55,
+    updatedAt,
+    source: "runtime"
+  });
+};
+
 const activeSimulationCandidate = (
   context: TraderBotPlannerContext,
   options: { allowPositionClose?: boolean } = {}
@@ -511,6 +581,10 @@ const activeSimulationCandidate = (
   }
 
   if (hasOpenOrders(context) || !context.config.riskPolicy.allowOpeningOrders) {
+    return undefined;
+  }
+
+  if (activeSimulationProbeBlockReason(context)) {
     return undefined;
   }
 
@@ -561,6 +635,7 @@ const applyActiveSimulationPolicy = (
   }
 
   log(`codex: observe-only plan converted by active simulation policy candidate=${candidate.id}`);
+  recordActiveSimulationProbeMemory(context, candidate);
   return {
     ...plan,
     summary: `${plan.summary} Active simulation policy added ${candidate.actions[0]?.type ?? "action"} feedback.`,
@@ -601,6 +676,7 @@ const activeSimulationFallbackPlan = (
   }
 
   log(`codex: invalid plan (${reason}); converted by active simulation policy candidate=${candidate.id}`);
+  recordActiveSimulationProbeMemory(context, candidate);
   return {
     schemaVersion: "stratium.ai-trader-plan.v1",
     summary: "Active simulation safety plan: generated a bounded feedback action after discarding malformed Codex output.",

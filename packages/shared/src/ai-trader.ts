@@ -248,3 +248,76 @@ export type AiTraderAdminDashboardPayload = {
   overview: AiTraderAdminOverview;
   profiles: AiTraderAdminBotProfile[];
 };
+
+export type AiTraderReviewSnapshot = {
+  schemaVersion: "stratium.ai-trader-review.v1";
+  botId: string;
+  accountId: string;
+  symbol: string;
+  generatedAt: string;
+  reportLimit: number;
+  firstWakeAt?: string;
+  lastWakeAt?: string;
+  wakeStats: {
+    total: number;
+    completed: number;
+    failed: number;
+    approvedActions: number;
+    rejectedActions: number;
+  };
+  orderStats: {
+    total: number;
+    open: number;
+    filled: number;
+    canceled: number;
+    rejected: number;
+    marketFilled: number;
+    limitFilled: number;
+    bySide: Record<AiTraderOrderSide, number>;
+    byType: Record<AiTraderOrderType, number>;
+    byStatus: Record<string, number>;
+  };
+  currentPosition?: {
+    symbol: string;
+    side: "long" | "short" | "flat";
+    quantity: number;
+    averageEntryPrice: number;
+    markPrice: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+  };
+  account?: {
+    equity?: number;
+    availableBalance?: number;
+    realizedPnl?: number;
+    unrealizedPnl?: number;
+  };
+  latestMarket?: {
+    last?: number;
+    timestamp?: string;
+  };
+  recentWakes: Array<{
+    wakeId: string;
+    finishedAt: string;
+    reasons: AiTraderWakeReason[];
+    summary?: string;
+    approvedActions: number;
+    rejectedActions: number;
+  }>;
+  recentOrders: Array<{
+    id: string;
+    clientOrderId?: string;
+    symbol: string;
+    side: AiTraderOrderSide;
+    orderType: AiTraderOrderType;
+    status: string;
+    quantity: number;
+    limitPrice?: number;
+    filledQuantity: number;
+    remainingQuantity: number;
+    averageFillPrice?: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  observations: string[];
+};

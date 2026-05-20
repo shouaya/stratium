@@ -23,6 +23,8 @@ describe("trader-bot config flags", () => {
       "--codex-prompt-mode", "stdin",
       "--codex-session-mode", "fresh",
       "--codex-session-max-wakes", "12",
+      "--trade-review-interval-ms", "900000",
+      "--trade-review-min-wakes", "10",
       "--once"
     ]);
 
@@ -45,6 +47,8 @@ describe("trader-bot config flags", () => {
       codexPromptMode: "stdin",
       codexSessionMode: "fresh",
       codexSessionMaxWakes: "12",
+      tradeReviewIntervalMs: "900000",
+      tradeReviewMinWakes: "10",
       once: true
     });
   });
@@ -79,7 +83,9 @@ describe("trader-bot config flags", () => {
       codexPromptMode: "stdin",
       codexTimeoutMs: 180_000,
       codexSessionMode: "resume",
-      codexSessionMaxWakes: 40
+      codexSessionMaxWakes: 40,
+      tradeReviewIntervalMs: 1_800_000,
+      tradeReviewMinWakes: 25
     });
   });
 });

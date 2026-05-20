@@ -8,6 +8,7 @@ import { createCodexPlanner } from "./planner/codexPlanner.js";
 import { createDryRunPlanner } from "./planner/dryRunPlanner.js";
 import { createPlannerContextFromMcp } from "./runtime/contextProvider.js";
 import { createMcpExecutor } from "./runtime/mcpExecutor.js";
+import { createTradeReviewMemories, normalizeTradeReviewSnapshot, shouldRefreshTradeReview } from "./runtime/tradeReview.js";
 import { runWakeCycle } from "./runtime/wakeCycle.js";
 import { createMarketSignalStateMemory, selectNextWakeSchedule, type TraderBotWakeIntent, type TraderBotWakeScheduleDecision } from "./runtime/wakeScheduler.js";
 import type { TraderBotMemory, TraderBotPlanner, TraderBotPlannerContext, TraderBotRunnerConfig, TraderBotWakeResult } from "./types.js";
@@ -22,7 +23,8 @@ const REQUIRED_MCP_TOOLS = [
   "stratium_cancel_order",
   "stratium_cancel_order_by_cloid",
   "stratium_report_trader_bot_wake",
-  "stratium_list_trader_bot_memories"
+  "stratium_list_trader_bot_memories",
+  "stratium_get_trader_bot_review"
 ];
 
 const log = (message: string) => {
@@ -79,6 +81,34 @@ const upsertMemory = (context: TraderBotPlannerContext, memory: TraderBotMemory)
     return;
   }
   context.memories.push(memory);
+};
+
+const maybeAppendTradeReviewMemories = async (
+  input: {
+    config: TraderBotRunnerConfig;
+    context: TraderBotPlannerContext;
+    mcpClient: Awaited<ReturnType<typeof createTraderMcpClient>>;
+  }
+): Promise<boolean> => {
+  if (!shouldRefreshTradeReview(input.context, input.config)) {
+    return false;
+  }
+
+  const result = await input.mcpClient.callTool("stratium_get_trader_bot_review", {
+    botId: input.config.botId,
+    limit: 200
+  });
+  const review = normalizeTradeReviewSnapshot(result.raw ?? result.summary ?? result);
+
+  if (!review) {
+    return false;
+  }
+
+  for (const memory of createTradeReviewMemories(input.context, review)) {
+    upsertMemory(input.context, memory);
+  }
+
+  return true;
 };
 
 const appendLastWakeSummaryMemory = (
@@ -260,6 +290,13 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1, intent?: Trader
       memories: persistedMemories
     });
     log(`context: ready (${Date.now() - contextStartedAt}ms), market=${context.market.symbol} last=${context.market.last}, equity=${context.account.equity}, position=${positionSummary(context)}, memories=${context.memories.length}`);
+    log(`review: checking periodic trade review interval=${formatDuration(config.tradeReviewIntervalMs)}, minWakes=${config.tradeReviewMinWakes}`);
+    const reviewRecorded = await maybeAppendTradeReviewMemories({
+      config,
+      context,
+      mcpClient
+    });
+    log(`review: ${reviewRecorded ? "updated reflection memory" : "not due"}`);
     const result = await runWakeCycle(
       context,
       createPlanner(config),

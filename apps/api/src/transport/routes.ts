@@ -574,6 +574,30 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     };
   });
 
+  app.get("/api/admin/bots/:botId/review", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const params = request.params as { botId: string };
+    const query = request.query as { accountId?: string; limit?: string };
+    const reports = await runtime.listAiTraderWakeReports(params.botId);
+    const accountId = query.accountId?.trim() || reports[0]?.accountId;
+    const limit = Number(query.limit ?? 200);
+
+    if (!accountId) {
+      return reply.code(404).send({
+        status: "not_found",
+        message: "No trader bot account was found for this bot id."
+      });
+    }
+
+    return {
+      botId: params.botId,
+      review: await runtime.getAiTraderReview(accountId, params.botId, Number.isFinite(limit) ? limit : 200)
+    };
+  });
+
   app.post("/api/trader-bot/wakes", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
@@ -616,6 +640,30 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     return {
       botId,
       memories: await runtime.listAiTraderMemories(accountId, botId)
+    };
+  });
+
+  app.get("/api/trader-bot/review", async (request, reply) => {
+    const session = requireRole(request, reply, "frontend");
+    if (!session) {
+      return;
+    }
+
+    const accountId = session.user.tradingAccountId;
+    const query = request.query as { botId?: string; limit?: string };
+    const botId = query.botId?.trim();
+    const limit = Number(query.limit ?? 200);
+
+    if (!accountId || !botId) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "Trader bot review requires a botId and authenticated trading account."
+      });
+    }
+
+    return {
+      botId,
+      review: await runtime.getAiTraderReview(accountId, botId, Number.isFinite(limit) ? limit : 200)
     };
   });
 

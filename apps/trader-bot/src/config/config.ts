@@ -105,6 +105,14 @@ export const loadRunnerConfig = (
     flags.codexSessionMaxWakes ?? env.STRATIUM_TRADER_BOT_CODEX_SESSION_MAX_WAKES,
     readNumber(env.CODEX_SESSION_MAX_WAKES, 40)
   );
+  const tradeReviewIntervalMs = readNumber(
+    flags.tradeReviewIntervalMs ?? env.STRATIUM_TRADER_BOT_TRADE_REVIEW_INTERVAL_MS,
+    1_800_000
+  );
+  const tradeReviewMinWakes = readNumber(
+    flags.tradeReviewMinWakes ?? env.STRATIUM_TRADER_BOT_TRADE_REVIEW_MIN_WAKES,
+    25
+  );
 
   return {
     ...base,
@@ -122,7 +130,9 @@ export const loadRunnerConfig = (
     codexPromptMode: parseCodexPromptMode(flags.codexPromptMode ?? env.STRATIUM_TRADER_BOT_CODEX_PROMPT_MODE ?? env.CODEX_CLI_PROMPT_MODE),
     codexTimeoutMs,
     codexSessionMode: parseCodexSessionMode(flags.codexSessionMode ?? env.STRATIUM_TRADER_BOT_CODEX_SESSION_MODE ?? env.CODEX_SESSION_MODE),
-    codexSessionMaxWakes: Math.max(1, Math.floor(codexSessionMaxWakes))
+    codexSessionMaxWakes: Math.max(1, Math.floor(codexSessionMaxWakes)),
+    tradeReviewIntervalMs: Math.max(60_000, Math.floor(tradeReviewIntervalMs)),
+    tradeReviewMinWakes: Math.max(1, Math.floor(tradeReviewMinWakes))
   };
 };
 

@@ -101,5 +101,15 @@ export const infoToolDefinitions: ClientToolDefinition[] = [
       botId: z.string().min(1)
     },
     run: (client, { botId }) => client.listTraderBotMemories(botId)
+  },
+  {
+    name: "stratium_get_trader_bot_review",
+    title: "Get Trader Bot Review",
+    description: "Return a compact review snapshot of recent wakes, orders, position, and performance for a trader bot.",
+    inputSchema: {
+      botId: z.string().min(1),
+      limit: z.number().int().positive().max(500).default(200)
+    },
+    run: (client, { botId, limit }) => client.getTraderBotReview(botId, limit)
   }
 ];

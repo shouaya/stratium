@@ -53,6 +53,8 @@ export type TraderBotRunnerConfig = TraderBotConfig & {
   codexTimeoutMs: number;
   codexSessionMode: TraderBotCodexSessionMode;
   codexSessionMaxWakes: number;
+  tradeReviewIntervalMs: number;
+  tradeReviewMinWakes: number;
 };
 
 export type TraderBotMarketSnapshot = {

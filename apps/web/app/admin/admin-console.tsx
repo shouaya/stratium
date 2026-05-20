@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
-import type { AiTraderAdminBotProfile, AiTraderAdminDashboardPayload, AiTraderWakeReport } from "@stratium/shared";
+import type { AiTraderAdminBotProfile, AiTraderAdminDashboardPayload, AiTraderPlanAction, AiTraderReviewSnapshot, AiTraderWakeReport } from "@stratium/shared";
 import { authHeaders, type AppLocale, type AuthUser, type PlatformSettings } from "../auth-client";
 import { APP_LOCALES, getUiText, LOCALE_LABELS } from "../i18n";
 import { formatTokyoDateTime } from "../time";
@@ -87,6 +87,88 @@ const ADMIN_SECTION_PATHS: Record<AdminMenu, string> = {
 };
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
 const DEFAULT_EXCHANGE = "hyperliquid";
+const SIM_INITIAL_EQUITY = 10_000;
+
+type ChartPoint = {
+  label: string;
+  value: number;
+  detail?: string;
+};
+
+type BarPoint = {
+  label: string;
+  value: number;
+  tone?: "good" | "bad" | "neutral";
+};
+
+const finite = (value?: number | null): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const sortWakesAsc = (wakes: AiTraderWakeReport[]) =>
+  [...wakes].sort((left, right) =>
+    new Date(left.finishedAt).getTime() - new Date(right.finishedAt).getTime()
+    || left.wakeId.localeCompare(right.wakeId)
+  );
+
+const buildBotPnlPoints = (wakes: AiTraderWakeReport[]): ChartPoint[] =>
+  sortWakesAsc(wakes)
+    .flatMap((wake) => {
+      const equity = wake.accountSnapshot?.equity;
+      if (!finite(equity)) {
+        return [];
+      }
+
+      return [{
+        label: stamp(wake.finishedAt),
+        value: Number((equity - SIM_INITIAL_EQUITY).toFixed(6)),
+        detail: wake.planSummary ?? wake.selectedCandidateId ?? wake.wakeId
+      }];
+    });
+
+const buildBotActionMix = (wakes: AiTraderWakeReport[]): BarPoint[] => {
+  const counts = new Map<string, number>();
+
+  for (const wake of wakes) {
+    for (const execution of wake.executionResults) {
+      counts.set(execution.actionType, (counts.get(execution.actionType) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 8)
+    .map(([label, value]) => ({
+      label,
+      value,
+      tone: label === "observe" ? "neutral" : label.includes("close") || label.includes("reduce") ? "bad" : "good"
+    }));
+};
+
+const buildBotStatusMix = (review: AiTraderReviewSnapshot | null): BarPoint[] =>
+  review
+    ? Object.entries(review.orderStats.byStatus)
+      .sort((left, right) => right[1] - left[1])
+      .map(([label, value]) => ({
+        label,
+        value,
+        tone: label === "FILLED" ? "good" : label === "CANCELED" ? "neutral" : label === "REJECTED" ? "bad" : "neutral"
+      }))
+    : [];
+
+const actionTone = (status: string): "good" | "bad" | "neutral" =>
+  status === "executed" ? "good" : status === "failed" || status === "rejected" ? "bad" : "neutral";
+
+const orderTone = (status: string): "good" | "bad" | "neutral" =>
+  status === "FILLED" ? "good" : status === "REJECTED" ? "bad" : "neutral";
+
+const botHealthTone = (health: AiTraderAdminBotProfile["health"]): "good" | "bad" | "neutral" =>
+  health === "running" ? "good" : health === "failed" ? "bad" : "neutral";
+
+const riskTone = (riskState: AiTraderAdminBotProfile["riskState"]): "good" | "bad" | "neutral" =>
+  riskState === "normal" ? "good" : riskState === "limited" || riskState === "blocked" ? "bad" : "neutral";
+
+const memorySourceTone = (source?: AiTraderWakeReport["memories"][number]["source"]): "good" | "bad" | "neutral" =>
+  source === "reflection" || source === "strategy_package" ? "good" : "neutral";
 
 export function AdminConsole({
   apiBaseUrl,
@@ -116,6 +198,7 @@ export function AdminConsole({
   const [runningJobs, setRunningJobs] = useState<RunningBatchJob[]>([]);
   const [botDashboard, setBotDashboard] = useState<AiTraderAdminDashboardPayload | null>(null);
   const [botWakes, setBotWakes] = useState<AiTraderWakeReport[]>([]);
+  const [botReview, setBotReview] = useState<AiTraderReviewSnapshot | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [tickForm, setTickForm] = useState({ symbol: "BTC-USD", bid: "", ask: "", last: "", spread: "" });
   const [newUserForm, setNewUserForm] = useState({ username: "", displayName: "", password: "" });
@@ -152,6 +235,9 @@ export function AdminConsole({
     () => selectedBot ? botWakes.find((wake) => wake.botId === selectedBot.botId) ?? botWakes[0] ?? null : null,
     [botWakes, selectedBot]
   );
+  const botPnlPoints = useMemo(() => buildBotPnlPoints(botWakes), [botWakes]);
+  const botActionMix = useMemo(() => buildBotActionMix(botWakes), [botWakes]);
+  const botStatusMix = useMemo(() => buildBotStatusMix(botReview), [botReview]);
   const refreshJobId: BatchJobDefinition["id"] = "batch-refresh-hl-day";
   const switchSymbolJobId: BatchJobDefinition["id"] = "batch-switch-active-symbol";
   const visibleJobs = useMemo(
@@ -369,6 +455,30 @@ export function AdminConsole({
     return true;
   };
 
+  const loadBotReview = async (botId: string, accountId?: string) => {
+    const params = new URLSearchParams({
+      limit: "200",
+      ...(accountId ? { accountId } : {})
+    });
+    const payload = await fetchJson<{ botId: string; review: AiTraderReviewSnapshot }>(`/api/admin/bots/${encodeURIComponent(botId)}/review?${params.toString()}`);
+
+    if (!payload) {
+      return false;
+    }
+
+    setBotReview(payload.review);
+    return true;
+  };
+
+  const loadSelectedBotAnalytics = async (botId: string, accountId?: string) => {
+    const [wakesLoaded, reviewLoaded] = await Promise.all([
+      loadBotWakes(botId),
+      loadBotReview(botId, accountId)
+    ]);
+
+    return wakesLoaded && reviewLoaded;
+  };
+
   const loadBotDashboard = async () => {
     const payload = await fetchJson<AiTraderAdminDashboardPayload>("/api/admin/bots/dashboard");
 
@@ -385,10 +495,12 @@ export function AdminConsole({
 
     if (!nextBotId) {
       setBotWakes([]);
+      setBotReview(null);
       return true;
     }
 
-    return loadBotWakes(nextBotId);
+    const nextProfile = payload.profiles.find((profile) => profile.botId === nextBotId);
+    return loadSelectedBotAnalytics(nextBotId, nextProfile?.accountId);
   };
 
   const refreshCurrentSection = async () => {
@@ -603,7 +715,8 @@ export function AdminConsole({
 
   const selectBot = async (botId: string) => {
     setSelectedBotId(botId);
-    await loadBotWakes(botId);
+    const profile = botDashboard?.profiles.find((entry) => entry.botId === botId);
+    await loadSelectedBotAnalytics(botId, profile?.accountId);
   };
 
   const menuLabel = (item: AdminMenu) => ({
@@ -958,62 +1071,139 @@ export function AdminConsole({
             <div style={{ color: "#7e97a5" }}>{ui.admin.noBots}</div>
           </section>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 0.95fr) minmax(0, 1.05fr)", gap: 16 }}>
-            <section style={panel}>
-              <div style={panelTitle}>{ui.admin.botProfiles}</div>
-              <div style={{ display: "grid", gap: 12 }}>
-                {profiles.map((profile) => (
-                  <button
-                    key={profile.botId}
-                    onClick={() => void selectBot(profile.botId)}
-                    style={{
-                      ...botCardButton,
-                      borderColor: profile.botId === selectedBot?.botId ? "#1f8a65" : "#16262f",
-                      background: profile.botId === selectedBot?.botId ? "rgba(31, 138, 101, 0.16)" : "#0d1a21"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                      <div>
-                        <strong>{profile.name}</strong>
-                        <div style={{ marginTop: 4, color: "#8ba1ad", fontSize: 12 }}>{profile.botId}</div>
+          <div style={{ display: "grid", gap: 16 }}>
+            <section style={botTabsPanel}>
+              <div style={splitPanelTitle}>
+                <div>
+                  <div style={panelTitle}>{ui.admin.botProfiles}</div>
+                  <div style={subtleText}>Switch the active trader bot; analytics below follow the selected tab.</div>
+                </div>
+                <span style={pill("neutral")}>{profiles.length} bots</span>
+              </div>
+              <div style={botTabsScroller}>
+                {profiles.map((profile) => {
+                  const isSelected = profile.botId === selectedBot?.botId;
+                  const healthTone = botHealthTone(profile.health);
+
+                  return (
+                    <button
+                      key={profile.botId}
+                      onClick={() => void selectBot(profile.botId)}
+                      style={isSelected ? botTabButtonActive : botTabButton}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.name}</strong>
+                          <div style={{ marginTop: 4, color: "#8ba1ad", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.botId}</div>
+                        </div>
+                        <span style={pill(healthTone)}>{profile.health}</span>
                       </div>
-                      <span style={{ color: profile.health === "failed" ? "#fca5a5" : profile.health === "disabled" ? "#94a3b8" : "#86efac", fontSize: 12 }}>
-                        {profile.health}
-                      </span>
-                    </div>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <StatusRow label={ui.admin.tradingAccountId} value={profile.accountId} />
-                      <StatusRow label={ui.admin.symbol} value={profile.symbol} />
-                      <StatusRow label={ui.admin.position} value={botPosition(profile)} />
-                      <StatusRow label={ui.admin.botScore} value={botScore(profile.lastScore)} />
-                      <StatusRow label={ui.admin.memoryCount} value={String(profile.memoryCount ?? 0)} />
-                    </div>
-                  </button>
-                ))}
+                      <div style={botTabMetaGrid}>
+                        <span>{profile.symbol}</span>
+                        <span>{profile.mode}</span>
+                        <span>{botPosition(profile)}</span>
+                        <span>score {botScore(profile.lastScore)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </section>
 
             <div style={{ display: "grid", gap: 16 }}>
               <section style={panel}>
-                <div style={panelTitle}>{ui.admin.botStatus}</div>
+                <div style={splitPanelTitle}>
+                  <div>
+                    <div style={panelTitle}>PnL Curve</div>
+                    <div style={subtleText}>Equity delta from the simulation baseline across recorded wakes.</div>
+                  </div>
+                  <span style={pill((botPnlPoints.at(-1)?.value ?? 0) >= 0 ? "good" : "bad")}>
+                    {fmt(botPnlPoints.at(-1)?.value ?? 0, 4)}
+                  </span>
+                </div>
+                <LineChart points={botPnlPoints} height={220} />
+              </section>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+                <section style={panel}>
+                  <div style={panelTitle}>Order Flow</div>
+                  {botReview ? (
+                    <div style={stack}>
+                      <div style={miniMetricGrid}>
+                        <MiniMetric label="Filled" value={String(botReview.orderStats.filled)} tone="good" />
+                        <MiniMetric label="Open" value={String(botReview.orderStats.open)} />
+                        <MiniMetric label="Canceled" value={String(botReview.orderStats.canceled)} tone="neutral" />
+                        <MiniMetric label="Market" value={String(botReview.orderStats.marketFilled)} tone={botReview.orderStats.marketFilled > botReview.orderStats.limitFilled ? "bad" : "neutral"} />
+                      </div>
+                      <BarChart items={botStatusMix} />
+                    </div>
+                  ) : (
+                    <EmptyState text="No review snapshot yet." />
+                  )}
+                </section>
+
+                <section style={panel}>
+                  <div style={panelTitle}>Action Mix</div>
+                  {botActionMix.length > 0 ? (
+                    <BarChart items={botActionMix} />
+                  ) : (
+                    <EmptyState text="No execution actions yet." />
+                  )}
+                </section>
+              </div>
+
+              <section style={panel}>
+                <div style={splitPanelTitle}>
+                  <div>
+                    <div style={panelTitle}>{ui.admin.botStatus}</div>
+                    <div style={subtleText}>Runtime, exposure, wake cadence, and current risk posture.</div>
+                  </div>
+                  {selectedBot ? <span style={pill(botHealthTone(selectedBot.health))}>{selectedBot.health}</span> : null}
+                </div>
                 {selectedBot ? (
                   <div style={stack}>
-                    <StatusRow label={ui.admin.status} value={selectedBot.health} />
-                    <StatusRow label={ui.admin.mode} value={selectedBot.mode} />
-                    <StatusRow label={ui.admin.runtimeTarget} value={selectedBot.runtimeTarget} />
-                    <StatusRow label={ui.admin.executionTarget} value={selectedBot.executionTarget} />
-                    <StatusRow label={ui.admin.riskState} value={selectedBot.riskState} />
-                    <StatusRow label={ui.admin.accountEquity} value={fmt(selectedBot.equity, 2)} />
-                    <StatusRow label={ui.admin.dailyPnl} value={fmt(selectedBot.dailyPnl, 2)} />
-                    <StatusRow label={ui.admin.drawdown} value={`${fmt(selectedBot.drawdownPct, 2)}%`} />
-                    <StatusRow label={ui.admin.openOrders} value={String(selectedBot.openOrders)} />
-                    <StatusRow label={ui.admin.lastWake} value={stamp(selectedBot.lastWakeAt ?? undefined)} />
-                    <StatusRow label={ui.admin.nextWake} value={stamp(selectedBot.nextWakeAt ?? undefined)} />
-                    <StatusRow label={ui.admin.wakeReasons} value={selectedBot.lastWakeReasons.length > 0 ? selectedBot.lastWakeReasons.join(", ") : "-"} />
-                    <StatusRow label={ui.admin.currentStrategy} value={selectedBot.strategySummary ?? "-"} />
-                    <StatusRow label={ui.admin.currentPlan} value={selectedBot.planSummary ?? "-"} />
-                    <StatusRow label={ui.admin.botScore} value={botScore(selectedBot.lastScore)} />
-                    <StatusRow label={ui.admin.memoryCount} value={String(selectedBot.memoryCount ?? 0)} />
+                    <div style={botStatusHero}>
+                      <div style={{ minWidth: 0 }}>
+                        <strong style={{ fontSize: 18 }}>{selectedBot.name}</strong>
+                        <div style={{ marginTop: 5, color: "#8aa0ac", fontSize: 12 }}>{selectedBot.botId} · {selectedBot.accountId}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        <span style={pill(selectedBot.mode === "paper_execute" ? "good" : "neutral")}>{selectedBot.mode}</span>
+                        <span style={pill(riskTone(selectedBot.riskState))}>{selectedBot.riskState}</span>
+                      </div>
+                    </div>
+                    <div style={botKpiGrid}>
+                      <MiniMetric label={ui.admin.accountEquity} value={fmt(selectedBot.equity, 2)} tone="good" />
+                      <MiniMetric label={ui.admin.dailyPnl} value={fmt(selectedBot.dailyPnl, 2)} tone={(selectedBot.dailyPnl ?? 0) >= 0 ? "good" : "bad"} />
+                      <MiniMetric label={ui.admin.drawdown} value={`${fmt(selectedBot.drawdownPct, 2)}%`} tone={(selectedBot.drawdownPct ?? 0) > 0 ? "bad" : "neutral"} />
+                      <MiniMetric label={ui.admin.openOrders} value={String(selectedBot.openOrders)} tone={selectedBot.openOrders > 0 ? "neutral" : "good"} />
+                    </div>
+                    <div style={botStatusGrid}>
+                      <div style={botStatusCell}>
+                        <div style={statusLabel}>{ui.admin.position}</div>
+                        <strong>{botPosition(selectedBot)}</strong>
+                      </div>
+                      <div style={botStatusCell}>
+                        <div style={statusLabel}>{ui.admin.botScore}</div>
+                        <strong>{botScore(selectedBot.lastScore)}</strong>
+                      </div>
+                      <div style={botStatusCell}>
+                        <div style={statusLabel}>{ui.admin.lastWake}</div>
+                        <strong>{stamp(selectedBot.lastWakeAt ?? undefined)}</strong>
+                      </div>
+                      <div style={botStatusCell}>
+                        <div style={statusLabel}>{ui.admin.nextWake}</div>
+                        <strong>{stamp(selectedBot.nextWakeAt ?? undefined)}</strong>
+                      </div>
+                      <div style={{ ...botStatusCell, gridColumn: "1 / -1" }}>
+                        <div style={statusLabel}>{ui.admin.wakeReasons}</div>
+                        <div style={chipWrap}>
+                          {(selectedBot.lastWakeReasons.length > 0 ? selectedBot.lastWakeReasons : ["-"]).map((reason) => (
+                            <span key={reason} style={miniChip}>{reason}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div style={{ color: "#7e97a5" }}>{ui.admin.noBots}</div>
@@ -1021,20 +1211,56 @@ export function AdminConsole({
               </section>
 
               <section style={panel}>
-                <div style={panelTitle}>{ui.admin.botIntelligence}</div>
+                <div style={splitPanelTitle}>
+                  <div>
+                    <div style={panelTitle}>{ui.admin.botIntelligence}</div>
+                    <div style={subtleText}>Current thesis, selected plan, score, and candidate actions.</div>
+                  </div>
+                  {selectedBotWake?.score ? <span style={pill((selectedBotWake.score.totalScore ?? 0) >= 0.7 ? "good" : "neutral")}>score {botScore(selectedBotWake.score)}</span> : null}
+                </div>
                 {selectedBotWake ? (
                   <div style={stack}>
-                    <StatusRow label={ui.admin.currentStrategy} value={selectedBotWake.strategySnapshot?.name ?? "-"} />
-                    <StatusRow label={ui.admin.strategySummary} value={selectedBotWake.strategySnapshot?.summary ?? "-"} />
-                    <StatusRow label={ui.admin.currentPlan} value={selectedBotWake.planSummary ?? selectedBotWake.plan?.summary ?? "-"} />
-                    <StatusRow label={ui.admin.planCandidates} value={String(selectedBotWake.plan?.candidates.length ?? 0)} />
-                    <StatusRow label={ui.admin.botScore} value={botScore(selectedBotWake.score)} />
-                    <StatusRow label={ui.admin.scoreDetails} value={botScoreDetail(selectedBotWake.score)} />
-                    {selectedBotWake.strategySnapshot?.thesis ? (
-                      <pre style={consoleBlock}>{selectedBotWake.strategySnapshot.thesis}</pre>
-                    ) : null}
-                    {selectedBotWake.plan ? (
-                      <pre style={consoleBlock}>{JSON.stringify(selectedBotWake.plan, null, 2)}</pre>
+                    <div style={intelligenceHero}>
+                      <div>
+                        <div style={statusLabel}>{ui.admin.currentStrategy}</div>
+                        <strong>{selectedBotWake.strategySnapshot?.name ?? "-"}</strong>
+                      </div>
+                      <div style={scoreStrip}>
+                        <span>{ui.admin.confidence}: {fmt(selectedBotWake.score?.confidence, 3)}</span>
+                        <span>{ui.admin.riskState}: {fmt(selectedBotWake.score?.riskScore, 3)}</span>
+                        <span>{ui.admin.executionResults}: {fmt(selectedBotWake.score?.executionScore, 3)}</span>
+                      </div>
+                    </div>
+                    <div style={strategyPanel}>
+                      <div style={timelineSectionLabel}>{ui.admin.strategySummary}</div>
+                      <div style={strategyText}>{selectedBotWake.strategySnapshot?.summary ?? "-"}</div>
+                      {selectedBotWake.strategySnapshot?.thesis ? (
+                        <div style={thesisBlock}>{selectedBotWake.strategySnapshot.thesis}</div>
+                      ) : null}
+                    </div>
+                    <div style={strategyPanel}>
+                      <div style={timelineSectionLabel}>{ui.admin.currentPlan}</div>
+                      <div style={strategyText}>{selectedBotWake.planSummary ?? selectedBotWake.plan?.summary ?? "-"}</div>
+                    </div>
+                    {selectedBotWake.plan?.candidates.length ? (
+                      <div style={candidateGrid}>
+                        {selectedBotWake.plan.candidates.slice(0, 3).map((candidate) => (
+                          <div key={candidate.id} style={candidateCard}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <strong>{candidate.id}</strong>
+                              <span style={pill(candidate.id === selectedBotWake.selectedCandidateId ? "good" : "neutral")}>
+                                {candidate.confidence == null ? "-" : fmt(candidate.confidence, 2)}
+                              </span>
+                            </div>
+                            <div style={{ color: "#b9d0dc", fontSize: 12, lineHeight: 1.45 }}>{compactText(candidate.thesis, 220)}</div>
+                            <div style={chipWrap}>
+                              {candidate.actions.map((action, index) => (
+                                <span key={`${candidate.id}:${index}:${action.type}`} style={miniChip}>{actionTitle(action)}</span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     ) : (
                       <div style={{ color: "#7e97a5" }}>{ui.admin.noBotPlan}</div>
                     )}
@@ -1045,17 +1271,32 @@ export function AdminConsole({
               </section>
 
               <section style={panel}>
-                <div style={panelTitle}>{ui.admin.botMemories}</div>
+                <div style={splitPanelTitle}>
+                  <div>
+                    <div style={panelTitle}>{ui.admin.botMemories}</div>
+                    <div style={subtleText}>Persisted context carried into future wakes.</div>
+                  </div>
+                  <span style={pill("neutral")}>{selectedBotWake?.memories.length ?? 0} memories</span>
+                </div>
                 {selectedBotWake?.memories.length ? (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    {selectedBotWake.memories.slice(0, 8).map((memory) => (
-                      <div key={`${memory.key}:${memory.updatedAt ?? ""}`} style={userCard}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                          <strong>{memory.key}</strong>
-                          <span style={{ color: "#8ba1ad", fontSize: 12 }}>{memory.importance == null ? "-" : fmt(memory.importance, 2)}</span>
+                  <div style={memoryGrid}>
+                    {selectedBotWake.memories.slice(0, 10).map((memory) => (
+                      <div key={`${memory.key}:${memory.updatedAt ?? ""}`} style={memoryCard}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{memoryTitle(memory.key)}</strong>
+                            <div style={{ color: "#7e97a5", fontSize: 11, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{memory.key}</div>
+                          </div>
+                          <span style={pill(memorySourceTone(memory.source))}>{memory.source ?? "runtime"}</span>
                         </div>
-                        <div style={{ color: "#b9d0dc", fontSize: 13 }}>{memory.value}</div>
-                        <div style={{ color: "#7e97a5", fontSize: 12 }}>{memory.source ?? "runtime"} · {stamp(memory.updatedAt)}</div>
+                        <div style={memoryBody}>{compactJsonMemory(memory.key, memory.value)}</div>
+                        <div style={importanceTrack}>
+                          <div style={{ ...importanceFill, width: `${Math.max(4, Math.min(100, (memory.importance ?? 0) * 100))}%` }} />
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, color: "#7e97a5", fontSize: 12 }}>
+                          <span>{memory.importance == null ? "importance -" : `importance ${fmt(memory.importance, 2)}`}</span>
+                          <span>{stamp(memory.updatedAt)}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1069,29 +1310,22 @@ export function AdminConsole({
                 {botWakes.length === 0 ? (
                   <div style={{ color: "#7e97a5" }}>{ui.admin.noBotWakes}</div>
                 ) : (
-                  <div style={{ display: "grid", gap: 12 }}>
-                    {botWakes.slice(0, 8).map((wake) => (
-                      <div key={wake.wakeId} style={userCard}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                          <div>
-                            <strong>{wake.status}</strong>
-                            <div style={{ marginTop: 4, color: "#8ba1ad", fontSize: 12 }}>{wake.wakeId}</div>
-                          </div>
-                          <span style={{ color: wake.status === "failed" ? "#fca5a5" : "#86efac", fontSize: 12 }}>{stamp(wake.finishedAt)}</span>
-                        </div>
-                        <div style={stack}>
-                          <StatusRow label={ui.admin.selectedCandidate} value={wake.selectedCandidateId ?? "-"} />
-                          <StatusRow label={ui.admin.botScore} value={botScore(wake.score)} />
-                          <StatusRow label={ui.admin.currentPlan} value={wake.planSummary ?? wake.plan?.summary ?? "-"} />
-                          <StatusRow label={ui.admin.memoryCount} value={String(wake.memories.length)} />
-                          <StatusRow label={ui.admin.approvedActions} value={String(wake.approvedActions)} />
-                          <StatusRow label={ui.admin.rejectedActions} value={String(wake.rejectedActions)} />
-                          <StatusRow label={ui.admin.executionResults} value={wake.executionResults.map((entry) => `${entry.actionType}:${entry.status}`).join(", ") || "-"} />
-                        </div>
-                        {wake.errors.length > 0 ? <pre style={consoleBlockError}>{wake.errors.join("\n")}</pre> : null}
-                      </div>
-                    ))}
+                  <WakeTimeline wakes={botWakes.slice(0, 18)} orders={botReview?.recentOrders ?? []} botScore={botScore} />
+                )}
+              </section>
+
+              <section style={panel}>
+                <div style={splitPanelTitle}>
+                  <div>
+                    <div style={panelTitle}>Historical Orders</div>
+                    <div style={subtleText}>Recent AI orders from the simulation engine.</div>
                   </div>
+                  <span style={pill("neutral")}>{botReview?.recentOrders.length ?? 0} rows</span>
+                </div>
+                {botReview?.recentOrders.length ? (
+                  <OrderHistoryTable orders={botReview.recentOrders} />
+                ) : (
+                  <EmptyState text="No AI order history yet." />
                 )}
               </section>
             </div>
@@ -1268,6 +1502,406 @@ function MetricCard({
   );
 }
 
+function EmptyState({ text }: { text: string }) {
+  return <div style={{ color: "#7e97a5", padding: "24px 0" }}>{text}</div>;
+}
+
+function MiniMetric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" | "neutral" }) {
+  return (
+    <div style={miniMetricCard}>
+      <div style={{ color: "#7e97a5", fontSize: 11 }}>{label}</div>
+      <div style={{ color: toneColor(tone), fontSize: 20, fontWeight: 700, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+function LineChart({ points, height }: { points: ChartPoint[]; height: number }) {
+  const width = 720;
+  const padding = 34;
+  const plotWidth = width - padding * 2;
+  const plotHeight = height - padding * 2;
+  const values = points.map((point) => point.value);
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const spread = maxValue - minValue || 1;
+  const xFor = (index: number) => padding + (points.length <= 1 ? plotWidth / 2 : (plotWidth * index) / (points.length - 1));
+  const yFor = (value: number) => padding + plotHeight - ((value - minValue) / spread) * plotHeight;
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${xFor(index).toFixed(2)} ${yFor(point.value).toFixed(2)}`).join(" ");
+  const zeroY = yFor(0);
+  const latest = points.at(-1);
+
+  if (points.length === 0) {
+    return <EmptyState text="No PnL points yet." />;
+  }
+
+  return (
+    <div style={{ width: "100%", height, position: "relative" }}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="PnL curve" style={{ width: "100%", height: "100%", display: "block" }}>
+        <rect x={0} y={0} width={width} height={height} rx={8} fill="#091217" />
+        {[0, 1, 2, 3].map((line) => {
+          const y = padding + (plotHeight * line) / 3;
+          return <line key={line} x1={padding} x2={width - padding} y1={y} y2={y} stroke="#152833" strokeWidth={1} />;
+        })}
+        <line x1={padding} x2={width - padding} y1={zeroY} y2={zeroY} stroke="#3b4a53" strokeWidth={1.2} strokeDasharray="5 6" />
+        <path d={linePath} fill="none" stroke={latest && latest.value >= 0 ? "#5ee08b" : "#fb7185"} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+        {points.map((point, index) => {
+          if (points.length > 40 && index % Math.ceil(points.length / 28) !== 0 && index !== points.length - 1) {
+            return null;
+          }
+          return <circle key={`${point.label}:${index}`} cx={xFor(index)} cy={yFor(point.value)} r={2.5} fill={point.value >= 0 ? "#86efac" : "#fda4af"} />;
+        })}
+        <text x={padding} y={22} fill="#8aa0ac" fontSize={12}>max {fmt(maxValue, 4)}</text>
+        <text x={padding} y={height - 10} fill="#8aa0ac" fontSize={12}>min {fmt(minValue, 4)}</text>
+        <text x={width - padding} y={22} textAnchor="end" fill="#dbe7ef" fontSize={12}>{latest?.label ?? "-"}</text>
+      </svg>
+      {latest ? <div style={chartCaption}>{latest.detail}</div> : null}
+    </div>
+  );
+}
+
+function BarChart({ items }: { items: BarPoint[] }) {
+  const maxValue = Math.max(1, ...items.map((item) => item.value));
+
+  if (items.length === 0) {
+    return <EmptyState text="No chart data yet." />;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      {items.map((item) => (
+        <div key={item.label} style={{ display: "grid", gridTemplateColumns: "110px minmax(0, 1fr) 48px", alignItems: "center", gap: 10 }}>
+          <span style={{ color: "#8aa0ac", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{item.label}</span>
+          <div style={barTrack}>
+            <div style={{ ...barFill, width: `${Math.max(3, (item.value / maxValue) * 100)}%`, background: toneColor(item.tone) }} />
+          </div>
+          <strong style={{ textAlign: "right", fontSize: 12 }}>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const TIMELINE_MEMORY_KEYS = [
+  "reflection/trade_review/latest",
+  "runtime/last_wake_summary",
+  "state/open_orders",
+  "runtime/market_signal_state",
+  "runtime/codex_session/summary"
+];
+
+const compactText = (value: string, maxLength = 180): string => {
+  const singleLine = value.replace(/\s+/g, " ").trim();
+  return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength)}...` : singleLine;
+};
+
+const compactJsonMemory = (key: string, value: string): string => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+
+    if (key === "state/open_orders" && Array.isArray(parsed)) {
+      if (parsed.length === 0) {
+        return "No open orders.";
+      }
+
+      return parsed.slice(0, 3).map((order) => {
+        const record = order && typeof order === "object" ? order as Record<string, unknown> : {};
+        return `${record.side ?? "?"} ${record.sz ?? record.origSz ?? "?"} @ ${record.limitPx ?? "market"} oid=${record.oid ?? record.cloid ?? "?"}`;
+      }).join("; ");
+    }
+
+    if (key === "runtime/market_signal_state" && parsed && typeof parsed === "object") {
+      const signal = parsed as Record<string, unknown>;
+      return `last=${signal.last ?? "-"} rsi=${signal.rsi ?? "-"} atr=${signal.atr ?? "-"} return5m=${signal.return5mPct ?? "-"}`;
+    }
+
+    if (key === "runtime/last_wake_summary" && parsed && typeof parsed === "object") {
+      const summary = parsed as Record<string, unknown>;
+      return compactText(`${summary.planSummary ?? "no prior plan"} | position=${JSON.stringify(summary.position ?? null)} | executions=${summary.executionSummary ?? "-"}`);
+    }
+
+    return compactText(JSON.stringify(parsed));
+  } catch {
+    return compactText(value);
+  }
+};
+
+const memoryTitle = (key: string): string => {
+  if (key === "reflection/trade_review/latest") {
+    return "review memory";
+  }
+  if (key === "runtime/last_wake_summary") {
+    return "previous wake";
+  }
+  if (key === "state/open_orders") {
+    return "open orders";
+  }
+  if (key === "runtime/market_signal_state") {
+    return "market signal";
+  }
+  if (key === "runtime/codex_session/summary") {
+    return "session summary";
+  }
+  return key;
+};
+
+const selectTimelineMemories = (wake: AiTraderWakeReport) =>
+  TIMELINE_MEMORY_KEYS
+    .flatMap((key) => {
+      const memory = wake.memories.find((entry) => entry.key === key);
+      return memory ? [memory] : [];
+    })
+    .slice(0, 4);
+
+const selectedActions = (wake: AiTraderWakeReport): AiTraderPlanAction[] =>
+  wake.plan?.candidates.find((candidate) => candidate.id === wake.selectedCandidateId)?.actions
+  ?? wake.plan?.candidates[0]?.actions
+  ?? [];
+
+const actionTitle = (action: AiTraderPlanAction): string => {
+  if (action.type === "place_order") {
+    return `${action.side} ${action.orderType} ${action.quantity} ${action.symbol}${action.price == null ? "" : ` @ ${fmt(action.price, 2)}`}${action.reduceOnly ? " reduce-only" : ""}`;
+  }
+
+  if (action.type === "cancel_order") {
+    return `cancel ${action.symbol} ${action.orderId ?? action.clientOrderId ?? ""}`.trim();
+  }
+
+  if (action.type === "reduce_position" || action.type === "close_position") {
+    return `${action.type.replace("_", " ")} ${action.symbol}${action.quantity == null ? "" : ` ${action.quantity}`}`;
+  }
+
+  return "observe";
+};
+
+const actionDetail = (action: AiTraderPlanAction): string => {
+  if (action.type === "place_order") {
+    return [
+      action.reason,
+      action.invalidationPrice == null ? undefined : `invalidation ${fmt(action.invalidationPrice, 2)}`,
+      action.takeProfitPrice == null ? undefined : `take profit ${fmt(action.takeProfitPrice, 2)}`,
+      action.timeInForce == null ? undefined : `TIF ${action.timeInForce}`
+    ].filter(Boolean).join(" | ");
+  }
+
+  return action.reason;
+};
+
+type TimelineOrder = AiTraderReviewSnapshot["recentOrders"][number];
+
+const toMs = (value?: string): number | undefined => {
+  const parsed = new Date(value ?? "").getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const normalizedOrderRefs = (order: TimelineOrder): string[] => {
+  const refs = [order.id, order.clientOrderId].filter((value): value is string => Boolean(value));
+  const numericId = order.id.match(/ord_(\d+)$/)?.[1];
+  return numericId ? [...refs, numericId] : refs;
+};
+
+const actionOrderRefs = (actions: AiTraderPlanAction[]): string[] =>
+  actions.flatMap((action) => {
+    if (action.type !== "cancel_order") {
+      return [];
+    }
+
+    return [action.orderId, action.clientOrderId].filter((value): value is string => Boolean(value));
+  });
+
+const ordersForWake = (
+  wake: AiTraderWakeReport,
+  orders: TimelineOrder[],
+  actions: AiTraderPlanAction[]
+): TimelineOrder[] => {
+  const startedAt = toMs(wake.startedAt);
+  const finishedAt = toMs(wake.finishedAt);
+  const startWindow = startedAt == null ? undefined : startedAt - 2_000;
+  const endWindow = finishedAt == null ? undefined : finishedAt + 8_000;
+  const refs = new Set(actionOrderRefs(actions));
+  const matched = new Map<string, TimelineOrder>();
+
+  for (const order of orders) {
+    const orderRefs = normalizedOrderRefs(order);
+    const matchedByRef = orderRefs.some((ref) => refs.has(ref));
+    const createdAt = toMs(order.createdAt);
+    const updatedAt = toMs(order.updatedAt);
+    const matchedByTime = startWindow !== undefined && endWindow !== undefined
+      && (
+        (createdAt !== undefined && createdAt >= startWindow && createdAt <= endWindow)
+        || (updatedAt !== undefined && updatedAt >= startWindow && updatedAt <= endWindow)
+      );
+
+    if (matchedByRef || matchedByTime) {
+      matched.set(order.id, order);
+    }
+  }
+
+  return [...matched.values()]
+    .sort((left, right) => (toMs(left.updatedAt) ?? 0) - (toMs(right.updatedAt) ?? 0))
+    .slice(0, 8);
+};
+
+function WakeTimeline({
+  wakes,
+  orders,
+  botScore
+}: {
+  wakes: AiTraderWakeReport[];
+  orders: TimelineOrder[];
+  botScore: (score?: AiTraderWakeReport["score"] | null) => string;
+}) {
+  const timeline = [...wakes].reverse();
+
+  return (
+    <div style={{ display: "grid", gap: 0 }}>
+      {timeline.map((wake, index) => {
+        const firstExecution = wake.executionResults[0];
+        const tone = wake.status === "failed" ? "bad" : firstExecution ? actionTone(firstExecution.status) : "neutral";
+        const memories = selectTimelineMemories(wake);
+        const actions = selectedActions(wake);
+        const linkedOrders = ordersForWake(wake, orders, actions);
+
+        return (
+          <div key={wake.wakeId} style={timelineRow}>
+            <div style={timelineRail}>
+              <span style={{ ...timelineDot, background: toneColor(tone) }} />
+              {index < timeline.length - 1 ? <span style={timelineLine} /> : null}
+            </div>
+            <div style={timelineContent}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <strong>{wake.reasons.join(", ") || wake.status}</strong>
+                <span style={{ color: "#8aa0ac", fontSize: 12 }}>{stamp(wake.finishedAt)}</span>
+              </div>
+              {memories.length > 0 ? (
+                <div style={timelineMemoryGrid}>
+                  {memories.map((memory) => (
+                    <div key={`${wake.wakeId}:${memory.key}`} style={timelineMemoryCard}>
+                      <div style={{ color: "#56d7c4", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>{memoryTitle(memory.key)}</div>
+                      <div style={{ color: "#b9d0dc", fontSize: 12, lineHeight: 1.45, marginTop: 4 }}>{compactJsonMemory(memory.key, memory.value)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div style={timelineWakeCard}>
+                <div style={timelineSectionLabel}>Wake</div>
+                <div style={{ color: "#dbe7ef", fontSize: 13, lineHeight: 1.5 }}>{wake.planSummary ?? wake.plan?.summary ?? "-"}</div>
+                <div style={timelineMeta}>
+                  <span>score {botScore(wake.score)}</span>
+                  <span>candidate {wake.selectedCandidateId ?? "-"}</span>
+                  <span>approved {wake.approvedActions}</span>
+                  <span>rejected {wake.rejectedActions}</span>
+                </div>
+              </div>
+              <div style={timelineActionsList}>
+                <div style={timelineSectionLabel}>Actions</div>
+                {(actions.length > 0 ? actions : [{ type: "observe", reason: "No selected action was persisted." } satisfies AiTraderPlanAction]).map((action, actionIndex) => {
+                  const execution = wake.executionResults[actionIndex];
+                  const executionTone = execution ? actionTone(execution.status) : "neutral";
+
+                  return (
+                    <div key={`${wake.wakeId}:action:${actionIndex}`} style={timelineActionCard}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <strong>{actionTitle(action)}</strong>
+                        <span style={pill(executionTone)}>{execution?.status ?? "planned"}</span>
+                      </div>
+                      <div style={{ color: "#9eb4c0", fontSize: 12, lineHeight: 1.45 }}>{actionDetail(action)}</div>
+                      {execution?.message ? <div style={{ color: "#7e97a5", fontSize: 12 }}>{execution.message}</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+              {linkedOrders.length > 0 ? (
+                <div style={timelineOrdersList}>
+                  <div style={timelineSectionLabel}>Orders</div>
+                  <div style={timelineOrderGrid}>
+                    {linkedOrders.map((order) => (
+                      <div key={`${wake.wakeId}:order:${order.id}`} style={timelineOrderCard}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                          <strong style={{ color: order.side === "buy" ? "#86efac" : "#fca5a5" }}>
+                            {order.side} {order.orderType}
+                          </strong>
+                          <span style={pill(orderTone(order.status))}>{order.status}</span>
+                        </div>
+                        <div style={timelineOrderMeta}>
+                          <span>qty {fmt(order.quantity, 6)}</span>
+                          <span>filled {fmt(order.filledQuantity, 6)}</span>
+                          <span>{order.limitPrice == null ? "market" : `limit ${fmt(order.limitPrice, 2)}`}</span>
+                          <span>{order.averageFillPrice == null ? "no avg fill" : `avg ${fmt(order.averageFillPrice, 2)}`}</span>
+                        </div>
+                        <div style={{ color: "#7e97a5", fontSize: 12 }}>
+                          {order.clientOrderId ?? order.id} · {stamp(order.updatedAt)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div style={timelineMeta}>
+                <span>{wake.wakeId}</span>
+                <span>{wake.executionResults.map((entry) => `${entry.actionType}:${entry.status}`).join(", ") || "no execution"}</span>
+              </div>
+              {wake.errors.length > 0 ? <pre style={consoleBlockError}>{wake.errors.join("\n")}</pre> : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function OrderHistoryTable({ orders }: { orders: AiTraderReviewSnapshot["recentOrders"] }) {
+  return (
+    <div style={{ overflowX: "auto", border: "1px solid #16262f", borderRadius: 12 }}>
+      <table style={ordersTable}>
+        <thead>
+          <tr>
+            <th style={tableHeader}>Updated</th>
+            <th style={tableHeader}>Side</th>
+            <th style={tableHeader}>Type</th>
+            <th style={tableHeader}>Status</th>
+            <th style={tableHeader}>Qty</th>
+            <th style={tableHeader}>Limit</th>
+            <th style={tableHeader}>Avg Fill</th>
+            <th style={tableHeader}>Client Order</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order) => (
+            <tr key={order.id}>
+              <td style={tableCell}>{stamp(order.updatedAt)}</td>
+              <td style={{ ...tableCell, color: order.side === "buy" ? "#86efac" : "#fca5a5", fontWeight: 700 }}>{order.side}</td>
+              <td style={tableCell}>{order.orderType}</td>
+              <td style={tableCell}><span style={pill(orderTone(order.status))}>{order.status}</span></td>
+              <td style={tableCell}>{fmt(order.quantity, 6)}</td>
+              <td style={tableCell}>{order.limitPrice == null ? "-" : fmt(order.limitPrice, 2)}</td>
+              <td style={tableCell}>{order.averageFillPrice == null ? "-" : fmt(order.averageFillPrice, 2)}</td>
+              <td style={tableCell}>{order.clientOrderId ?? order.id}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const toneColor = (tone?: "good" | "bad" | "neutral") =>
+  tone === "good" ? "#86efac" : tone === "bad" ? "#fca5a5" : "#facc15";
+
+const pill = (tone?: "good" | "bad" | "neutral"): CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: 24,
+  padding: "3px 8px",
+  borderRadius: 999,
+  border: `1px solid ${tone === "good" ? "#1f8a65" : tone === "bad" ? "#7f1d1d" : "#665d1e"}`,
+  background: tone === "good" ? "rgba(34, 197, 94, 0.14)" : tone === "bad" ? "rgba(248, 113, 113, 0.12)" : "rgba(250, 204, 21, 0.1)",
+  color: toneColor(tone),
+  fontSize: 12,
+  fontWeight: 700,
+  whiteSpace: "nowrap"
+});
+
 const panel: CSSProperties = {
   background: "#0b161d",
   border: "1px solid #16262f",
@@ -1299,6 +1933,20 @@ const panelTitle: CSSProperties = {
   marginBottom: 14
 };
 
+const splitPanelTitle: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "start",
+  gap: 12,
+  marginBottom: 14
+};
+
+const subtleText: CSSProperties = {
+  color: "#7e97a5",
+  fontSize: 12,
+  lineHeight: 1.5
+};
+
 const stack: CSSProperties = {
   display: "grid",
   gap: 12
@@ -1317,6 +1965,19 @@ const metricCard: CSSProperties = {
   padding: 16
 };
 
+const miniMetricGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 8
+};
+
+const miniMetricCard: CSSProperties = {
+  border: "1px solid #16262f",
+  borderRadius: 10,
+  padding: "10px 12px",
+  background: "#091217"
+};
+
 const userCard: CSSProperties = {
   border: "1px solid #16262f",
   borderRadius: 12,
@@ -1326,11 +1987,199 @@ const userCard: CSSProperties = {
   gap: 10
 };
 
-const botCardButton: CSSProperties = {
-  ...userCard,
+const botTabsPanel: CSSProperties = {
+  ...panel,
+  paddingBottom: 12
+};
+
+const botTabsScroller: CSSProperties = {
+  display: "flex",
+  gap: 10,
+  overflowX: "auto",
+  paddingBottom: 4,
+  scrollbarWidth: "thin"
+};
+
+const botTabButton: CSSProperties = {
+  flex: "0 0 280px",
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "#16262f",
+  borderRadius: 10,
+  background: "#0d1a21",
   color: "#dbe7ef",
   cursor: "pointer",
+  display: "grid",
+  gap: 10,
+  padding: 12,
   textAlign: "left"
+};
+
+const botTabButtonActive: CSSProperties = {
+  ...botTabButton,
+  borderColor: "#1f8a65",
+  background: "linear-gradient(135deg, rgba(31, 138, 101, 0.2), rgba(9, 26, 27, 0.98))",
+  boxShadow: "inset 0 -2px 0 #22c55e"
+};
+
+const botTabMetaGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 6,
+  color: "#8aa0ac",
+  fontSize: 12
+};
+
+const botStatusHero: CSSProperties = {
+  border: "1px solid #1b3b42",
+  borderRadius: 12,
+  padding: 14,
+  background: "linear-gradient(135deg, rgba(16, 44, 48, 0.94), rgba(8, 20, 25, 0.98))",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12
+};
+
+const botKpiGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 8
+};
+
+const botStatusGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 10
+};
+
+const botStatusCell: CSSProperties = {
+  border: "1px solid #16262f",
+  borderRadius: 10,
+  background: "#091217",
+  padding: 12,
+  display: "grid",
+  gap: 6,
+  minHeight: 72
+};
+
+const statusLabel: CSSProperties = {
+  color: "#7e97a5",
+  fontSize: 11,
+  textTransform: "uppercase",
+  letterSpacing: "0.08em"
+};
+
+const chipWrap: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6
+};
+
+const miniChip: CSSProperties = {
+  border: "1px solid #1b3b42",
+  borderRadius: 999,
+  background: "#091217",
+  color: "#b9d0dc",
+  padding: "4px 8px",
+  fontSize: 11,
+  whiteSpace: "nowrap"
+};
+
+const intelligenceHero: CSSProperties = {
+  border: "1px solid #1b3b42",
+  borderRadius: 12,
+  padding: 14,
+  background: "linear-gradient(135deg, rgba(15, 43, 48, 0.92), rgba(9, 18, 23, 0.98))",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "end",
+  gap: 12
+};
+
+const scoreStrip: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  color: "#8aa0ac",
+  fontSize: 12
+};
+
+const strategyPanel: CSSProperties = {
+  border: "1px solid #18313a",
+  borderRadius: 10,
+  background: "#091217",
+  padding: 12,
+  display: "grid",
+  gap: 8
+};
+
+const strategyText: CSSProperties = {
+  color: "#dbe7ef",
+  fontSize: 13,
+  lineHeight: 1.55
+};
+
+const thesisBlock: CSSProperties = {
+  borderLeft: "2px solid #22c55e",
+  paddingLeft: 10,
+  color: "#9eb4c0",
+  fontSize: 12,
+  lineHeight: 1.5
+};
+
+const candidateGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 10
+};
+
+const candidateCard: CSSProperties = {
+  border: "1px solid #18313a",
+  borderRadius: 10,
+  background: "#0d1a21",
+  padding: 12,
+  display: "grid",
+  gap: 8,
+  alignContent: "start"
+};
+
+const memoryGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 10
+};
+
+const memoryCard: CSSProperties = {
+  border: "1px solid #18313a",
+  borderRadius: 10,
+  background: "linear-gradient(180deg, #0d1a21, #091217)",
+  padding: 12,
+  display: "grid",
+  gap: 10,
+  alignContent: "start",
+  minHeight: 150
+};
+
+const memoryBody: CSSProperties = {
+  color: "#b9d0dc",
+  fontSize: 12,
+  lineHeight: 1.5,
+  overflowWrap: "anywhere"
+};
+
+const importanceTrack: CSSProperties = {
+  height: 6,
+  background: "#071116",
+  borderRadius: 999,
+  overflow: "hidden",
+  border: "1px solid #16262f"
+};
+
+const importanceFill: CSSProperties = {
+  height: "100%",
+  background: "linear-gradient(90deg, #22c55e, #56d7c4)"
 };
 
 const jobCard: CSSProperties = {
@@ -1360,6 +2209,171 @@ const consoleBlockError: CSSProperties = {
   ...consoleBlock,
   color: "#fecaca",
   border: "1px solid #4b1f25"
+};
+
+const chartCaption: CSSProperties = {
+  position: "absolute",
+  right: 12,
+  bottom: 10,
+  maxWidth: "62%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  color: "#8aa0ac",
+  fontSize: 12
+};
+
+const barTrack: CSSProperties = {
+  height: 10,
+  background: "#091217",
+  border: "1px solid #16262f",
+  borderRadius: 999,
+  overflow: "hidden"
+};
+
+const barFill: CSSProperties = {
+  height: "100%",
+  borderRadius: 999
+};
+
+const timelineRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "28px minmax(0, 1fr)",
+  gap: 10
+};
+
+const timelineRail: CSSProperties = {
+  position: "relative",
+  display: "flex",
+  justifyContent: "center"
+};
+
+const timelineDot: CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: 999,
+  marginTop: 5,
+  zIndex: 1
+};
+
+const timelineLine: CSSProperties = {
+  position: "absolute",
+  top: 18,
+  bottom: 0,
+  width: 1,
+  background: "#21333d"
+};
+
+const timelineContent: CSSProperties = {
+  padding: "0 0 18px",
+  display: "grid",
+  gap: 8
+};
+
+const timelineMemoryGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 8
+};
+
+const timelineMemoryCard: CSSProperties = {
+  border: "1px solid #18313a",
+  borderRadius: 8,
+  background: "#091217",
+  padding: 10,
+  minHeight: 76
+};
+
+const timelineWakeCard: CSSProperties = {
+  border: "1px solid #1a313a",
+  borderRadius: 8,
+  background: "#0d1a21",
+  padding: 10,
+  display: "grid",
+  gap: 6
+};
+
+const timelineActionsList: CSSProperties = {
+  display: "grid",
+  gap: 8
+};
+
+const timelineOrdersList: CSSProperties = {
+  display: "grid",
+  gap: 8
+};
+
+const timelineActionCard: CSSProperties = {
+  border: "1px solid #18313a",
+  borderRadius: 8,
+  background: "#091217",
+  padding: 10,
+  display: "grid",
+  gap: 6
+};
+
+const timelineOrderGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 8
+};
+
+const timelineOrderCard: CSSProperties = {
+  border: "1px solid #1b3b42",
+  borderRadius: 8,
+  background: "#071419",
+  padding: 10,
+  display: "grid",
+  gap: 7
+};
+
+const timelineOrderMeta: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 5,
+  color: "#9eb4c0",
+  fontSize: 12
+};
+
+const timelineSectionLabel: CSSProperties = {
+  color: "#56d7c4",
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.08em"
+};
+
+const timelineMeta: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  color: "#7e97a5",
+  fontSize: 12
+};
+
+const ordersTable: CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  minWidth: 940,
+  background: "#091217"
+};
+
+const tableHeader: CSSProperties = {
+  color: "#8aa0ac",
+  textAlign: "left",
+  fontSize: 11,
+  textTransform: "uppercase",
+  padding: "10px 12px",
+  borderBottom: "1px solid #16262f",
+  whiteSpace: "nowrap"
+};
+
+const tableCell: CSSProperties = {
+  color: "#dbe7ef",
+  fontSize: 12,
+  padding: "10px 12px",
+  borderBottom: "1px solid #10212a",
+  whiteSpace: "nowrap"
 };
 
 const menuButton: CSSProperties = {
