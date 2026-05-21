@@ -1634,6 +1634,8 @@ function BarChart({ items }: { items: BarPoint[] }) {
 }
 
 const TIMELINE_MEMORY_KEYS = [
+  "global_review/latest",
+  "strategy_memo/all/latest",
   "reflection/trade_review/latest",
   "runtime/last_wake_summary",
   "state/open_orders",
@@ -1681,6 +1683,15 @@ const memoryTitle = (key: string): string => {
   if (key === "reflection/trade_review/latest") {
     return "review memory";
   }
+  if (key === "global_review/latest") {
+    return "analyst global";
+  }
+  if (key === "strategy_memo/all/latest") {
+    return "analyst memo";
+  }
+  if (key.startsWith("strategy_memo/")) {
+    return "target memo";
+  }
   if (key === "runtime/last_wake_summary") {
     return "previous wake";
   }
@@ -1696,13 +1707,24 @@ const memoryTitle = (key: string): string => {
   return key;
 };
 
-const selectTimelineMemories = (wake: AiTraderWakeReport) =>
-  TIMELINE_MEMORY_KEYS
+const selectTimelineMemories = (wake: AiTraderWakeReport) => {
+  const selected = new Map<string, AiTraderWakeReport["memories"][number]>();
+  for (const memory of wake.memories) {
+    if (memory.key.startsWith("strategy_memo/") && memory.key !== "strategy_memo/all/latest") {
+      selected.set(memory.key, memory);
+    }
+  }
+
+  for (const memory of TIMELINE_MEMORY_KEYS
     .flatMap((key) => {
       const memory = wake.memories.find((entry) => entry.key === key);
       return memory ? [memory] : [];
-    })
-    .slice(0, 4);
+    })) {
+    selected.set(memory.key, memory);
+  }
+
+  return [...selected.values()].slice(0, 6);
+};
 
 const selectedActions = (wake: AiTraderWakeReport): AiTraderPlanAction[] =>
   wake.plan?.candidates.find((candidate) => candidate.id === wake.selectedCandidateId)?.actions
@@ -1751,6 +1773,28 @@ const normalizedOrderRefs = (order: TimelineOrder): string[] => {
   return numericId ? [...refs, numericId] : refs;
 };
 
+const cloidPart = (value: string | undefined, maxLength = 24): string =>
+  (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength);
+
+const orderHasWakeCloid = (wake: AiTraderWakeReport, order: TimelineOrder): boolean => {
+  const clientOrderId = order.clientOrderId ?? "";
+  if (!clientOrderId) {
+    return false;
+  }
+
+  const botPart = cloidPart(wake.botId);
+  const wakePart = cloidPart(wake.wakeId);
+  return Boolean(botPart && wakePart)
+    && (
+      clientOrderId.startsWith(`ai-${botPart}-${wakePart}-`)
+      || clientOrderId.startsWith(`ai-reduce-${botPart}-${wakePart}-`)
+    );
+};
+
 const actionOrderRefs = (actions: AiTraderPlanAction[]): string[] =>
   actions.flatMap((action) => {
     if (action.type !== "cancel_order") {
@@ -1775,6 +1819,7 @@ const ordersForWake = (
   for (const order of orders) {
     const orderRefs = normalizedOrderRefs(order);
     const matchedByRef = orderRefs.some((ref) => refs.has(ref));
+    const matchedByWakeCloid = orderHasWakeCloid(wake, order);
     const createdAt = toMs(order.createdAt);
     const updatedAt = toMs(order.updatedAt);
     const matchedByTime = startWindow !== undefined && endWindow !== undefined
@@ -1783,7 +1828,7 @@ const ordersForWake = (
         || (updatedAt !== undefined && updatedAt >= startWindow && updatedAt <= endWindow)
       );
 
-    if (matchedByRef || matchedByTime) {
+    if (matchedByRef || matchedByWakeCloid || matchedByTime) {
       matched.set(order.id, order);
     }
   }
@@ -1828,8 +1873,12 @@ function WakeTimeline({
                 <div style={timelineMemoryGrid}>
                   {memories.map((memory) => (
                     <div key={`${wake.wakeId}:${memory.key}`} style={timelineMemoryCard}>
-                      <div style={{ color: "#56d7c4", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>{memoryTitle(memory.key)}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                        <div style={{ color: "#56d7c4", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>{memoryTitle(memory.key)}</div>
+                        <span style={pill(memorySourceTone(memory.source))}>{memory.source ?? "runtime"}</span>
+                      </div>
                       <div style={{ color: "#b9d0dc", fontSize: 12, lineHeight: 1.45, marginTop: 4 }}>{compactJsonMemory(memory.key, memory.value)}</div>
+                      {memory.updatedAt ? <div style={{ color: "#69818e", fontSize: 11, marginTop: 6 }}>{stamp(memory.updatedAt)}</div> : null}
                     </div>
                   ))}
                 </div>

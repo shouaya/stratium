@@ -46,6 +46,36 @@ describe("createMcpExecutor", () => {
     });
   });
 
+  it("includes bot and wake refs in generated client order ids", async () => {
+    const callTool = vi.fn(async () => ({ raw: { ok: true } }));
+    const executor = createMcpExecutor({
+      market,
+      botId: "trend-btc-trader",
+      wakeId: "wake-abc-123",
+      mcpClient: {
+        callTool,
+        listToolNames: async () => [],
+        close: async () => undefined
+      } satisfies TraderMcpClient
+    });
+
+    await executor.execute("paper_execute", [
+      {
+        type: "place_order",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "market",
+        quantity: 0.001,
+        invalidationPrice: 99_000,
+        reason: "test"
+      }
+    ]);
+
+    expect(callTool).toHaveBeenCalledWith("stratium_place_order", expect.objectContaining({
+      cloid: expect.stringMatching(/^ai-trend-btc-trader-wake-abc-123-0-/)
+    }));
+  });
+
   it("does not call trade tools in shadow mode", async () => {
     const callTool = vi.fn();
     const executor = createMcpExecutor({

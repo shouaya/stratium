@@ -3,7 +3,37 @@ import type { TraderMcpClient } from "../infra/traderMcpClient.js";
 import type { TraderBotAccountSnapshot, TraderBotExecutionResult, TraderBotExecutor, TraderBotMarketSnapshot } from "../types.js";
 import { createShadowExecutionResults } from "./shadowExecutor.js";
 
-const toMcpOrderArgs = (action: Extract<AiTraderPlanAction, { type: "place_order" }>, market: TraderBotMarketSnapshot): Record<string, unknown> => {
+type ExecutionRef = {
+  botId?: string;
+  wakeId?: string;
+  actionIndex: number;
+  kind?: "order" | "reduce";
+};
+
+const cloidPart = (value: string | undefined, fallback: string, maxLength = 24): string => {
+  const normalized = (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength);
+  return normalized || fallback;
+};
+
+const createCloid = (ref: ExecutionRef): string =>
+  [
+    ref.kind === "reduce" ? "ai-reduce" : "ai",
+    cloidPart(ref.botId, "bot"),
+    cloidPart(ref.wakeId, "wake"),
+    String(ref.actionIndex),
+    Date.now().toString(36),
+    Math.random().toString(16).slice(2, 10)
+  ].join("-");
+
+const toMcpOrderArgs = (
+  action: Extract<AiTraderPlanAction, { type: "place_order" }>,
+  market: TraderBotMarketSnapshot,
+  ref: ExecutionRef
+): Record<string, unknown> => {
   const referencePrice = action.price
     ?? (action.side === "buy" ? market.ask : market.bid)
     ?? market.last;
@@ -14,14 +44,15 @@ const toMcpOrderArgs = (action: Extract<AiTraderPlanAction, { type: "place_order
     size: String(action.quantity),
     reduceOnly: action.reduceOnly ?? false,
     tif: action.orderType === "market" ? "Ioc" : action.timeInForce === "IOC" ? "Ioc" : "Gtc",
-    cloid: `ai-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+    cloid: createCloid(ref)
   };
 };
 
 const toReduceOnlyOrderArgs = (
   action: Extract<AiTraderPlanAction, { type: "reduce_position" | "close_position" }>,
   market: TraderBotMarketSnapshot,
-  account: TraderBotAccountSnapshot | undefined
+  account: TraderBotAccountSnapshot | undefined,
+  ref: ExecutionRef
 ): Record<string, unknown> | null => {
   const position = account?.position;
   if (!position || position.side === "flat" || position.quantity <= 0) {
@@ -40,7 +71,7 @@ const toReduceOnlyOrderArgs = (
     size: String(quantity),
     reduceOnly: true,
     tif: "Ioc",
-    cloid: `ai-reduce-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+    cloid: createCloid({ ...ref, kind: "reduce" })
   };
 };
 
@@ -69,7 +100,8 @@ const executeAction = async (
   mcpClient: TraderMcpClient,
   market: TraderBotMarketSnapshot,
   account: TraderBotAccountSnapshot | undefined,
-  action: AiTraderPlanAction
+  action: AiTraderPlanAction,
+  ref: ExecutionRef
 ): Promise<TraderBotExecutionResult> => {
   if (action.type === "observe") {
     return {
@@ -81,7 +113,7 @@ const executeAction = async (
 
   try {
     if (action.type === "place_order") {
-      const raw = await mcpClient.callTool("stratium_place_order", toMcpOrderArgs(action, market));
+      const raw = await mcpClient.callTool("stratium_place_order", toMcpOrderArgs(action, market, ref));
       return {
         action,
         status: "executed",
@@ -114,7 +146,7 @@ const executeAction = async (
     }
 
     if (action.type === "reduce_position" || action.type === "close_position") {
-      const args = toReduceOnlyOrderArgs(action, market, account);
+      const args = toReduceOnlyOrderArgs(action, market, account, ref);
       if (!args) {
         return {
           action,
@@ -149,6 +181,8 @@ export const createMcpExecutor = (input: {
   mcpClient: TraderMcpClient;
   market: TraderBotMarketSnapshot;
   account?: TraderBotAccountSnapshot;
+  botId?: string;
+  wakeId?: string;
 }): TraderBotExecutor => ({
   execute: async (mode: AiTraderMode, actions: AiTraderPlanAction[]) => {
     if (mode !== "paper_execute" && mode !== "reduce_only") {
@@ -156,7 +190,7 @@ export const createMcpExecutor = (input: {
     }
 
     const results: TraderBotExecutionResult[] = [];
-    for (const action of actions) {
+    for (const [actionIndex, action] of actions.entries()) {
       if (mode === "reduce_only" && action.type === "place_order") {
         const rejection = reduceOnlyPlaceOrderRejection(action, input.account);
         if (rejection) {
@@ -168,7 +202,11 @@ export const createMcpExecutor = (input: {
           continue;
         }
       }
-      results.push(await executeAction(input.mcpClient, input.market, input.account, action));
+      results.push(await executeAction(input.mcpClient, input.market, input.account, action, {
+        botId: input.botId,
+        wakeId: input.wakeId,
+        actionIndex
+      }));
     }
     return results;
   }

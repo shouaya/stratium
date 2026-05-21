@@ -36,6 +36,16 @@ importers:
         specifier: ^3.0.9
         version: 3.2.4(@types/node@22.19.15)(jiti@2.6.1)(tsx@4.21.0)
 
+  apps/analyst-bot:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+    devDependencies:
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+
   apps/api:
     dependencies:
       '@fastify/cors':

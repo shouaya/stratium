@@ -2,7 +2,7 @@ FROM node:22-alpine
 
 WORKDIR /workspace
 
-RUN apk add --no-cache docker-cli docker-cli-compose
+RUN apk add --no-cache docker-cli docker-cli-buildx docker-cli-compose git
 RUN npm install -g pnpm@10.6.2
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./

@@ -303,7 +303,9 @@ const runOnce = async (config: TraderBotRunnerConfig, cycle = 1, intent?: Trader
       createMcpExecutor({
         mcpClient,
         market: context.market,
-        account: context.account
+        account: context.account,
+        botId: config.botId,
+        wakeId: wakeRequest.id
       }),
       log
     );
