@@ -1,4 +1,4 @@
-import type { AiTraderReviewSnapshot, AiTraderWakeReport, AccountView, OrderView, PositionView } from "@stratium/shared";
+import type { AiTraderReviewSnapshot, AiTraderWakeReport, AccountView, AnyEventEnvelope, FillPayload, OrderView, PositionView } from "@stratium/shared";
 
 type EngineStateForReview = {
   account?: AccountView;
@@ -9,11 +9,15 @@ type EngineStateForReview = {
     timestamp?: string;
   };
   orders?: OrderView[];
+  fills?: AnyEventEnvelope[];
 };
 
 const OPEN_ORDER_STATUSES = new Set(["NEW", "ACCEPTED", "PARTIALLY_FILLED"]);
+const SIM_REWARD_BASELINE_EQUITY = 10_000;
 
 const round = (value: number): number => Number(value.toFixed(8));
+const finite = (value?: number): value is number =>
+  typeof value === "number" && Number.isFinite(value);
 
 const countByStatus = (orders: OrderView[]): Record<string, number> =>
   orders.reduce<Record<string, number>>((counts, order) => {
@@ -24,6 +28,9 @@ const countByStatus = (orders: OrderView[]): Record<string, number> =>
 const isAiOrder = (order: OrderView): boolean =>
   order.clientOrderId?.startsWith("ai-") ?? false;
 
+const isFillEvent = (event: AnyEventEnvelope): event is AnyEventEnvelope & { payload: FillPayload } =>
+  event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled";
+
 const sum = (values: number[]): number =>
   values.reduce((total, value) => total + value, 0);
 
@@ -33,10 +40,138 @@ const sortOrders = (orders: OrderView[]): OrderView[] =>
     || right.id.localeCompare(left.id)
   );
 
+const sortReportsAsc = (reports: AiTraderWakeReport[]): AiTraderWakeReport[] =>
+  [...reports].sort((left, right) =>
+    new Date(left.finishedAt).getTime() - new Date(right.finishedAt).getTime()
+    || left.wakeId.localeCompare(right.wakeId)
+  );
+
+const aiFillEvents = (fills: AnyEventEnvelope[] | undefined, symbol: string, orders: OrderView[]) => {
+  const orderIds = new Set(orders.map((order) => order.id));
+  return (fills ?? [])
+    .filter(isFillEvent)
+    .filter((event) => event.symbol === symbol && orderIds.has(event.payload.orderId));
+};
+
+const buildCostStats = (
+  fills: Array<AnyEventEnvelope & { payload: FillPayload }>,
+  orders: OrderView[]
+): NonNullable<AiTraderReviewSnapshot["costStats"]> => {
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+  const totalFee = round(sum(fills.map((event) => event.payload.fee)));
+  const totalSlippage = round(sum(fills.map((event) => event.payload.slippage)));
+  const estimatedSlippageCost = round(sum(fills.map((event) => event.payload.slippage * event.payload.fillQuantity)));
+  const totalCost = round(totalFee + estimatedSlippageCost);
+  const fillCount = fills.length;
+
+  return {
+    fillCount,
+    makerFills: fills.filter((event) => event.payload.liquidityRole === "maker").length,
+    takerFills: fills.filter((event) => event.payload.liquidityRole === "taker").length,
+    marketFills: fills.filter((event) => orderById.get(event.payload.orderId)?.orderType === "market").length,
+    limitFills: fills.filter((event) => orderById.get(event.payload.orderId)?.orderType === "limit").length,
+    totalFee,
+    totalSlippage,
+    estimatedSlippageCost,
+    totalCost,
+    averageCostPerFill: fillCount > 0 ? round(totalCost / fillCount) : 0
+  };
+};
+
+const buildRewardStats = (
+  reports: AiTraderWakeReport[],
+  account: AccountView | undefined,
+  position: PositionView | undefined,
+  costStats: NonNullable<AiTraderReviewSnapshot["costStats"]>
+): NonNullable<AiTraderReviewSnapshot["rewardStats"]> => {
+  const points = sortReportsAsc(reports)
+    .flatMap((report) => finite(report.accountSnapshot?.equity) ? [{
+      equity: report.accountSnapshot.equity,
+      delta: round(report.accountSnapshot.equity - SIM_REWARD_BASELINE_EQUITY)
+    }] : []);
+  const latestEquity = reports[0]?.accountSnapshot?.equity ?? account?.equity;
+  let upSteps = 0;
+  let downSteps = 0;
+  let flatSteps = 0;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const change = round(points[index].equity - points[index - 1].equity);
+    if (change > 0) {
+      upSteps += 1;
+    } else if (change < 0) {
+      downSteps += 1;
+    } else {
+      flatSteps += 1;
+    }
+  }
+
+  const realizedPnl = position?.realizedPnl ?? account?.realizedPnl;
+
+  return {
+    baselineEquity: SIM_REWARD_BASELINE_EQUITY,
+    latestEquity,
+    equityDelta: finite(latestEquity) ? round(latestEquity - SIM_REWARD_BASELINE_EQUITY) : undefined,
+    realizedPnl,
+    unrealizedPnl: position?.unrealizedPnl ?? account?.unrealizedPnl,
+    grossRealizedPnl: finite(realizedPnl) ? round(realizedPnl + costStats.totalFee) : undefined,
+    upSteps,
+    downSteps,
+    flatSteps,
+    maxEquityDelta: points.length > 0 ? Math.max(...points.map((point) => point.delta)) : undefined,
+    minEquityDelta: points.length > 0 ? Math.min(...points.map((point) => point.delta)) : undefined
+  };
+};
+
+const buildCandidateStats = (reports: AiTraderWakeReport[]): NonNullable<AiTraderReviewSnapshot["candidateStats"]> => {
+  const byCandidate = new Map<string, {
+    candidateId: string;
+    wakes: number;
+    cumulativeEquityDelta: number;
+    upSteps: number;
+    downSteps: number;
+    flatSteps: number;
+  }>();
+  const points = sortReportsAsc(reports)
+    .flatMap((report) => finite(report.accountSnapshot?.equity) ? [{ report, equity: report.accountSnapshot.equity }] : []);
+
+  for (let index = 1; index < points.length; index += 1) {
+    const candidateId = points[index].report.selectedCandidateId ?? "unknown";
+    const change = round(points[index].equity - points[index - 1].equity);
+    const current = byCandidate.get(candidateId) ?? {
+      candidateId,
+      wakes: 0,
+      cumulativeEquityDelta: 0,
+      upSteps: 0,
+      downSteps: 0,
+      flatSteps: 0
+    };
+    current.wakes += 1;
+    current.cumulativeEquityDelta = round(current.cumulativeEquityDelta + change);
+    if (change > 0) {
+      current.upSteps += 1;
+    } else if (change < 0) {
+      current.downSteps += 1;
+    } else {
+      current.flatSteps += 1;
+    }
+    byCandidate.set(candidateId, current);
+  }
+
+  return [...byCandidate.values()]
+    .map((entry) => ({
+      ...entry,
+      averageEquityDelta: entry.wakes > 0 ? round(entry.cumulativeEquityDelta / entry.wakes) : 0
+    }))
+    .sort((left, right) => left.cumulativeEquityDelta - right.cumulativeEquityDelta)
+    .slice(0, 12);
+};
+
 const buildObservations = (
   reports: AiTraderWakeReport[],
   orders: OrderView[],
-  position: PositionView | undefined
+  position: PositionView | undefined,
+  costStats: NonNullable<AiTraderReviewSnapshot["costStats"]>,
+  rewardStats: NonNullable<AiTraderReviewSnapshot["rewardStats"]>
 ): string[] => {
   const observations: string[] = [];
   const filledOrders = orders.filter((order) => order.status === "FILLED");
@@ -44,9 +179,22 @@ const buildObservations = (
   const limitFilled = filledOrders.filter((order) => order.orderType === "limit").length;
   const canceled = orders.filter((order) => order.status === "CANCELED").length;
   const realizedPnl = position?.realizedPnl ?? reports[0]?.accountSnapshot?.dailyPnl;
+  const absoluteRealizedLoss = Math.abs(Math.min(0, realizedPnl ?? 0));
 
   if (typeof realizedPnl === "number" && realizedPnl < 0) {
     observations.push(`Realized PnL is negative (${round(realizedPnl)}); reduce churn and require cleaner reward-to-risk before opening new exposure.`);
+  }
+
+  if (costStats.totalCost > 0 && costStats.totalCost >= Math.max(0.5, absoluteRealizedLoss * 0.5)) {
+    observations.push(`Execution cost is heavy (${round(costStats.totalCost)} total, fee=${round(costStats.totalFee)}, estSlippage=${round(costStats.estimatedSlippageCost)}); avoid market probes unless the setup clearly pays for costs.`);
+  }
+
+  if ((rewardStats.equityDelta ?? 0) < 0 && (rewardStats.maxEquityDelta ?? 0) <= 0) {
+    observations.push(`Equity has not reclaimed baseline in this sample (delta=${round(rewardStats.equityDelta ?? 0)}); switch from exploration to selectivity until reward improves.`);
+  }
+
+  if (rewardStats.downSteps > Math.max(5, rewardStats.upSteps * 2)) {
+    observations.push(`Equity steps are skewed down (${rewardStats.downSteps} down vs ${rewardStats.upSteps} up); require stronger confirmation before new entries.`);
   }
 
   if (marketFilled > limitFilled) {
@@ -86,6 +234,9 @@ export const createAiTraderReviewSnapshot = (input: {
   const filledOrders = orders.filter((order) => order.status === "FILLED");
   const position = input.state.position?.symbol === symbol ? input.state.position : undefined;
   const firstWake = input.reports.at(-1);
+  const fills = aiFillEvents(input.state.fills, symbol, orders);
+  const costStats = buildCostStats(fills, orders);
+  const rewardStats = buildRewardStats(input.reports, input.state.account, position, costStats);
 
   return {
     schemaVersion: "stratium.ai-trader-review.v1",
@@ -121,6 +272,9 @@ export const createAiTraderReviewSnapshot = (input: {
       },
       byStatus: countByStatus(orders)
     },
+    costStats,
+    rewardStats,
+    candidateStats: buildCandidateStats(input.reports),
     currentPosition: position
       ? {
           symbol: position.symbol,
@@ -169,6 +323,6 @@ export const createAiTraderReviewSnapshot = (input: {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt
     })),
-    observations: buildObservations(input.reports, orders, position)
+    observations: buildObservations(input.reports, orders, position, costStats, rewardStats)
   };
 };

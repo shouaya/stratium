@@ -114,12 +114,18 @@ export class ApiRuntime {
 
   async getFillHistoryPayload(accountId: string) {
     const sessionId = this.tradingRuntime.getEngineState(accountId).simulationSessionId;
-    const persistedEvents = (await this.repository.loadEvents(sessionId))
-      .filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled");
-    const liveEvents = this.tradingRuntime.getFillHistoryEvents(accountId);
+    const repositoryWithFillHistory = this.repository as TradingRepository & {
+      listFillHistoryEvents?: (accountId: string) => Promise<AnyEventEnvelope[]>;
+    };
+    const [persistedEvents, persistedHistoryEvents, liveEvents] = await Promise.all([
+      this.repository.loadEvents(sessionId)
+        .then((events) => events.filter((event) => event.eventType === "OrderFilled" || event.eventType === "OrderPartiallyFilled")),
+      repositoryWithFillHistory.listFillHistoryEvents?.(accountId) ?? Promise.resolve([]),
+      Promise.resolve(this.tradingRuntime.getFillHistoryEvents(accountId))
+    ]);
     const merged = new Map<string, AnyEventEnvelope>();
 
-    for (const event of [...persistedEvents, ...liveEvents]) {
+    for (const event of [...persistedHistoryEvents, ...persistedEvents, ...liveEvents]) {
       const payload = event.payload as { fillId?: string };
       const mergeKey = payload.fillId ? `fill:${payload.fillId}` : `event:${event.eventId}`;
       merged.set(mergeKey, event);
@@ -345,6 +351,8 @@ export class ApiRuntime {
 
   async getAiTraderReview(accountId: string, botId: string, limit = 200) {
     const resolvedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
+    const state = this.getEngineState(accountId);
+    const fillHistory = await this.getFillHistoryPayload(accountId).catch(() => ({ events: [] }));
 
     return createAiTraderReviewSnapshot({
       accountId,
@@ -355,7 +363,10 @@ export class ApiRuntime {
         botId,
         limit: resolvedLimit
       }),
-      state: this.getEngineState(accountId)
+      state: {
+        ...state,
+        fills: fillHistory.events
+      }
     });
   }
 

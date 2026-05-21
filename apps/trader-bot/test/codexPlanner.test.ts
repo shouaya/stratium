@@ -215,6 +215,95 @@ describe("codexPlannerInternals", () => {
     });
   });
 
+  it("does not force an active simulation probe when recent reward is negative and costs are high", () => {
+    const plan = codexPlannerInternals.parseCodexPlan({
+      config: {
+        botId: "test-bot",
+        mode: "paper_execute",
+        planner: "codex",
+        runtimeTarget: "stratium_native",
+        activeSymbol: "BTC-USD",
+        wakeIntervalMs: 300_000,
+        riskPolicy: {
+          allowedSymbols: ["BTC-USD"],
+          maxActionsPerWake: 3,
+          maxOrderNotional: 100,
+          maxPositionNotional: 500,
+          requireInvalidationPrice: true,
+          allowOpeningOrders: true
+        }
+      },
+      wakeRequest: {
+        id: "wake-1",
+        botId: "test-bot",
+        symbol: "BTC-USD",
+        priority: "manual",
+        reasons: ["manual_admin"],
+        requestedAt: "2026-05-19T00:00:00.000Z",
+        source: "admin"
+      },
+      market: {
+        symbol: "BTC-USD",
+        bid: 76_000,
+        ask: 76_001,
+        last: 76_000.5,
+        timestamp: "2026-05-19T00:00:00.000Z",
+        indicators: {
+          rsi: 52,
+          return5mPct: 0.02
+        }
+      },
+      account: {
+        equity: 9_995,
+        availableMargin: 9_900,
+        currentPositionNotional: 0,
+        position: {
+          symbol: "BTC-USD",
+          side: "flat",
+          quantity: 0,
+          notional: 0
+        }
+      },
+      memories: [
+        { key: "state/open_orders", value: "[]" },
+        {
+          key: "runtime/trade_review/snapshot",
+          value: JSON.stringify({
+            rewardStats: {
+              equityDelta: -5,
+              upSteps: 2,
+              downSteps: 12,
+              flatSteps: 3
+            },
+            costStats: {
+              totalCost: 3.4
+            },
+            orderStats: {
+              marketFilled: 12,
+              limitFilled: 3
+            }
+          })
+        }
+      ],
+      now: "2026-05-19T00:00:00.000Z"
+    }, JSON.stringify({
+      schemaVersion: "stratium.ai-trader-plan.v1",
+      summary: "observe",
+      candidates: [{
+        id: "observe",
+        thesis: "wait after negative review",
+        confidence: 0.99,
+        expectedReward: 10,
+        actions: [{ type: "observe", reason: "negative reward review blocks exploration" }]
+      }]
+    }), () => undefined);
+
+    expect(plan.candidates[0]).toMatchObject({
+      id: "observe",
+      actions: [{ type: "observe" }]
+    });
+  });
+
   it("does not force an active simulation probe when the market is overextended", () => {
     const plan = codexPlannerInternals.parseCodexPlan({
       config: {

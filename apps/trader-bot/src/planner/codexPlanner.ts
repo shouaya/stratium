@@ -91,6 +91,8 @@ const CODEX_SESSION_PROMPT_CHARS_MEMORY = "runtime/codex_session/prompt_chars";
 const CODEX_SESSION_PROMPT_TOKENS_MEMORY = "runtime/codex_session/prompt_approx_tokens";
 const CODEX_SESSION_SUMMARY_MEMORY = "runtime/codex_session/summary";
 const LAST_WAKE_SUMMARY_MEMORY = "runtime/last_wake_summary";
+const TRADE_REVIEW_MEMORY = "reflection/trade_review/latest";
+const TRADE_REVIEW_SNAPSHOT_MEMORY = "runtime/trade_review/snapshot";
 const ACTIVE_SIMULATION_LAST_PROBE_AT_MEMORY = "runtime/active_simulation/last_probe_at";
 const ACTIVE_SIMULATION_LAST_PROBE_REASON_MEMORY = "runtime/active_simulation/last_probe_reason";
 const ACTIVE_SIMULATION_PROBE_COOLDOWN_MS = 15 * 60_000;
@@ -164,6 +166,22 @@ const memoryValue = (context: TraderBotPlannerContext, key: string): string => {
     }
   }
   return "";
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+const finiteNumber = (value: unknown): number | undefined => {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const jsonMemoryRecord = (context: TraderBotPlannerContext, key: string): Record<string, unknown> | undefined => {
+  try {
+    return asRecord(JSON.parse(memoryValue(context, key)));
+  } catch {
+    return undefined;
+  }
 };
 
 const upsertMemory = (
@@ -500,10 +518,47 @@ const activeSimulationProbeCooldownMs = (context: TraderBotPlannerContext): numb
   return Math.max(0, ACTIVE_SIMULATION_PROBE_COOLDOWN_MS - (currentTimeMs(context) - lastProbeAt));
 };
 
+const activeSimulationRewardBlockReason = (context: TraderBotPlannerContext): string | undefined => {
+  const review = jsonMemoryRecord(context, TRADE_REVIEW_SNAPSHOT_MEMORY);
+  const rewardStats = asRecord(review?.rewardStats);
+  const costStats = asRecord(review?.costStats);
+  const orderStats = asRecord(review?.orderStats);
+  const reflection = memoryValue(context, TRADE_REVIEW_MEMORY).toLowerCase();
+  if (reflection.includes("realized pnl is negative") && reflection.includes("marketfilled=")) {
+    return "latest reflection review reports negative realized PnL and market-fill churn";
+  }
+
+  if (!rewardStats && !costStats && !orderStats) {
+    return undefined;
+  }
+
+  const equityDelta = finiteNumber(rewardStats?.equityDelta) ?? 0;
+  const totalCost = finiteNumber(costStats?.totalCost) ?? 0;
+  const downSteps = finiteNumber(rewardStats?.downSteps) ?? 0;
+  const upSteps = finiteNumber(rewardStats?.upSteps) ?? 0;
+  const marketFilled = finiteNumber(orderStats?.marketFilled) ?? 0;
+  const limitFilled = finiteNumber(orderStats?.limitFilled) ?? 0;
+
+  if (equityDelta < -0.5 && totalCost >= 0.5 && downSteps > Math.max(5, upSteps * 2)) {
+    return `latest trade review shows negative reward (${equityDelta.toFixed(4)}) with high execution cost (${totalCost.toFixed(4)}) and ${downSteps} down steps vs ${upSteps} up steps`;
+  }
+
+  if (totalCost >= 0.5 && marketFilled > Math.max(limitFilled * 2, limitFilled + 8)) {
+    return `latest trade review shows market fills (${marketFilled}) are dominating limit fills (${limitFilled}) while costs are elevated (${totalCost.toFixed(4)})`;
+  }
+
+  return undefined;
+};
+
 const activeSimulationProbeBlockReason = (context: TraderBotPlannerContext): string | undefined => {
   const cooldownMs = activeSimulationProbeCooldownMs(context);
   if (cooldownMs > 0) {
     return `active simulation probe cooldown has ${Math.ceil(cooldownMs / 1000)}s remaining`;
+  }
+
+  const rewardBlockReason = activeSimulationRewardBlockReason(context);
+  if (rewardBlockReason) {
+    return rewardBlockReason;
   }
 
   const rsi = context.market.indicators?.rsi;

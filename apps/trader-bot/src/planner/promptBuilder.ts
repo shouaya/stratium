@@ -93,6 +93,7 @@ export const buildPrompt = (context: TraderBotPlannerContext): string => {
     "If a simulation position is already open, decide whether to close/reduce it or hold it with a concrete reason.",
     "Use runtime/codex_session and runtime/last_wake_summary memories to continue your prior trading reasoning across wakes.",
     "Use reflection/trade_review/latest when present; it is a periodic review of prior trades and should change behavior after repeated losses or churn.",
+    "When runtime/trade_review/snapshot contains negative equityDelta, high totalCost, or many downSteps, reduce trading frequency and require setups that clearly overcome fees and slippage.",
     "If the account is flat, no open orders exist, and paper execution is enabled, an observe-only plan should be treated as an exception.",
     "Avoid repeated observe-only wakes unless the market/account state clearly justifies waiting.",
     "Allowed schemaVersion: stratium.ai-trader-plan.v1.",

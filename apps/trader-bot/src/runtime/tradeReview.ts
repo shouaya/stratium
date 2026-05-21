@@ -95,6 +95,9 @@ const compactSnapshot = (review: AiTraderReviewSnapshot) => ({
   symbol: review.symbol,
   wakeStats: review.wakeStats,
   orderStats: review.orderStats,
+  costStats: review.costStats,
+  rewardStats: review.rewardStats,
+  candidateStats: review.candidateStats?.slice(0, 8),
   currentPosition: review.currentPosition,
   account: review.account,
   latestMarket: review.latestMarket,
@@ -113,6 +116,12 @@ export const createTradeReviewMemories = (
     `Review generated at ${review.generatedAt} for ${review.symbol}.`,
     `Wakes sampled: ${review.wakeStats.total}, approved actions: ${review.wakeStats.approvedActions}, rejected actions: ${review.wakeStats.rejectedActions}.`,
     `Orders: filled=${review.orderStats.filled}, open=${review.orderStats.open}, canceled=${review.orderStats.canceled}, marketFilled=${review.orderStats.marketFilled}, limitFilled=${review.orderStats.limitFilled}.`,
+    review.rewardStats
+      ? `Reward: equityDelta=${review.rewardStats.equityDelta ?? "n/a"}, realizedPnl=${review.rewardStats.realizedPnl ?? "n/a"}, grossRealizedPnl=${review.rewardStats.grossRealizedPnl ?? "n/a"}, steps=${review.rewardStats.upSteps}up/${review.rewardStats.downSteps}down/${review.rewardStats.flatSteps}flat.`
+      : "Reward: unavailable.",
+    review.costStats
+      ? `Costs: total=${review.costStats.totalCost}, fee=${review.costStats.totalFee}, estSlippage=${review.costStats.estimatedSlippageCost}, fills=${review.costStats.fillCount}, taker=${review.costStats.takerFills}.`
+      : "Costs: unavailable.",
     review.currentPosition
       ? `Position: ${review.currentPosition.side} ${review.currentPosition.quantity} ${review.currentPosition.symbol}, realizedPnl=${review.currentPosition.realizedPnl}, unrealizedPnl=${review.currentPosition.unrealizedPnl}.`
       : "Position: unavailable.",

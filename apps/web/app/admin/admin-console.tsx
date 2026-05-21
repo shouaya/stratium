@@ -1135,6 +1135,21 @@ export function AdminConsole({
                         <MiniMetric label="Canceled" value={String(botReview.orderStats.canceled)} tone="neutral" />
                         <MiniMetric label="Market" value={String(botReview.orderStats.marketFilled)} tone={botReview.orderStats.marketFilled > botReview.orderStats.limitFilled ? "bad" : "neutral"} />
                       </div>
+                      {botReview.rewardStats || botReview.costStats ? (
+                        <div style={miniMetricGrid}>
+                          <MiniMetric label="Net Reward" value={fmt(botReview.rewardStats?.equityDelta, 4)} tone={(botReview.rewardStats?.equityDelta ?? 0) >= 0 ? "good" : "bad"} />
+                          <MiniMetric label="Gross PnL" value={fmt(botReview.rewardStats?.grossRealizedPnl, 4)} tone={(botReview.rewardStats?.grossRealizedPnl ?? 0) >= 0 ? "good" : "bad"} />
+                          <MiniMetric label="Fees" value={fmt(botReview.costStats?.totalFee, 4)} tone={(botReview.costStats?.totalFee ?? 0) > 0 ? "bad" : "neutral"} />
+                          <MiniMetric label="Slip Cost" value={fmt(botReview.costStats?.estimatedSlippageCost, 4)} tone={(botReview.costStats?.estimatedSlippageCost ?? 0) > 0 ? "bad" : "neutral"} />
+                        </div>
+                      ) : null}
+                      {botReview.rewardStats ? (
+                        <div style={timelineMeta}>
+                          <span>{botReview.rewardStats.upSteps} up steps</span>
+                          <span>{botReview.rewardStats.downSteps} down steps</span>
+                          <span>{botReview.rewardStats.flatSteps} flat steps</span>
+                        </div>
+                      ) : null}
                       <BarChart items={botStatusMix} />
                     </div>
                   ) : (

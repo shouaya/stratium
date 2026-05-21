@@ -95,6 +95,7 @@ const review: AiTraderReviewSnapshot = {
     unrealizedPnl: 0
   },
   recentWakes: [],
+  recentOrders: [],
   observations: ["Realized PnL is negative; reduce churn."]
 };
 

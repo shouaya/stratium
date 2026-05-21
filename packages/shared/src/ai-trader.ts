@@ -277,6 +277,40 @@ export type AiTraderReviewSnapshot = {
     byType: Record<AiTraderOrderType, number>;
     byStatus: Record<string, number>;
   };
+  costStats?: {
+    fillCount: number;
+    makerFills: number;
+    takerFills: number;
+    marketFills: number;
+    limitFills: number;
+    totalFee: number;
+    totalSlippage: number;
+    estimatedSlippageCost: number;
+    totalCost: number;
+    averageCostPerFill: number;
+  };
+  rewardStats?: {
+    baselineEquity: number;
+    latestEquity?: number;
+    equityDelta?: number;
+    realizedPnl?: number;
+    unrealizedPnl?: number;
+    grossRealizedPnl?: number;
+    upSteps: number;
+    downSteps: number;
+    flatSteps: number;
+    maxEquityDelta?: number;
+    minEquityDelta?: number;
+  };
+  candidateStats?: Array<{
+    candidateId: string;
+    wakes: number;
+    cumulativeEquityDelta: number;
+    averageEquityDelta: number;
+    upSteps: number;
+    downSteps: number;
+    flatSteps: number;
+  }>;
   currentPosition?: {
     symbol: string;
     side: "long" | "short" | "flat";
