@@ -63,6 +63,52 @@ describe("TradingEngine", () => {
     expect((fillEvent?.payload as { feeRate: number }).feeRate).toBe(0.0005);
   });
 
+  it("does not fill a marketable limit buy above its limit price", () => {
+    const engine = new TradingEngine(createInitialTradingState());
+
+    engine.ingestMarketTick(baseTick);
+
+    const result = engine.submitOrder({
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      side: "buy",
+      orderType: "limit",
+      quantity: 1,
+      limitPrice: 101,
+      submittedAt: "2026-03-26T00:00:02.000Z"
+    });
+
+    const order = result.state.orders[0];
+    const fillEvent = result.events.find((event) => event.eventType === "OrderFilled");
+
+    expect(order?.status).toBe("FILLED");
+    expect(order?.averageFillPrice).toBe(101);
+    expect((fillEvent?.payload as { fillPrice: number }).fillPrice).toBe(101);
+  });
+
+  it("does not fill a marketable limit sell below its limit price", () => {
+    const engine = new TradingEngine(createInitialTradingState());
+
+    engine.ingestMarketTick(baseTick);
+
+    const result = engine.submitOrder({
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      side: "sell",
+      orderType: "limit",
+      quantity: 1,
+      limitPrice: 100,
+      submittedAt: "2026-03-26T00:00:02.000Z"
+    });
+
+    const order = result.state.orders[0];
+    const fillEvent = result.events.find((event) => event.eventType === "OrderFilled");
+
+    expect(order?.status).toBe("FILLED");
+    expect(order?.averageFillPrice).toBe(100);
+    expect((fillEvent?.payload as { fillPrice: number }).fillPrice).toBe(100);
+  });
+
   it("closes an existing long with a market sell and realizes pnl", () => {
     const engine = new TradingEngine(createInitialTradingState());
 

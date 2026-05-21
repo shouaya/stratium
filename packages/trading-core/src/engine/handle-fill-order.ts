@@ -1,6 +1,6 @@
 import type { AnyEventEnvelope, FillPayload, OrderStatus } from "@stratium/shared";
 import { round } from "../domain/state.js";
-import { applyExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing.js";
+import { applyOrderExecutionPricing, getExecutableReferencePrice, getLiquidityRole } from "../rules/pricing.js";
 import type { HandleFillOrderArgs } from "./handler-types.js";
 
 const resolveFillQuantity = (remainingQuantity: number, partialFillEnabled: boolean): number => {
@@ -43,8 +43,8 @@ export const handleFillOrder = ({
   const symbolConfig = context.getSymbolConfig();
   const fillQuantity = resolveFillQuantity(order.remainingQuantity, symbolConfig.partialFillEnabled);
   const liquidityRole = getLiquidityRole(order, occurredAt);
-  const fillPrice = applyExecutionPricing(
-    order.side,
+  const fillPrice = applyOrderExecutionPricing(
+    order,
     executable,
     liquidityRole,
     symbolConfig.baseSlippageBps

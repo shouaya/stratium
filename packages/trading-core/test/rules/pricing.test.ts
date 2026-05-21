@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MarketTick, OrderView } from "@stratium/shared";
 import {
   applyExecutionPricing,
+  applyOrderExecutionPricing,
   getExecutableReferencePrice,
   getLiquidityRole,
   getMarketReferencePrice
@@ -63,5 +64,11 @@ describe("pricing rules", () => {
     expect(applyExecutionPricing("buy", 100, "maker", 5)).toBe(100);
     expect(applyExecutionPricing("buy", 100, "taker", 5)).toBe(100.05);
     expect(applyExecutionPricing("sell", 100, "taker", 5)).toBe(99.95);
+  });
+
+  it("caps taker limit execution prices at the order limit", () => {
+    expect(applyOrderExecutionPricing({ ...baseOrder, side: "buy", limitPrice: 100 }, 100, "taker", 5)).toBe(100);
+    expect(applyOrderExecutionPricing({ ...baseOrder, side: "sell", limitPrice: 100 }, 100, "taker", 5)).toBe(100);
+    expect(applyOrderExecutionPricing({ ...baseOrder, side: "buy", orderType: "market" }, 100, "taker", 5)).toBe(100.05);
   });
 });

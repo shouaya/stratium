@@ -55,3 +55,25 @@ export const applyExecutionPricing = (
     ? round(referencePrice + slippage)
     : round(referencePrice - slippage);
 };
+
+export const applyOrderExecutionPricing = (
+  order: Pick<OrderView, "side" | "orderType" | "limitPrice">,
+  referencePrice: number,
+  liquidityRole: LiquidityRole,
+  baseSlippageBps: number
+): number => {
+  const executionPrice = applyExecutionPricing(
+    order.side,
+    referencePrice,
+    liquidityRole,
+    baseSlippageBps
+  );
+
+  if (order.orderType !== "limit" || order.limitPrice == null) {
+    return executionPrice;
+  }
+
+  return order.side === "buy"
+    ? round(Math.min(executionPrice, order.limitPrice))
+    : round(Math.max(executionPrice, order.limitPrice));
+};
