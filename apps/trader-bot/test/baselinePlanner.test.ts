@@ -69,6 +69,21 @@ describe("createBaselinePlanner", () => {
     });
   });
 
+  it("uses the configured AI language for baseline natural-language fields", async () => {
+    const plan = await createBaselinePlanner().plan(createContext({
+      memories: [{
+        key: "platform/ai_language",
+        value: "ja"
+      }, {
+        key: "state/open_orders",
+        value: "[]"
+      }]
+    })) as AiTraderPlan;
+
+    expect(plan.summary).toContain("Baseline プランナー");
+    expect(plan.candidates[0]?.riskNotes?.[0]).toContain("本番用");
+  });
+
   it("closes an existing probe position before opening another one", async () => {
     const plan = await createBaselinePlanner().plan(createContext({
       account: {

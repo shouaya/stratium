@@ -49,6 +49,7 @@ export interface TraderMcpRuntimeConfig {
   port?: number;
   mcpPath?: string;
   corsOrigin?: string;
+  toolMode?: "trader" | "analyst" | "all";
   debugLogPath?: string;
   logger?: TraderMcpLogger;
   frontendUsername?: string;

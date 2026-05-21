@@ -155,6 +155,69 @@ describe("StratiumHttpClient", () => {
     expect((infoRequest.headers as Record<string, string>).authorization).toBe("Bearer platform-token");
   });
 
+  it("uses an injected admin bearer token for analyst read and memo tools", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          generatedAt: "2026-05-19T00:00:00.000Z",
+          profiles: [{ botId: "local-demo-trader" }],
+          aiLanguage: { language: "zh" }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          language: "zh",
+          instruction: "Use Simplified Chinese."
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: "recorded",
+          memory: {
+            key: "strategy_memo/all/latest",
+            value: "Favor fewer trades until costs improve."
+          }
+        })
+      });
+
+    const client = new StratiumHttpClient({
+      apiBaseUrl: "http://127.0.0.1:4000",
+      authToken: "admin-token"
+    });
+
+    expect(await client.getAnalystBots()).toMatchObject({
+      profiles: [{ botId: "local-demo-trader" }],
+      aiLanguage: { language: "zh" }
+    });
+    expect(await client.getAnalystLanguage()).toMatchObject({
+      language: "zh"
+    });
+    expect(await client.writeAnalystMemo({
+      value: "Favor fewer trades until costs improve.",
+      importance: 0.9,
+      source: "strategy_package"
+    })).toMatchObject({
+      status: "recorded",
+      memory: {
+        key: "strategy_memo/all/latest"
+      }
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4000/api/admin/analyst/bots");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      authorization: "Bearer admin-token"
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:4000/api/admin/analyst/language");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("http://127.0.0.1:4000/api/admin/analyst/memos");
+    expect(JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body))).toMatchObject({
+      value: "Favor fewer trades until costs improve.",
+      source: "strategy_package"
+    });
+  });
+
   it("logs outgoing request and response payloads", async () => {
     const log = vi.fn().mockResolvedValue(undefined);
 

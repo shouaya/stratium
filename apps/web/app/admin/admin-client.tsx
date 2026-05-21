@@ -23,6 +23,14 @@ const apiBaseUrl = resolveApiBaseUrl();
 
 export type AdminSection = "dashboard" | "users" | "platform" | "market" | "batch" | "bots";
 
+const persistAiLanguage = async (token: string, locale: AppLocale): Promise<void> => {
+  await fetch(buildApiUrl(apiBaseUrl, "/api/admin/ai-language"), {
+    method: "PUT",
+    headers: authHeaders(token, locale, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ language: locale })
+  }).catch(() => undefined);
+};
+
 export function AdminProtectedPage({ section }: { section: AdminSection }) {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
@@ -67,6 +75,7 @@ export function AdminProtectedPage({ section }: { section: AdminSection }) {
 
       setToken(candidateToken);
       setUser(payload.user);
+      void persistAiLanguage(candidateToken, nextLocale);
     } catch {
       clearStoredToken("admin");
       router.replace("/admin/login");
@@ -110,6 +119,7 @@ export function AdminProtectedPage({ section }: { section: AdminSection }) {
       onLocaleChange={(nextLocale) => {
         setLocale(nextLocale);
         setStoredLocale(nextLocale);
+        void persistAiLanguage(token, nextLocale);
       }}
       onLogout={() => void logout()}
     />
@@ -184,6 +194,7 @@ export function AdminLoginPage() {
       }
 
       setStoredToken("admin", payload.token);
+      void persistAiLanguage(payload.token, locale);
       setPlatform(payload.platform ?? null);
       router.replace("/admin/dashboard");
     } catch {

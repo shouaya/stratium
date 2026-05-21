@@ -107,4 +107,77 @@ describe("createMcpExecutor", () => {
     }));
     expect(results[0].status).toBe("executed");
   });
+
+  it("executes close_position in reduce-only mode", async () => {
+    const callTool = vi.fn(async () => ({ raw: { ok: true } }));
+    const executor = createMcpExecutor({
+      market,
+      account: {
+        equity: 10_000,
+        availableMargin: 9_000,
+        currentPositionNotional: 100,
+        position: {
+          symbol: "BTC-USD",
+          side: "short",
+          quantity: 0.003,
+          notional: 300
+        }
+      },
+      mcpClient: {
+        callTool,
+        listToolNames: async () => [],
+        close: async () => undefined
+      } satisfies TraderMcpClient
+    });
+
+    const results = await executor.execute("reduce_only", [
+      {
+        type: "close_position",
+        symbol: "BTC-USD",
+        reason: "risk-off exit"
+      }
+    ]);
+
+    expect(callTool).toHaveBeenCalledWith("stratium_place_order", expect.objectContaining({
+      isBuy: true,
+      price: "101000",
+      size: "0.003",
+      reduceOnly: true,
+      tif: "Ioc"
+    }));
+    expect(results[0]).toMatchObject({
+      status: "executed",
+      message: "close_position submitted as reduce-only order through Trader MCP"
+    });
+  });
+
+  it("rejects opening place_order in reduce-only mode before calling MCP", async () => {
+    const callTool = vi.fn();
+    const executor = createMcpExecutor({
+      market,
+      mcpClient: {
+        callTool,
+        listToolNames: async () => [],
+        close: async () => undefined
+      } satisfies TraderMcpClient
+    });
+
+    const results = await executor.execute("reduce_only", [
+      {
+        type: "place_order",
+        symbol: "BTC-USD",
+        side: "buy",
+        orderType: "market",
+        quantity: 0.001,
+        invalidationPrice: 99_000,
+        reason: "not allowed"
+      }
+    ]);
+
+    expect(callTool).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({
+      status: "rejected",
+      message: "reduce-only mode rejects opening orders at execution"
+    });
+  });
 });

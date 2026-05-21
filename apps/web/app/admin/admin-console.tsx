@@ -161,6 +161,21 @@ const actionTone = (status: string): "good" | "bad" | "neutral" =>
 const orderTone = (status: string): "good" | "bad" | "neutral" =>
   status === "FILLED" ? "good" : status === "REJECTED" ? "bad" : "neutral";
 
+const botWinRate = (review: AiTraderReviewSnapshot | null) => {
+  const upSteps = review?.rewardStats?.upSteps ?? 0;
+  const downSteps = review?.rewardStats?.downSteps ?? 0;
+  const flatSteps = review?.rewardStats?.flatSteps ?? 0;
+  const decisiveSteps = upSteps + downSteps;
+
+  return {
+    upSteps,
+    downSteps,
+    flatSteps,
+    decisiveSteps,
+    rate: decisiveSteps > 0 ? (upSteps / decisiveSteps) * 100 : undefined
+  };
+};
+
 const botHealthTone = (health: AiTraderAdminBotProfile["health"]): "good" | "bad" | "neutral" =>
   health === "running" ? "good" : health === "failed" ? "bad" : "neutral";
 
@@ -1047,6 +1062,8 @@ export function AdminConsole({
   const renderBots = () => {
     const overview = botDashboard?.overview;
     const profiles = botDashboard?.profiles ?? [];
+    const winRate = botWinRate(botReview);
+    const winRateTone = winRate.rate == null ? "neutral" : winRate.rate >= 50 ? "good" : "bad";
 
     return (
       <div style={{ display: "grid", gap: 16 }}>
@@ -1121,7 +1138,27 @@ export function AdminConsole({
                     {fmt(botPnlPoints.at(-1)?.value ?? 0, 4)}
                   </span>
                 </div>
-                <LineChart points={botPnlPoints} height={220} />
+                <div style={pnlCurveGrid}>
+                  <div style={winRateCard}>
+                    <div>
+                      <div style={statusLabel}>Win Rate</div>
+                      <div style={{ ...winRateValue, color: toneColor(winRateTone) }}>
+                        {winRate.rate == null ? "-" : `${fmt(winRate.rate, 1)}%`}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={winRateTrack}>
+                        <div style={{ ...winRateFill, width: `${Math.max(0, Math.min(100, winRate.rate ?? 0))}%`, background: toneColor(winRateTone) }} />
+                      </div>
+                      <div style={winRateStatsGrid}>
+                        <span>{winRate.upSteps} win</span>
+                        <span>{winRate.downSteps} loss</span>
+                        <span>{winRate.flatSteps} flat</span>
+                      </div>
+                    </div>
+                  </div>
+                  <LineChart points={botPnlPoints} height={220} />
+                </div>
               </section>
 
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
@@ -1991,6 +2028,52 @@ const miniMetricCard: CSSProperties = {
   borderRadius: 10,
   padding: "10px 12px",
   background: "#091217"
+};
+
+const pnlCurveGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "220px minmax(0, 1fr)",
+  gap: 12,
+  alignItems: "stretch"
+};
+
+const winRateCard: CSSProperties = {
+  border: "1px solid #1b3b42",
+  borderRadius: 12,
+  background: "linear-gradient(180deg, #0d1a21, #091217)",
+  padding: 14,
+  minHeight: 220,
+  display: "grid",
+  alignContent: "space-between",
+  gap: 14
+};
+
+const winRateValue: CSSProperties = {
+  marginTop: 10,
+  fontSize: 34,
+  fontWeight: 800,
+  lineHeight: 1
+};
+
+const winRateTrack: CSSProperties = {
+  height: 8,
+  background: "#071116",
+  border: "1px solid #16262f",
+  borderRadius: 999,
+  overflow: "hidden"
+};
+
+const winRateFill: CSSProperties = {
+  height: "100%",
+  borderRadius: 999
+};
+
+const winRateStatsGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr",
+  gap: 5,
+  color: "#8aa0ac",
+  fontSize: 12
 };
 
 const userCard: CSSProperties = {

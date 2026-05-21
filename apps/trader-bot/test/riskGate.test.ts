@@ -26,6 +26,18 @@ const account: TraderBotAccountSnapshot = {
   currentPositionNotional: 0
 };
 
+const longAccount: TraderBotAccountSnapshot = {
+  equity: 10_000,
+  availableMargin: 9_500,
+  currentPositionNotional: 100,
+  position: {
+    symbol: "BTC-USD",
+    side: "long",
+    quantity: 0.001,
+    notional: 100
+  }
+};
+
 describe("evaluateRisk", () => {
   it("approves observe-only candidates", () => {
     const candidate: AiTraderPlanCandidate = {
@@ -113,10 +125,80 @@ describe("evaluateRisk", () => {
       ]
     };
 
-    const decision = evaluateRisk({ mode: "reduce_only", policy, market, account, candidate });
+    const decision = evaluateRisk({ mode: "reduce_only", policy, market, account: longAccount, candidate });
 
     expect(decision.approved).toBe(false);
     expect(decision.rejectedActions[0].reasons.some((entry) => entry.rule.includes("mode_allows_opening"))).toBe(true);
+  });
+
+  it("approves close_position actions in reduce-only mode", () => {
+    const candidate: AiTraderPlanCandidate = {
+      id: "close",
+      thesis: "risk-off exit",
+      confidence: 0.7,
+      actions: [
+        {
+          type: "close_position",
+          symbol: "BTC-USD",
+          reason: "reduce risk"
+        }
+      ]
+    };
+
+    const decision = evaluateRisk({ mode: "reduce_only", policy, market, account: longAccount, candidate });
+
+    expect(decision.approved).toBe(true);
+    expect(decision.approvedActions).toHaveLength(1);
+    expect(decision.rejectedActions).toHaveLength(0);
+  });
+
+  it("approves explicit reduce-only place orders in reduce-only mode", () => {
+    const candidate: AiTraderPlanCandidate = {
+      id: "reduce",
+      thesis: "reduce partial exposure",
+      confidence: 0.7,
+      actions: [
+        {
+          type: "place_order",
+          symbol: "BTC-USD",
+          side: "sell",
+          orderType: "market",
+          quantity: 0.0005,
+          reduceOnly: true,
+          reason: "reduce partial exposure"
+        }
+      ]
+    };
+
+    const decision = evaluateRisk({ mode: "reduce_only", policy, market, account: longAccount, candidate });
+
+    expect(decision.approved).toBe(true);
+    expect(decision.approvedActions).toHaveLength(1);
+    expect(decision.rejectedActions).toHaveLength(0);
+  });
+
+  it("rejects reduce-only place orders when no position exists", () => {
+    const candidate: AiTraderPlanCandidate = {
+      id: "reduce-flat",
+      thesis: "cannot reduce flat account",
+      confidence: 0.7,
+      actions: [
+        {
+          type: "place_order",
+          symbol: "BTC-USD",
+          side: "sell",
+          orderType: "market",
+          quantity: 0.0005,
+          reduceOnly: true,
+          reason: "flat account"
+        }
+      ]
+    };
+
+    const decision = evaluateRisk({ mode: "reduce_only", policy, market, account, candidate });
+
+    expect(decision.approved).toBe(false);
+    expect(decision.rejectedActions[0].reasons.some((entry) => entry.rule.includes("reduce_only_position_exists"))).toBe(true);
   });
 
   it("rejects cancel orders without an order id or client order id", () => {

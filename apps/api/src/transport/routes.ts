@@ -23,6 +23,9 @@ const MARKET_VOLUME_DEFAULT_LIMIT = 500;
 const MARKET_VOLUME_MAX_LIMIT = 2_000;
 const MARKET_VOLUME_INTERVAL_PATTERN = /^\d+[mh]$/i;
 
+const normalizeAiTraderLanguage = (value: unknown): "zh" | "ja" | "en" | null =>
+  value === "zh" || value === "ja" || value === "en" ? value : null;
+
 type HyperliquidInfoRequestBody = {
   type?: string;
   coin?: string;
@@ -598,6 +601,179 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
     };
   });
 
+  app.get("/api/admin/ai-language", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return runtime.getAiLanguagePayload();
+  });
+
+  app.put("/api/admin/ai-language", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const payload = request.body as { language?: string } | undefined;
+    const language = normalizeAiTraderLanguage(payload?.language);
+
+    if (!language) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "AI language must be zh, ja, or en."
+      });
+    }
+
+    const memory = await runtime.updateAiLanguagePreference(language);
+
+    return {
+      status: "recorded",
+      ...(await runtime.getAiLanguagePayload()),
+      memory
+    };
+  });
+
+  app.get("/api/admin/analyst/bots", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return {
+      ...(await runtime.getAiTraderAdminDashboard()),
+      aiLanguage: await runtime.getAiLanguagePayload()
+    };
+  });
+
+  app.get("/api/admin/analyst/language", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    return runtime.getAiLanguagePayload();
+  });
+
+  app.get("/api/admin/analyst/bot-reviews", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const query = request.query as { limit?: string };
+    const limit = Number(query.limit ?? 200);
+
+    return runtime.getAnalystAllBotReviews(Number.isFinite(limit) ? limit : 200);
+  });
+
+  app.get("/api/admin/analyst/bots/:botId/review", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const params = request.params as { botId: string };
+    const query = request.query as { accountId?: string; limit?: string };
+    const limit = Number(query.limit ?? 200);
+    const review = await runtime.getAnalystBotReview(
+      params.botId,
+      query.accountId,
+      Number.isFinite(limit) ? limit : 200
+    );
+
+    if (!review) {
+      return reply.code(404).send({
+        status: "not_found",
+        message: "No trader bot account was found for this bot id."
+      });
+    }
+
+    return {
+      botId: params.botId,
+      review
+    };
+  });
+
+  app.get("/api/admin/analyst/bots/:botId/wakes", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const params = request.params as { botId: string };
+    const query = request.query as { limit?: string };
+    const limit = Number(query.limit ?? 200);
+
+    return {
+      botId: params.botId,
+      wakes: await runtime.listAiTraderWakeReports(params.botId, Number.isFinite(limit) ? limit : 200)
+    };
+  });
+
+  app.get("/api/admin/analyst/bots/:botId/memories", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const params = request.params as { botId: string };
+    const query = request.query as { accountId?: string; limit?: string };
+    const limit = Number(query.limit ?? 200);
+
+    return {
+      botId: params.botId,
+      memories: await runtime.listAnalystBotMemories(
+        params.botId,
+        query.accountId,
+        Number.isFinite(limit) ? limit : 200
+      )
+    };
+  });
+
+  app.get("/api/admin/analyst/memos", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const query = request.query as { targetBotId?: string; limit?: string };
+    const limit = Number(query.limit ?? 200);
+
+    return {
+      targetBotId: query.targetBotId?.trim() || undefined,
+      memories: await runtime.listAnalystMemos(
+        query.targetBotId,
+        Number.isFinite(limit) ? limit : 200
+      )
+    };
+  });
+
+  app.post("/api/admin/analyst/memos", async (request, reply) => {
+    if (!requireRole(request, reply, "admin")) {
+      return;
+    }
+
+    const payload = request.body as {
+      targetBotId?: string;
+      memoryKey?: string;
+      value?: string;
+      importance?: number;
+      source?: "runtime" | "reflection" | "strategy_package" | "manual";
+    } | undefined;
+    const value = payload?.value?.trim();
+
+    if (!payload || !value) {
+      return reply.code(400).send({
+        status: "rejected",
+        message: "Analyst memo requires a non-empty value."
+      });
+    }
+
+    return reply.code(201).send({
+      status: "recorded",
+      memory: await runtime.upsertAnalystMemo({
+        targetBotId: payload.targetBotId,
+        memoryKey: payload.memoryKey,
+        value,
+        importance: payload.importance,
+        source: payload.source
+      })
+    });
+  });
+
   app.post("/api/trader-bot/wakes", async (request, reply) => {
     const session = requireRole(request, reply, "frontend");
     if (!session) {
@@ -639,7 +815,7 @@ export const registerRoutes = async (app: FastifyInstance, runtime: ApiRuntime):
 
     return {
       botId,
-      memories: await runtime.listAiTraderMemories(accountId, botId)
+      memories: await runtime.listTraderBotPromptMemories(accountId, botId)
     };
   });
 

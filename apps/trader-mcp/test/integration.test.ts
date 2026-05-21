@@ -168,6 +168,7 @@ describe("trader-mcp http integration", () => {
 
     const toolList = await client.listTools();
     expect(toolList.tools.some((tool) => tool.name === "stratium_get_meta")).toBe(true);
+    expect(toolList.tools.some((tool) => tool.name === "stratium_analyst_list_bots")).toBe(true);
     expect(toolList.tools.some((tool) => tool.name === "stratium_place_order")).toBe(true);
 
     const metaResult = await client.callTool({
@@ -253,5 +254,37 @@ describe("trader-mcp http integration", () => {
       entry.channel === "outgoing-stratium-http"
       && entry.data?.request?.path === "/exchange"
       && entry.data?.response?.status === 200)).toBe(true);
+  });
+
+  it("can expose analyst-only tools without trading actions", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "stratium-analyst-mcp-logs-"));
+    const runtime = await startTraderMcpHttpServer({
+      apiBaseUrl: "http://127.0.0.1:4619",
+      host: "127.0.0.1",
+      port: 4614,
+      debugLogPath: join(logDir, "http.ndjson"),
+      toolMode: "analyst"
+    });
+    cleanups.push(runtime.close);
+
+    const client = new Client({
+      name: "analyst-integration-client",
+      version: "1.0.0"
+    });
+    cleanups.push(async () => {
+      await client.close();
+    });
+
+    const transport = new StreamableHTTPClientTransport(new URL("http://127.0.0.1:4614/mcp"));
+    cleanups.push(async () => {
+      await transport.close();
+    });
+
+    await client.connect(transport);
+
+    const toolList = await client.listTools();
+    expect(toolList.tools.some((tool) => tool.name === "stratium_analyst_list_bots")).toBe(true);
+    expect(toolList.tools.some((tool) => tool.name === "stratium_place_order")).toBe(false);
+    expect(toolList.tools.some((tool) => tool.name === "stratium_cancel_order")).toBe(false);
   });
 });

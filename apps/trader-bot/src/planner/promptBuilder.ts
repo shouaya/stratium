@@ -1,16 +1,29 @@
 import type { TraderBotPlannerContext } from "../types.js";
+import { responseExampleText, resolveTraderBotLanguage, TRADER_LANGUAGE_INSTRUCTIONS, TRADER_LANGUAGE_LABELS } from "./language.js";
 
 const MEMORY_PRIORITY: Record<string, number> = {
-  "runtime/codex_session/id": 100,
-  "runtime/codex_session/wake_count": 99,
-  "runtime/codex_session/summary": 98,
-  "runtime/last_wake_summary": 97,
+  "state/open_orders": 100,
   "reflection/trade_review/latest": 96,
   "runtime/trade_review/snapshot": 95,
-  "state/open_orders": 90
+  "strategy_memo/all/latest": 94,
+  "runtime/last_wake_summary": 93,
+  "runtime/codex_session/summary": 92,
+  "runtime/codex_session/id": 91,
+  "runtime/codex_session/wake_count": 90
 };
 
-const memoryRank = (key: string): number => MEMORY_PRIORITY[key] ?? 0;
+const memoryRank = (key: string): number => {
+  if (key.startsWith("strategy_memo/") && !key.startsWith("strategy_memo/all/")) {
+    return 96.5;
+  }
+  if (key.startsWith("global_review/")) {
+    return 94.5;
+  }
+  if (key.startsWith("strategy_memo/")) {
+    return 93.5;
+  }
+  return MEMORY_PRIORITY[key] ?? 0;
+};
 
 export const BASE_TRADER_PLAYBOOK = {
   identity: "A disciplined simulation trader with basic market structure, execution, and risk-management skill.",
@@ -67,10 +80,17 @@ const selectPromptMemories = (context: TraderBotPlannerContext) =>
     .slice(0, 12);
 
 export const buildPrompt = (context: TraderBotPlannerContext): string => {
+  const outputLanguage = resolveTraderBotLanguage(context);
+  const responseText = responseExampleText(outputLanguage);
   const compactContext = {
     now: context.now,
     botId: context.config.botId,
     mode: context.config.mode,
+    outputLanguage: {
+      code: outputLanguage,
+      label: TRADER_LANGUAGE_LABELS[outputLanguage],
+      instruction: TRADER_LANGUAGE_INSTRUCTIONS[outputLanguage]
+    },
     wakeReasons: context.wakeRequest.reasons,
     activeSymbol: context.config.activeSymbol,
     riskPolicy: context.config.riskPolicy,
@@ -83,15 +103,20 @@ export const buildPrompt = (context: TraderBotPlannerContext): string => {
   return [
     "You are a Stratium AI trader running in simulation.",
     "Return JSON only. Do not include markdown.",
+    TRADER_LANGUAGE_INSTRUCTIONS[outputLanguage],
     "You have a basic trader skill pack. Apply it every wake before choosing an action.",
     "The simulator is your training and execution environment, not a passive dashboard.",
     "Think in this order: market regime, current position, open orders, setup quality, risk, execution, expected feedback.",
+    "Apply this conflict priority exactly: hard risk policy > live account / position / open orders > bot-specific analyst memo > latest bot trade review facts > global analyst memo > last wake summary > stale memories.",
+    "Analyst memos can change strategy bias, but they never override the current account, position, open orders, or local risk policy.",
+    "If analyst guidance conflicts with recent trade review evidence or live state, follow the higher-priority layer and state the conflict in riskNotes.",
     "Your thesis must show basic trading reasoning, not only a generic statement.",
     "Your riskNotes should include the main invalidation, sizing risk, and what would prove the idea wrong.",
     "When risk limits allow and you have a testable thesis, prefer a small bounded executable action over passive observation.",
     "Observation is only appropriate when there is no safe setup, existing exposure needs time, or the safest action is to wait.",
     "If a simulation position is already open, decide whether to close/reduce it or hold it with a concrete reason.",
     "Use runtime/codex_session and runtime/last_wake_summary memories to continue your prior trading reasoning across wakes.",
+    "Use strategy_memo/* and global_review/* memories as analyst guidance; treat them as higher-level team guidance while still applying risk checks.",
     "Use reflection/trade_review/latest when present; it is a periodic review of prior trades and should change behavior after repeated losses or churn.",
     "When runtime/trade_review/snapshot contains negative equityDelta, high totalCost, or many downSteps, reduce trading frequency and require setups that clearly overcome fees and slippage.",
     "If the account is flat, no open orders exist, and paper execution is enabled, an observe-only plan should be treated as an exception.",
@@ -107,18 +132,18 @@ export const buildPrompt = (context: TraderBotPlannerContext): string => {
     "Response shape:",
     JSON.stringify({
       schemaVersion: "stratium.ai-trader-plan.v1",
-      summary: "short summary",
+      summary: responseText.summary,
       candidates: [
         {
           id: "candidate-1",
-          thesis: "why this plan is reasonable",
+          thesis: responseText.thesis,
           confidence: 0.5,
           expectedReward: 0,
-          riskNotes: ["main risk"],
+          riskNotes: [responseText.riskNote],
           actions: [
             {
               type: "observe",
-              reason: "why no trade is best"
+              reason: responseText.reason
             }
           ]
         }

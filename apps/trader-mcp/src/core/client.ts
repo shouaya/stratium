@@ -236,6 +236,147 @@ export class StratiumHttpClient {
     });
   }
 
+  async getAnalystBots() {
+    const token = await this.getFrontendToken();
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/admin/analyst/bots`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "analyst-bot-list",
+      path: "/api/admin/analyst/bots"
+    });
+  }
+
+  async getAnalystLanguage() {
+    const token = await this.getFrontendToken();
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/admin/analyst/language`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "analyst-language",
+      path: "/api/admin/analyst/language"
+    });
+  }
+
+  async getAnalystAllBotReviews(limit = 200) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ limit: String(limit) });
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/admin/analyst/bot-reviews?${params.toString()}`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "analyst-all-bot-reviews",
+      path: "/api/admin/analyst/bot-reviews"
+    });
+  }
+
+  async getAnalystBotReview(botId: string, accountId?: string, limit = 200) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (accountId?.trim()) {
+      params.set("accountId", accountId.trim());
+    }
+
+    return this.fetchJson(
+      `${this.config.apiBaseUrl}/api/admin/analyst/bots/${encodeURIComponent(botId)}/review?${params.toString()}`,
+      {
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      },
+      {
+        stage: "analyst-bot-review",
+        path: "/api/admin/analyst/bots/:botId/review"
+      }
+    );
+  }
+
+  async getAnalystBotWakes(botId: string, limit = 100) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ limit: String(limit) });
+
+    return this.fetchJson(
+      `${this.config.apiBaseUrl}/api/admin/analyst/bots/${encodeURIComponent(botId)}/wakes?${params.toString()}`,
+      {
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      },
+      {
+        stage: "analyst-bot-wakes",
+        path: "/api/admin/analyst/bots/:botId/wakes"
+      }
+    );
+  }
+
+  async getAnalystBotMemories(botId: string, accountId?: string, limit = 100) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (accountId?.trim()) {
+      params.set("accountId", accountId.trim());
+    }
+
+    return this.fetchJson(
+      `${this.config.apiBaseUrl}/api/admin/analyst/bots/${encodeURIComponent(botId)}/memories?${params.toString()}`,
+      {
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      },
+      {
+        stage: "analyst-bot-memories",
+        path: "/api/admin/analyst/bots/:botId/memories"
+      }
+    );
+  }
+
+  async listAnalystMemos(targetBotId?: string, limit = 200) {
+    const token = await this.getFrontendToken();
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (targetBotId?.trim()) {
+      params.set("targetBotId", targetBotId.trim());
+    }
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/admin/analyst/memos?${params.toString()}`, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    }, {
+      stage: "analyst-memo-list",
+      path: "/api/admin/analyst/memos"
+    });
+  }
+
+  async writeAnalystMemo(input: {
+    targetBotId?: string;
+    memoryKey?: string;
+    value: string;
+    importance?: number;
+    source?: "runtime" | "reflection" | "strategy_package" | "manual";
+  }) {
+    const token = await this.getFrontendToken();
+    const requestBody = JSON.stringify(input);
+
+    return this.fetchJson(`${this.config.apiBaseUrl}/api/admin/analyst/memos`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: requestBody
+    }, {
+      stage: "analyst-memo-write",
+      path: "/api/admin/analyst/memos",
+      requestBody
+    });
+  }
+
   async toMcpResult(operation: string, response: unknown, summary?: unknown) {
     const resolvedSummary = summary ?? response;
     return {

@@ -44,6 +44,27 @@ const toReduceOnlyOrderArgs = (
   };
 };
 
+const reduceOnlyPlaceOrderRejection = (
+  action: Extract<AiTraderPlanAction, { type: "place_order" }>,
+  account: TraderBotAccountSnapshot | undefined
+): string | undefined => {
+  if (action.reduceOnly !== true) {
+    return "reduce-only mode rejects opening orders at execution";
+  }
+  const position = account?.position;
+  if (!position || position.side === "flat" || position.quantity <= 0) {
+    return "reduce-only place_order requires an open position";
+  }
+  const reduces = (position.side === "long" && action.side === "sell") || (position.side === "short" && action.side === "buy");
+  if (!reduces) {
+    return "reduce-only place_order side does not reduce the current position";
+  }
+  if (action.quantity > position.quantity) {
+    return "reduce-only place_order quantity exceeds the current position";
+  }
+  return undefined;
+};
+
 const executeAction = async (
   mcpClient: TraderMcpClient,
   market: TraderBotMarketSnapshot,
@@ -130,12 +151,23 @@ export const createMcpExecutor = (input: {
   account?: TraderBotAccountSnapshot;
 }): TraderBotExecutor => ({
   execute: async (mode: AiTraderMode, actions: AiTraderPlanAction[]) => {
-    if (mode !== "paper_execute") {
+    if (mode !== "paper_execute" && mode !== "reduce_only") {
       return createShadowExecutionResults(mode, actions);
     }
 
     const results: TraderBotExecutionResult[] = [];
     for (const action of actions) {
+      if (mode === "reduce_only" && action.type === "place_order") {
+        const rejection = reduceOnlyPlaceOrderRejection(action, input.account);
+        if (rejection) {
+          results.push({
+            action,
+            status: "rejected",
+            message: rejection
+          });
+          continue;
+        }
+      }
       results.push(await executeAction(input.mcpClient, input.market, input.account, action));
     }
     return results;

@@ -319,6 +319,39 @@ describe("TradingRepository", () => {
     }]);
   });
 
+  it("upserts standalone AI trader memories for analyst memos", async () => {
+    const memory = await repository.upsertAiTraderMemory({
+      botId: "__analyst__",
+      accountId: "__global__",
+      memory: {
+        key: "strategy_memo/all/latest",
+        value: "Favor fewer trades until costs improve.",
+        importance: 0.9,
+        source: "strategy_package",
+        updatedAt: "2026-05-19T00:00:03.000Z"
+      }
+    });
+
+    expect(prismaMock.aiTraderMemory.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        botId_memoryKey: {
+          botId: "__analyst__",
+          memoryKey: "strategy_memo/all/latest"
+        }
+      },
+      update: expect.objectContaining({
+        botId: "__analyst__",
+        accountId: "__global__",
+        value: "Favor fewer trades until costs improve.",
+        source: "strategy_package"
+      })
+    }));
+    expect(memory).toMatchObject({
+      key: "strategy_memo/all/latest",
+      updatedAt: "2026-05-19T00:00:03.000Z"
+    });
+  });
+
   it("seeds default access, loads users, and manages frontend users and platform settings", async () => {
     prismaMock.appUser.upsert.mockResolvedValue({});
     prismaMock.platformSettings.upsert.mockResolvedValue({

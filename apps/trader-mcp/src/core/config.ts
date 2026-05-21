@@ -29,12 +29,18 @@ const resolveLogPath = (pathValue?: string) => {
     : resolve(workspaceRoot, trimmed);
 };
 
+const resolveToolMode = (): TraderMcpRuntimeConfig["toolMode"] => {
+  const mode = process.env.STRATIUM_MCP_TOOL_MODE?.trim().toLowerCase();
+  return mode === "trader" || mode === "analyst" || mode === "all" ? mode : "all";
+};
+
 export const loadRuntimeConfigFromEnv = (): TraderMcpRuntimeConfig => ({
   apiBaseUrl: process.env.STRATIUM_API_BASE_URL?.trim() || resolveDefaultApiBaseUrl(),
   host: process.env.STRATIUM_MCP_HOST?.trim() || "0.0.0.0",
   port: Number(process.env.STRATIUM_MCP_PORT ?? "4600"),
   mcpPath: process.env.STRATIUM_MCP_PATH?.trim() || "/mcp",
   corsOrigin: process.env.STRATIUM_MCP_CORS_ORIGIN?.trim() || "*",
+  toolMode: resolveToolMode(),
   debugLogPath: resolveLogPath(process.env.STRATIUM_MCP_DEBUG_LOG_PATH),
   logger: new JsonLineFileLogger(resolveLogPath(process.env.STRATIUM_MCP_DEBUG_LOG_PATH)),
   frontendUsername: process.env.STRATIUM_FRONTEND_USERNAME?.trim(),

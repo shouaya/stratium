@@ -1,5 +1,12 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { AiTraderMemorySnapshot, AiTraderWakeReport, AnyEventEnvelope, CancelOrderInput, CreateOrderInput, MarketTick } from "@stratium/shared";
+import type {
+  AiTraderMemorySnapshot,
+  AiTraderWakeReport,
+  AnyEventEnvelope,
+  CancelOrderInput,
+  CreateOrderInput,
+  MarketTick
+} from "@stratium/shared";
 import { AuthRuntime, type AuthRole, type AuthSession, type FrontendUserView, type PlatformSettingsView } from "../auth/auth.js";
 import { BatchJobStateFeed } from "../batch/batch-job-state.js";
 import { BatchJobRunner, type BatchJobDefinition, type BatchJobExecution, type BatchJobId, type BatchJobRunInput } from "../batch/batch-job-runner.js";
@@ -22,6 +29,22 @@ import { runActiveSymbolSwitchBatchJob } from "./symbol-switch.js";
 import { TradingRuntime } from "./trading-runtime.js";
 import { WebSocketHub } from "./websocket-hub.js";
 export type { SocketLike, SymbolConfigState } from "../market/market-runtime.js";
+
+const AI_TRADER_ANALYST_BOT_ID = "__analyst__";
+const AI_TRADER_ANALYST_ACCOUNT_ID = "__global__";
+const AI_TRADER_LANGUAGE_MEMORY_KEY = "platform/ai_language";
+const AI_TRADER_DEFAULT_LANGUAGE = "en";
+
+type AiTraderLanguage = "zh" | "ja" | "en";
+
+const normalizeAiTraderLanguage = (value: unknown): AiTraderLanguage =>
+  value === "zh" || value === "ja" || value === "en" ? value : AI_TRADER_DEFAULT_LANGUAGE;
+
+const AI_LANGUAGE_INSTRUCTIONS: Record<AiTraderLanguage, string> = {
+  zh: "Use Simplified Chinese for analyst notes and trader plan natural-language fields. Keep JSON keys and enum values in English.",
+  ja: "Use Japanese for analyst notes and trader plan natural-language fields. Keep JSON keys and enum values in English.",
+  en: "Use English for analyst notes and trader plan natural-language fields. Keep JSON keys and enum values in English."
+};
 
 export class ApiRuntime {
   private static readonly SOCKET_EVENT_BOOTSTRAP_LIMIT = 500;
@@ -334,10 +357,10 @@ export class ApiRuntime {
     return report;
   }
 
-  async listAiTraderWakeReports(botId?: string): Promise<AiTraderWakeReport[]> {
+  async listAiTraderWakeReports(botId?: string, limit?: number): Promise<AiTraderWakeReport[]> {
     return this.repository.listAiTraderWakeReports({
       botId,
-      limit: botId ? 200 : 1_000
+      limit: limit ?? (botId ? 200 : 1_000)
     });
   }
 
@@ -346,6 +369,145 @@ export class ApiRuntime {
       accountId,
       botId,
       limit: 200
+    });
+  }
+
+  async listTraderBotPromptMemories(accountId: string, botId: string): Promise<AiTraderMemorySnapshot[]> {
+    const [botMemories, analystMemories] = await Promise.all([
+      this.listAiTraderMemories(accountId, botId),
+      this.listAnalystMemos(botId, 100)
+    ]);
+    const memories = new Map<string, AiTraderMemorySnapshot>();
+
+    for (const memory of [...botMemories, ...analystMemories]) {
+      memories.set(memory.key, memory);
+    }
+
+    return [...memories.values()]
+      .sort((left, right) =>
+        (right.importance ?? 0) - (left.importance ?? 0)
+        || (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "")
+        || left.key.localeCompare(right.key)
+      )
+      .slice(0, 250);
+  }
+
+  async listAnalystMemos(targetBotId?: string, limit = 200): Promise<AiTraderMemorySnapshot[]> {
+    const resolvedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
+    const memories = await this.repository.listAiTraderMemories({
+      accountId: AI_TRADER_ANALYST_ACCOUNT_ID,
+      botId: AI_TRADER_ANALYST_BOT_ID,
+      limit: resolvedLimit
+    });
+
+    if (!targetBotId?.trim()) {
+      return memories;
+    }
+
+    const botPrefix = `strategy_memo/${targetBotId.trim()}/`;
+
+    return memories.filter((memory) =>
+      memory.key === AI_TRADER_LANGUAGE_MEMORY_KEY
+      || memory.key.startsWith("global_review/")
+      || memory.key.startsWith("strategy_memo/all/")
+      || memory.key.startsWith(botPrefix)
+    );
+  }
+
+  async getAiLanguagePayload() {
+    const memories = await this.listAnalystMemos(undefined, 500);
+    const language = normalizeAiTraderLanguage(
+      memories.find((memory) => memory.key === AI_TRADER_LANGUAGE_MEMORY_KEY)?.value
+        ?? process.env.STRATIUM_AI_LANGUAGE
+        ?? process.env.STRATIUM_LOCALE
+        ?? AI_TRADER_DEFAULT_LANGUAGE
+    );
+
+    return {
+      language,
+      instruction: AI_LANGUAGE_INSTRUCTIONS[language]
+    };
+  }
+
+  async updateAiLanguagePreference(language: AiTraderLanguage): Promise<AiTraderMemorySnapshot> {
+    const normalizedLanguage = normalizeAiTraderLanguage(language);
+
+    return this.repository.upsertAiTraderMemory({
+      botId: AI_TRADER_ANALYST_BOT_ID,
+      accountId: AI_TRADER_ANALYST_ACCOUNT_ID,
+      memory: {
+        key: AI_TRADER_LANGUAGE_MEMORY_KEY,
+        value: normalizedLanguage,
+        importance: 1,
+        source: "manual",
+        updatedAt: new Date().toISOString()
+      }
+    });
+  }
+
+  async upsertAnalystMemo(input: {
+    targetBotId?: string;
+    memoryKey?: string;
+    value: string;
+    importance?: number;
+    source?: AiTraderMemorySnapshot["source"];
+  }): Promise<AiTraderMemorySnapshot> {
+    const targetBotId = input.targetBotId?.trim();
+    const memoryKey = input.memoryKey?.trim()
+      || (targetBotId ? `strategy_memo/${targetBotId}/latest` : "strategy_memo/all/latest");
+    const value = input.value.trim();
+    const now = new Date().toISOString();
+
+    return this.repository.upsertAiTraderMemory({
+      botId: AI_TRADER_ANALYST_BOT_ID,
+      accountId: AI_TRADER_ANALYST_ACCOUNT_ID,
+      memory: {
+        key: memoryKey,
+        value,
+        importance: input.importance,
+        source: input.source ?? (memoryKey.startsWith("global_review/") ? "reflection" : "strategy_package"),
+        updatedAt: now
+      }
+    });
+  }
+
+  async getAnalystBotReview(botId: string, accountId?: string, limit = 200) {
+    const resolvedAccountId = accountId?.trim() || (await this.repository.listAiTraderWakeReports({
+      botId,
+      limit: 1
+    }))[0]?.accountId;
+
+    if (!resolvedAccountId) {
+      return null;
+    }
+
+    return this.getAiTraderReview(resolvedAccountId, botId, limit);
+  }
+
+  async getAnalystAllBotReviews(limit = 200) {
+    const dashboard = await this.getAiTraderAdminDashboard();
+    const reviews = await Promise.all(dashboard.profiles.map(async (profile) => ({
+      botId: profile.botId,
+      accountId: profile.accountId,
+      review: await this.getAiTraderReview(profile.accountId, profile.botId, limit).catch((error) => ({
+        error: error instanceof Error ? error.message : String(error)
+      }))
+    })));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      profiles: dashboard.profiles,
+      reviews
+    };
+  }
+
+  async listAnalystBotMemories(botId: string, accountId?: string, limit = 200): Promise<AiTraderMemorySnapshot[]> {
+    const resolvedAccountId = accountId?.trim();
+
+    return this.repository.listAiTraderMemories({
+      botId,
+      ...(resolvedAccountId ? { accountId: resolvedAccountId } : {}),
+      limit: Math.min(Math.max(Math.floor(limit), 1), 500)
     });
   }
 

@@ -164,6 +164,20 @@ const memoryRow = (report: AiTraderWakeReport, memory: AiTraderMemorySnapshot) =
   lastSeenAt: toDate(memory.updatedAt) ?? toDate(report.finishedAt) ?? new Date()
 });
 
+const memorySnapshotRow = (input: {
+  botId: string;
+  accountId: string;
+  memory: AiTraderMemorySnapshot;
+}) => ({
+  botId: input.botId,
+  accountId: input.accountId,
+  memoryKey: input.memory.key,
+  value: input.memory.value,
+  importance: input.memory.importance ?? null,
+  source: input.memory.source ?? "manual",
+  lastSeenAt: toDate(input.memory.updatedAt) ?? new Date()
+});
+
 const rowToWakeReport = (row: AiTraderWakeReportRow): AiTraderWakeReport => ({
   schemaVersion: "stratium.ai-trader-wake-report.v1",
   wakeId: row.wakeId,
@@ -226,6 +240,37 @@ export class AiTraderPersistenceRepository extends TradingPersistenceRepository 
         });
       }
     });
+  }
+
+  async upsertAiTraderMemory(input: {
+    botId: string;
+    accountId: string;
+    memory: AiTraderMemorySnapshot;
+  }): Promise<AiTraderMemorySnapshot> {
+    const now = input.memory.updatedAt ?? new Date().toISOString();
+    const memory = {
+      ...input.memory,
+      updatedAt: now,
+      source: input.memory.source ?? "manual"
+    } satisfies AiTraderMemorySnapshot;
+    const row = memorySnapshotRow({
+      botId: input.botId,
+      accountId: input.accountId,
+      memory
+    });
+
+    await aiTraderDb.aiTraderMemory.upsert({
+      where: {
+        botId_memoryKey: {
+          botId: input.botId,
+          memoryKey: memory.key
+        }
+      },
+      update: row,
+      create: row
+    });
+
+    return memory;
   }
 
   async listAiTraderWakeReports(input: {

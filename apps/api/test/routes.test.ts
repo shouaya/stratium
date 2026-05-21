@@ -123,6 +123,15 @@ describe("registerRoutes", () => {
     recordAiTraderWake: vi.fn(),
     listAiTraderWakeReports: vi.fn(),
     listAiTraderMemories: vi.fn(),
+    listTraderBotPromptMemories: vi.fn(),
+    listAnalystMemos: vi.fn(),
+    listAnalystBotMemories: vi.fn(),
+    getAnalystBotReview: vi.fn(),
+    getAnalystAllBotReviews: vi.fn(),
+    upsertAnalystMemo: vi.fn(),
+    getAiLanguagePayload: vi.fn(),
+    updateAiLanguagePreference: vi.fn(),
+    getAiTraderReview: vi.fn(),
     getAiTraderAdminDashboard: vi.fn(),
     listFrontendUsers: vi.fn(),
     createFrontendUser: vi.fn(),
@@ -332,6 +341,86 @@ describe("registerRoutes", () => {
       updatedAt: "2026-05-19T00:00:01.000Z",
       source: "runtime"
     }]);
+    runtime.listTraderBotPromptMemories.mockResolvedValue([{
+      key: "runtime/codex_session/id",
+      value: "11111111-1111-1111-1111-111111111111",
+      importance: 1,
+      updatedAt: "2026-05-19T00:00:01.000Z",
+      source: "runtime"
+    }, {
+      key: "strategy_memo/all/latest",
+      value: "Favor fewer trades until costs improve.",
+      importance: 0.9,
+      updatedAt: "2026-05-19T00:00:02.000Z",
+      source: "strategy_package"
+    }]);
+    runtime.listAnalystMemos.mockResolvedValue([{
+      key: "strategy_memo/all/latest",
+      value: "Favor fewer trades until costs improve.",
+      importance: 0.9,
+      updatedAt: "2026-05-19T00:00:02.000Z",
+      source: "strategy_package"
+    }]);
+    runtime.listAnalystBotMemories.mockResolvedValue([{
+      key: "runtime/codex_session/id",
+      value: "11111111-1111-1111-1111-111111111111",
+      importance: 1,
+      updatedAt: "2026-05-19T00:00:01.000Z",
+      source: "runtime"
+    }]);
+    runtime.getAnalystBotReview.mockResolvedValue({
+      schemaVersion: "stratium.ai-trader-review.v1",
+      botId: "local-demo-trader",
+      accountId: "paper-account-1",
+      symbol: "BTC-USD",
+      generatedAt: "2026-05-19T00:00:03.000Z",
+      reportLimit: 200,
+      wakeStats: {
+        total: 1,
+        completed: 1,
+        failed: 0,
+        approvedActions: 1,
+        rejectedActions: 0
+      },
+      orderStats: {
+        total: 0,
+        open: 0,
+        filled: 0,
+        canceled: 0,
+        rejected: 0,
+        marketFilled: 0,
+        limitFilled: 0,
+        bySide: { buy: 0, sell: 0 },
+        byType: { market: 0, limit: 0 },
+        byStatus: {}
+      },
+      recentWakes: [],
+      recentOrders: [],
+      observations: []
+    });
+    runtime.getAnalystAllBotReviews.mockResolvedValue({
+      generatedAt: "2026-05-19T00:00:03.000Z",
+      profiles: [],
+      reviews: []
+    });
+    runtime.upsertAnalystMemo.mockResolvedValue({
+      key: "strategy_memo/all/latest",
+      value: "Favor fewer trades until costs improve.",
+      importance: 0.9,
+      updatedAt: "2026-05-19T00:00:02.000Z",
+      source: "strategy_package"
+    });
+    runtime.getAiLanguagePayload.mockResolvedValue({
+      language: "zh",
+      instruction: "Use Simplified Chinese for analyst notes and trader plan natural-language fields. Keep JSON keys and enum values in English."
+    });
+    runtime.updateAiLanguagePreference.mockResolvedValue({
+      key: "platform/ai_language",
+      value: "zh",
+      importance: 1,
+      updatedAt: "2026-05-19T00:00:03.000Z",
+      source: "manual"
+    });
     runtime.getAiTraderAdminDashboard.mockResolvedValue({
       generatedAt: "2026-05-19T00:00:01.000Z",
       overview: {
@@ -1440,6 +1529,91 @@ describe("registerRoutes", () => {
       }]
     });
 
+    const aiLanguageResponse = await app.inject({
+      method: "PUT",
+      url: "/api/admin/ai-language",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {
+        language: "zh"
+      }
+    });
+    expect(aiLanguageResponse.statusCode).toBe(200);
+    expect(runtime.updateAiLanguagePreference).toHaveBeenCalledWith("zh");
+    expect(aiLanguageResponse.json()).toMatchObject({
+      status: "recorded",
+      language: "zh",
+      memory: {
+        key: "platform/ai_language"
+      }
+    });
+
+    const analystBotsResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/analyst/bots",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(analystBotsResponse.statusCode).toBe(200);
+    expect(analystBotsResponse.json()).toMatchObject({
+      aiLanguage: {
+        language: "zh"
+      },
+      profiles: [{
+        botId: "local-demo-trader"
+      }]
+    });
+
+    const analystLanguageResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/analyst/language",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(analystLanguageResponse.statusCode).toBe(200);
+    expect(analystLanguageResponse.json()).toMatchObject({
+      language: "zh"
+    });
+
+    const analystBotReviewResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/analyst/bots/local-demo-trader/review?limit=50",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(analystBotReviewResponse.statusCode).toBe(200);
+    expect(runtime.getAnalystBotReview).toHaveBeenCalledWith("local-demo-trader", undefined, 50);
+    expect(analystBotReviewResponse.json()).toMatchObject({
+      botId: "local-demo-trader",
+      review: {
+        botId: "local-demo-trader"
+      }
+    });
+
+    const analystMemoResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/analyst/memos",
+      headers: { authorization: `Bearer ${adminSession.token}` },
+      payload: {
+        value: "Favor fewer trades until costs improve.",
+        importance: 0.9
+      }
+    });
+    expect(analystMemoResponse.statusCode).toBe(201);
+    expect(runtime.upsertAnalystMemo).toHaveBeenCalledWith(expect.objectContaining({
+      value: "Favor fewer trades until costs improve.",
+      importance: 0.9
+    }));
+
+    const analystMemoListResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/analyst/memos?targetBotId=local-demo-trader",
+      headers: { authorization: `Bearer ${adminSession.token}` }
+    });
+    expect(analystMemoListResponse.statusCode).toBe(200);
+    expect(runtime.listAnalystMemos).toHaveBeenCalledWith("local-demo-trader", 200);
+    expect(analystMemoListResponse.json()).toMatchObject({
+      memories: [{
+        key: "strategy_memo/all/latest"
+      }]
+    });
+
     const botWakeReportResponse = await app.inject({
       method: "POST",
       url: "/api/trader-bot/wakes",
@@ -1470,11 +1644,13 @@ describe("registerRoutes", () => {
       headers: { authorization: `Bearer ${frontendSession.token}` }
     });
     expect(botMemoriesResponse.statusCode).toBe(200);
-    expect(runtime.listAiTraderMemories).toHaveBeenCalledWith("paper-account-1", "local-demo-trader");
+    expect(runtime.listTraderBotPromptMemories).toHaveBeenCalledWith("paper-account-1", "local-demo-trader");
     expect(botMemoriesResponse.json()).toMatchObject({
       botId: "local-demo-trader",
       memories: [{
         key: "runtime/codex_session/id"
+      }, {
+        key: "strategy_memo/all/latest"
       }]
     });
 

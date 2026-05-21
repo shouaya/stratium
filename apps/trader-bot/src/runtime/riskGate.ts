@@ -27,6 +27,22 @@ const actionNotional = (action: AiTraderPlanAction, market: TraderBotMarketSnaps
   return action.quantity * (action.price ?? market.last);
 };
 
+const openPosition = (account: TraderBotAccountSnapshot) => {
+  const position = account.position;
+  return position && position.side !== "flat" && position.quantity > 0 ? position : undefined;
+};
+
+const orderReducesPosition = (
+  action: Extract<AiTraderPlanAction, { type: "place_order" }>,
+  account: TraderBotAccountSnapshot
+): boolean => {
+  const position = openPosition(account);
+  if (!position) {
+    return false;
+  }
+  return (position.side === "long" && action.side === "sell") || (position.side === "short" && action.side === "buy");
+};
+
 const evaluateAction = (
   input: RiskGateInput,
   action: AiTraderPlanAction,
@@ -47,6 +63,7 @@ const evaluateAction = (
   if (action.type === "place_order") {
     const openingOrder = action.reduceOnly !== true;
     const notional = actionNotional(action, input.market);
+    const position = openPosition(input.account);
     rules.push(result(
       `action_${actionIndex}_quantity_positive`,
       action.quantity > 0,
@@ -100,6 +117,26 @@ const evaluateAction = (
         : "opening order requires invalidationPrice",
       !openingOrder || !input.policy.requireInvalidationPrice || action.invalidationPrice != null ? "info" : "reject"
     ));
+    if (action.reduceOnly === true) {
+      rules.push(result(
+        `action_${actionIndex}_reduce_only_position_exists`,
+        Boolean(position),
+        position ? "reduce-only order has an open position to reduce" : "reduce-only order requires an open position",
+        position ? "info" : "reject"
+      ));
+      rules.push(result(
+        `action_${actionIndex}_reduce_only_side_reduces`,
+        orderReducesPosition(action, input.account),
+        orderReducesPosition(action, input.account) ? "reduce-only order side reduces the current position" : "reduce-only order side does not reduce the current position",
+        orderReducesPosition(action, input.account) ? "info" : "reject"
+      ));
+      rules.push(result(
+        `action_${actionIndex}_reduce_only_quantity_within_position`,
+        !position || action.quantity <= position.quantity,
+        !position || action.quantity <= position.quantity ? "reduce-only quantity is within current position size" : "reduce-only quantity exceeds current position size",
+        !position || action.quantity <= position.quantity ? "info" : "reject"
+      ));
+    }
   }
 
   if (action.type === "cancel_order") {
@@ -112,8 +149,25 @@ const evaluateAction = (
     ));
   }
 
-  if ((action.type === "reduce_position" || action.type === "close_position") && input.mode === "disabled") {
-    rules.push(result(`action_${actionIndex}_disabled_mode`, false, "disabled mode rejects all actions", "reject"));
+  if (action.type === "reduce_position" || action.type === "close_position") {
+    const position = openPosition(input.account);
+    if (input.mode === "disabled") {
+      rules.push(result(`action_${actionIndex}_disabled_mode`, false, "disabled mode rejects all actions", "reject"));
+    }
+    rules.push(result(
+      `action_${actionIndex}_position_exists`,
+      Boolean(position),
+      position ? `${action.type} has an open position to reduce` : `${action.type} requires an open position`,
+      position ? "info" : "reject"
+    ));
+    if (action.type === "reduce_position" && action.quantity != null) {
+      rules.push(result(
+        `action_${actionIndex}_reduce_quantity_within_position`,
+        !position || action.quantity <= position.quantity,
+        !position || action.quantity <= position.quantity ? "reduce quantity is within current position size" : "reduce quantity exceeds current position size",
+        !position || action.quantity <= position.quantity ? "info" : "reject"
+      ));
+    }
   }
 
   return rules;

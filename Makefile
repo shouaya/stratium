@@ -21,7 +21,7 @@ JOB_RUNNER_TOKEN ?= stratium-local-runner
 JOB_RUNNER_CLIENT ?= docker exec -e JOB_RUNNER_BASE_URL=$(JOB_RUNNER_BASE_URL) -e JOB_RUNNER_TOKEN=$(JOB_RUNNER_TOKEN) $(JOB_RUNNER_CONTAINER) node /workspace/scripts/job-runner-request.mjs
 
 .PHONY: help check-compose init bootstrap-services wait-job-runner install dev lint test build check db-push db-seed db-clear-runtime-data db-bootstrap seed-symbol-configs \
-	up down logs config trader-bot-run trader-bot-run-once batch-import-hl-day batch-refresh-hl-day batch-clear-kline
+	up down logs config trader-bot-run trader-bot-run-once analyst-bot-run analyst-bot-run-once batch-import-hl-day batch-refresh-hl-day batch-clear-kline
 
 COIN ?= BTC
 DATE ?=
@@ -48,6 +48,17 @@ TRADER_BOT_CODEX_SESSION_MODE ?= resume
 TRADER_BOT_CODEX_SESSION_MAX_WAKES ?= 40
 TRADER_BOT_TRADE_REVIEW_INTERVAL_MS ?= 1800000
 TRADER_BOT_TRADE_REVIEW_MIN_WAKES ?= 25
+ANALYST_ACCOUNT ?= admin
+ANALYST_PASSWORD ?= admin123456
+ANALYST_BOT_ID ?= local-analyst-bot
+ANALYST_BOT_API_URL ?= http://localhost:6100
+ANALYST_BOT_MCP_URL ?= http://localhost:4600/mcp
+ANALYST_BOT_REVIEW_INTERVAL_MS ?= 1800000
+ANALYST_BOT_MAX_BOTS ?= 6
+ANALYST_BOT_CODEX_BIN ?= codex
+ANALYST_BOT_CODEX_ARGS ?= exec --sandbox read-only --ignore-rules --color never
+ANALYST_BOT_CODEX_PROMPT_MODE ?= stdin
+ANALYST_BOT_CODEX_TIMEOUT_MS ?= 180000
 
 help:
 	@echo Stratium make targets
@@ -80,6 +91,8 @@ help:
 	@echo   make trader-bot-run-once  Run one local AI trader wake through Trader MCP
 	@echo   make trader-bot-run       Run the local AI trader wake loop through Trader MCP
 	@echo                            Defaults to TRADER_BOT_PLANNER=codex and TRADER_BOT_MODE=paper_execute; override baseline or dry-run for diagnostics
+	@echo   make analyst-bot-run-once Run one AI analyst review cycle through analyst MCP tools
+	@echo   make analyst-bot-run      Run the periodic AI analyst review loop
 	@$(ECHO_BLANK)
 	@echo Batch
 	@echo   make batch-import-hl-day  Download and import one Hyperliquid day via the job runner
@@ -168,6 +181,12 @@ trader-bot-run-once:
 
 trader-bot-run:
 	$(LOCAL_PNPM) --filter @stratium/trader-bot run run -- --api-url $(TRADER_BOT_API_URL) --mcp-url $(TRADER_BOT_MCP_URL) --email $(ACCOUNT) --password $(PASSWORD) --bot-id $(BOT_ID) --mode $(TRADER_BOT_MODE) --planner $(TRADER_BOT_PLANNER) --symbol $(TRADER_BOT_SYMBOL) --wake-interval-ms $(TRADER_BOT_WAKE_INTERVAL_MS) --position-review-ms $(TRADER_BOT_POSITION_REVIEW_MS) --open-order-review-ms $(TRADER_BOT_OPEN_ORDER_REVIEW_MS) --post-execution-review-ms $(TRADER_BOT_POST_EXECUTION_REVIEW_MS) --risk-retry-ms $(TRADER_BOT_RISK_RETRY_MS) --signal-review-ms $(TRADER_BOT_SIGNAL_REVIEW_MS) --codex-bin $(TRADER_BOT_CODEX_BIN) --codex-args "$(TRADER_BOT_CODEX_ARGS)" --codex-prompt-mode $(TRADER_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(TRADER_BOT_CODEX_TIMEOUT_MS) --codex-session-mode $(TRADER_BOT_CODEX_SESSION_MODE) --codex-session-max-wakes $(TRADER_BOT_CODEX_SESSION_MAX_WAKES) --trade-review-interval-ms $(TRADER_BOT_TRADE_REVIEW_INTERVAL_MS) --trade-review-min-wakes $(TRADER_BOT_TRADE_REVIEW_MIN_WAKES)
+
+analyst-bot-run-once:
+	$(LOCAL_PNPM) --filter @stratium/analyst-bot run:once -- --api-url $(ANALYST_BOT_API_URL) --mcp-url $(ANALYST_BOT_MCP_URL) --account $(ANALYST_ACCOUNT) --password $(ANALYST_PASSWORD) --bot-id $(ANALYST_BOT_ID) --review-interval-ms $(ANALYST_BOT_REVIEW_INTERVAL_MS) --max-bots $(ANALYST_BOT_MAX_BOTS) --codex-bin $(ANALYST_BOT_CODEX_BIN) --codex-args "$(ANALYST_BOT_CODEX_ARGS)" --codex-prompt-mode $(ANALYST_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(ANALYST_BOT_CODEX_TIMEOUT_MS)
+
+analyst-bot-run:
+	$(LOCAL_PNPM) --filter @stratium/analyst-bot run run -- --api-url $(ANALYST_BOT_API_URL) --mcp-url $(ANALYST_BOT_MCP_URL) --account $(ANALYST_ACCOUNT) --password $(ANALYST_PASSWORD) --bot-id $(ANALYST_BOT_ID) --review-interval-ms $(ANALYST_BOT_REVIEW_INTERVAL_MS) --max-bots $(ANALYST_BOT_MAX_BOTS) --codex-bin $(ANALYST_BOT_CODEX_BIN) --codex-args "$(ANALYST_BOT_CODEX_ARGS)" --codex-prompt-mode $(ANALYST_BOT_CODEX_PROMPT_MODE) --codex-timeout-ms $(ANALYST_BOT_CODEX_TIMEOUT_MS)
 
 batch-import-hl-day:
 	$(JOB_RUNNER_CLIENT) batch-import-hl-day coin=$(COIN) $(if $(DATE),date=$(DATE),)

@@ -1,5 +1,19 @@
 export type AiTraderMode = "disabled" | "observe" | "shadow" | "approval" | "paper_execute" | "reduce_only";
 
+export const AI_TRADER_ANALYST_BOT_ID = "__analyst__";
+export const AI_TRADER_ANALYST_ACCOUNT_ID = "__global__";
+export const AI_TRADER_LANGUAGE_MEMORY_KEY = "platform/ai_language";
+export const AI_TRADER_DEFAULT_LANGUAGE = "en";
+
+export type AiTraderLanguage = "zh" | "ja" | "en";
+
+export const normalizeAiTraderLanguage = (value: unknown): AiTraderLanguage => {
+  if (value === "zh" || value === "ja" || value === "en") {
+    return value;
+  }
+  return AI_TRADER_DEFAULT_LANGUAGE;
+};
+
 export type AiTraderRuntimeTarget = "stratium_native" | "external_live_runner";
 
 export type AiTraderExecutionTarget = "stratium_simulation" | "external_broker";
